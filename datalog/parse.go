@@ -26,13 +26,14 @@ import (
 //	variable    = "?" ident | "_" ;
 //	string      = '"' { char } '"' ;
 //	number      = [ "+" | "-" ] digit { digit } [ "." digit { digit } ] ;
-//	relation    = ident { "." | "-" | ident } ;       (* net.max_voltage, component-on-net *)
+//	relation    = ident { "." | "-" | ident } ;       (* a path: net.max_voltage, component-on-net *)
 //
 // Clauses are separated by ";"; a clause with ":-" is a rule, and the one clause without one is the
 // goal. A rule head defines a derived (IDB) relation the goal (or another rule) can then read, and a
 // rule whose body reads its own head is recursion (evaluated to a stratified fixpoint). Some relation
-// names are built-in predicates rather than fact-base relations: reaches(from, net) (transitive
-// connectivity) and the string filters contains/prefix/suffix(?value, "pattern"). They parse as
+// names are predicates the host registered rather than fact-base relations: reaches(from, net)
+// (transitive connectivity) and the string filters str.contains/str.prefix/str.suffix(?value,
+// "pattern"). A dotted name is a path in the Registry's tree (see Registry). They parse as
 // ordinary atoms; the evaluator dispatches them. A rule head may not redefine a built-in or an EDB
 // relation.
 //

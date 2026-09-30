@@ -3,7 +3,7 @@ package datalog
 // A Query is a datalog program answered over a fact base: Rules define derived (IDB) relations and
 // Goal is the conjunction to solve. Goal's free variables — narrowed by Select — are the answer
 // columns. EDB relations come from the Base's Source; IDB relations come from Rules; predicates are
-// computed (see Predicates).
+// computed (see Registry.AddPredicate).
 //
 // The whole IR is what Parse produces. For the query text
 //

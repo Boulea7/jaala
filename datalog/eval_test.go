@@ -131,10 +131,10 @@ func TestClosedDomainRejectsAConstantOutsideIt(t *testing.T) {
 }
 
 func TestFilterNeedsBoundArguments(t *testing.T) {
-	if rows := eval(t, graph(), `node(?n), contains(?n, "x") => ?n`); col(rows, "n") != "x" {
+	if rows := eval(t, graph(), `node(?n), str.contains(?n, "x") => ?n`); col(rows, "n") != "x" {
 		t.Errorf("contains = %v, want x", rows)
 	}
-	err := evalErr(graph(), `contains(?n, "x") => ?n`)
+	err := evalErr(graph(), `str.contains(?n, "x") => ?n`)
 	if err == nil || !strings.Contains(err.Error(), "needs all arguments bound") {
 		t.Errorf("err = %v, want the unbound-filter error", err)
 	}
@@ -142,9 +142,9 @@ func TestFilterNeedsBoundArguments(t *testing.T) {
 
 // succ is a host generator over the Source it is handed: succ(?a, ?b) enumerates edges out of ?a
 // (or out of every node when ?a is unbound). It exercises the path a host's own graph walk takes.
-func succPredicates() *Predicates {
-	p := StandardPredicates()
-	p.Add("succ", Builtin{Arity: 2, Gen: func(src Source, args []Arg, emit func([]Value, []string) error) error {
+func succRegistry() *Registry {
+	r := std(graph())
+	err := r.AddPredicate("succ", Builtin{Arity: 2, Gen: func(src Source, args []Arg, emit func([]Value, []string) error) error {
 		for _, t := range src.Tuples("edge") {
 			if args[0].Bound && t.Vals[0].S != args[0].Value.S {
 				continue
@@ -155,11 +155,14 @@ func succPredicates() *Predicates {
 		}
 		return nil
 	}})
-	return p
+	if err != nil {
+		panic(err)
+	}
+	return r
 }
 
 func TestGeneratorBindsNegatesAndCites(t *testing.T) {
-	b := NewBase(graph(), succPredicates())
+	b := NewBase(succRegistry())
 	rows, err := Naive{}.Eval(mustParse(t, `succ("b", ?x) => ?x`), b)
 	if err != nil || col(rows, "x") != "c" || len(rows[0].Cites) != 1 {
 		t.Fatalf("succ(b) = %v, %v; want c with one citation", rows, err)
@@ -177,7 +180,7 @@ func TestGeneratorBindsNegatesAndCites(t *testing.T) {
 
 func TestGeneratorFirstRulesNamesAnUnboundOpeningGenerator(t *testing.T) {
 	q := mustParse(t, `bad(?x) :- succ(?a, ?x); good(?x) :- node(?a), succ(?a, ?x); good(?x)`)
-	if got := GeneratorFirstRules(q, succPredicates()); len(got) != 1 || got[0] != "bad" {
+	if got := GeneratorFirstRules(q, succRegistry()); len(got) != 1 || got[0] != "bad" {
 		t.Errorf("GeneratorFirstRules = %v, want [bad]", got)
 	}
 }
@@ -193,7 +196,7 @@ func big() *MemSource {
 }
 
 func TestIndexedAndUnindexedAgree(t *testing.T) {
-	b := NewBase(big(), StandardPredicates())
+	b := NewBase(std(big()))
 	for _, q := range []string{`v(?k, 20) => ?k`, `v(?k, 20.0) => ?k`, `v("k3", ?n) => ?n`, `v(?k, ?n), v(?k2, ?n) => ?k, ?k2`} {
 		qq := mustParse(t, q)
 		indexed, err1 := Naive{}.Eval(qq, b)
@@ -211,7 +214,7 @@ func TestIndexedAndUnindexedAgree(t *testing.T) {
 }
 
 func TestRulesDoNotLeakBetweenQueriesOnOneBase(t *testing.T) {
-	b := NewBase(graph(), StandardPredicates())
+	b := NewBase(std(graph()))
 	if _, err := (Naive{}).Eval(mustParse(t, `src(?n) :- edge(?n, ?_); src(?n)`), b); err != nil {
 		t.Fatal(err)
 	}
@@ -222,7 +225,7 @@ func TestRulesDoNotLeakBetweenQueriesOnOneBase(t *testing.T) {
 }
 
 func TestRuleHeadCannotRedefineARelationOrPredicate(t *testing.T) {
-	for _, q := range []string{`edge(?a, ?b) :- node(?a), node(?b); edge(?a, ?b)`, `contains(?a, ?b) :- edge(?a, ?b); contains(?a, ?b)`} {
+	for _, q := range []string{`edge(?a, ?b) :- node(?a), node(?b); edge(?a, ?b)`, `str.contains(?a, ?b) :- edge(?a, ?b); str.contains(?a, ?b)`} {
 		if err := evalErr(graph(), q); err == nil || !strings.Contains(err.Error(), "redefines") {
 			t.Errorf("%s: err = %v, want a redefinition error", q, err)
 		}
@@ -231,40 +234,40 @@ func TestRuleHeadCannotRedefineARelationOrPredicate(t *testing.T) {
 
 func TestValidateCatchesALaterAtomWithoutEvaluating(t *testing.T) {
 	// Evaluation would stop at the empty first atom and never reach the wrong arity in the second.
-	err := Validate(mustParse(t, `edge(?a, "zzz"), node(?a, ?b)`), graph(), StandardPredicates())
+	err := Validate(mustParse(t, `edge(?a, "zzz"), node(?a, ?b)`), std(graph()))
 	if err == nil || !strings.Contains(err.Error(), "takes 1 args") {
 		t.Errorf("err = %v, want the arity error in position two", err)
 	}
 	// With no vocabulary, only the checks that need one stand down.
-	if err := Validate(mustParse(t, `nope(?a)`), NewMemSource(), StandardPredicates()); err != nil {
+	if err := Validate(mustParse(t, `nope(?a)`), std(NewMemSource())); err != nil {
 		t.Errorf("err = %v, want no vocabulary check against an empty source", err)
 	}
-	err = Validate(mustParse(t, `p(?x) :- nope(?x), not q(?x); q(?x) :- nope(?x), not p(?x); p(?x)`), NewMemSource(), nil)
+	err = Validate(mustParse(t, `p(?x) :- nope(?x), not q(?x); q(?x) :- nope(?x), not p(?x); p(?x)`), MustRegistry(NewMemSource()))
 	if err == nil || !strings.Contains(err.Error(), "not stratifiable") {
 		t.Errorf("err = %v, want stratification still checked with no vocabulary", err)
 	}
 }
 
 func TestReadsNamesOnlySourceRelations(t *testing.T) {
-	q := mustParse(t, `r(?x) :- edge(?x, ?_); r(?x), node(?x), contains(?x, "a")`)
-	if got := strings.Join(Reads(q, graph()), ","); got != "edge,node" {
+	q := mustParse(t, `r(?x) :- edge(?x, ?_); r(?x), node(?x), str.contains(?x, "a")`)
+	if got := strings.Join(Reads(q, std(graph())), ","); got != "edge,node" {
 		t.Errorf("Reads = %s, want edge,node", got)
 	}
 }
 
-func TestPredicatesAddRefusesAndCloneIsIndependent(t *testing.T) {
-	p := StandardPredicates()
-	func() {
-		defer func() {
-			if recover() == nil {
-				t.Error("adding contains twice did not panic")
-			}
-		}()
-		p.Add("contains", Filter(2, func([]Value) (bool, error) { return true, nil }))
-	}()
-	c := p.Clone()
-	c.Add("extra", Filter(1, func([]Value) (bool, error) { return true, nil }))
-	if p.Has("extra") || !c.Has("extra") {
+func TestAddPredicateRefusesAndCloneIsIndependent(t *testing.T) {
+	r := std(graph())
+	if err := r.AddPredicate("str.contains", Filter(2, func([]Value) (bool, error) { return true, nil })); err == nil {
+		t.Error("adding str.contains twice was accepted")
+	}
+	c := r.Clone()
+	if err := c.AddPredicate("extra", Filter(1, func([]Value) (bool, error) { return true, nil })); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := r.predicate("extra"); ok {
 		t.Error("a predicate added to the clone reached the original")
+	}
+	if _, ok := c.predicate("extra"); !ok {
+		t.Error("the clone lost the predicate added to it")
 	}
 }

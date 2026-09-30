@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"regexp"
 	"slices"
-	"sort"
 	"strings"
 )
 
@@ -79,99 +78,40 @@ func Filter(arity int, holds func(args []Value) (bool, error)) Builtin {
 	return Builtin{Arity: arity, Holds: holds}
 }
 
-// Predicates is the set of computed predicates a Base can call, keyed by name. It is a value a host
-// composes and hands to NewBase, not ambient state, so two hosts in one process can offer different
-// vocabularies.
-type Predicates struct {
-	m map[string]Builtin
-}
-
-// NewPredicates returns an empty predicate set.
-func NewPredicates() *Predicates { return &Predicates{m: map[string]Builtin{}} }
-
-// StandardPredicates returns the filters every host gets unless it composes its own set:
-// contains, prefix, suffix, glob, match and absent.
-func StandardPredicates() *Predicates {
-	p := NewPredicates()
-	p.Add("contains", strFilter(strings.Contains))
-	p.Add("prefix", strFilter(strings.HasPrefix))
-	p.Add("suffix", strFilter(strings.HasSuffix))
-	p.Add("glob", patFilter(CompileGlob))
-	p.Add("match", patFilter(CompilePattern))
-	// absent(?x) is the only way to ASK about a field the source did not state. Before Value.Absent
-	// existed such a field bound to the empty string, so it was not merely hard to select, it was
-	// indistinguishable from one that was stated as "". Its negation is the useful half as often as
-	// not: `not absent(?min)` reads "this row states a lower bound".
-	p.Add("absent", Filter(1, func(args []Value) (bool, error) { return args[0].Absent, nil }))
-	return p
-}
-
-// Add registers a predicate. It panics on an empty name, a builtin that is neither or both a filter
-// and a generator, a filter with arity below one, or a name already present, because each is a
-// programming error that must fail loudly at load rather than silently at query time (the same
-// contract as net/http.Handle).
-func (p *Predicates) Add(name string, b Builtin) {
-	if name == "" {
-		panic("datalog: Predicates.Add with empty name")
-	}
-	if (b.Holds == nil) == (b.Gen == nil) {
-		panic(fmt.Sprintf("datalog: Predicates.Add(%q) needs exactly one of Holds and Gen", name))
-	}
-	if b.Holds != nil && b.Arity < 1 {
-		panic(fmt.Sprintf("datalog: Predicates.Add(%q) needs arity >= 1", name))
-	}
-	if _, ok := p.m[name]; ok {
-		panic(fmt.Sprintf("datalog: Predicates.Add(%q) collides with a predicate already present", name))
-	}
-	p.m[name] = b
-}
-
-// Clone returns an independent copy, so a caller can add predicates without changing the set it was
-// copied from. A test registering a predicate uses it to leave the shared set as it found it.
-func (p *Predicates) Clone() *Predicates {
-	out := NewPredicates()
-	if p != nil {
-		for k, v := range p.m {
-			out.m[k] = v
+// StandardPredicates registers the predicates every host gets unless it composes its own set: the
+// string tests str.contains, str.prefix, str.suffix, str.glob and str.match, and absent at the root.
+// absent is not a string test (it asks whether a field was stated at all, for any value), which is
+// why it stays out of str. A host that wants other names registers these builtins itself.
+func StandardPredicates(r *Registry) error {
+	for _, p := range []struct {
+		path string
+		b    Builtin
+	}{
+		{"str.contains", strFilter(strings.Contains)},
+		{"str.prefix", strFilter(strings.HasPrefix)},
+		{"str.suffix", strFilter(strings.HasSuffix)},
+		{"str.glob", patFilter(CompileGlob)},
+		{"str.match", patFilter(CompilePattern)},
+		// absent(?x) is the only way to ASK about a field the source did not state. Before
+		// Value.Absent existed such a field bound to the empty string, so it was not merely hard to
+		// select, it was indistinguishable from one that was stated as "". Its negation is the useful
+		// half as often as not: `not absent(?min)` reads "this row states a lower bound".
+		{"absent", Filter(1, func(args []Value) (bool, error) { return args[0].Absent, nil })},
+	} {
+		if err := r.AddPredicate(p.path, p.b); err != nil {
+			return err
 		}
 	}
-	return out
-}
-
-// Has reports whether name is a registered predicate.
-func (p *Predicates) Has(name string) bool {
-	_, ok := p.lookup(name)
-	return ok
-}
-
-// Names returns every registered predicate name, sorted.
-func (p *Predicates) Names() []string {
-	if p == nil {
-		return nil
-	}
-	out := make([]string, 0, len(p.m))
-	for n := range p.m {
-		out = append(out, n)
-	}
-	sort.Strings(out)
-	return out
-}
-
-func (p *Predicates) lookup(name string) (Builtin, bool) {
-	if p == nil {
-		return Builtin{}, false
-	}
-	b, ok := p.m[name]
-	return b, ok
+	return nil
 }
 
 // strFilter wraps a string(value, pattern) bool as a 2-arity filter (the shape of
-// contains/prefix/suffix).
+// str.contains/str.prefix/str.suffix).
 func strFilter(fn func(s, pat string) bool) Builtin {
 	return Filter(2, func(args []Value) (bool, error) { return fn(args[0].S, args[1].S), nil })
 }
 
-// patFilter is strFilter for the two PATTERN predicates (glob, match): the pattern must be compiled
+// patFilter is strFilter for the two PATTERN predicates (str.glob, str.match): the pattern must be compiled
 // before it can be tested, so a malformed one is an EVAL ERROR rather than a non-match. That
 // direction matters — a bad pattern that quietly matched nothing would read as "the data is clean"
 // on a completeness check.
@@ -234,7 +174,7 @@ func (b *Base) extendAtom(atom *Atom, bnd *binding, yield func(*binding) error) 
 		return err
 	}
 	rel := atom.Relation
-	if bi, ok := b.preds.lookup(rel); ok {
+	if bi, ok := b.reg.predicate(rel); ok {
 		return extendBuiltin(bi, atom, bnd, b, yield)
 	}
 	if _, ok := b.schemaOf(rel); ok {
@@ -243,13 +183,8 @@ func (b *Base) extendAtom(atom *Atom, bnd *binding, yield func(*binding) error) 
 	return b.extendIDB(atom, bnd, yield)
 }
 
-// schemaOf is the Source's schema for rel, or false when there is no Source.
-func (b *Base) schemaOf(rel string) (Schema, bool) {
-	if b.src == nil {
-		return Schema{}, false
-	}
-	return b.src.Schema(rel)
-}
+// schemaOf is the schema of the base relation registered at rel.
+func (b *Base) schemaOf(rel string) (Schema, bool) { return b.reg.schema(rel) }
 
 // checkArgValues rejects a CONSTANT naming a value its argument cannot hold, for the arguments whose
 // values are a vocabulary the Source defines. A variable is unaffected, and a relation declaring no
@@ -290,7 +225,7 @@ func (b *Base) checkArgValues(atom *Atom, s Schema) error {
 // a solve happens to arrive is checking it sometimes.
 func (b *Base) checkAtom(atom *Atom) error {
 	rel := atom.Relation
-	if bi, ok := b.preds.lookup(rel); ok {
+	if bi, ok := b.reg.predicate(rel); ok {
 		if !bi.accepts(len(atom.Args)) {
 			return fmt.Errorf("query: %s takes %s args, got %d", rel, bi.arityLabel(), len(atom.Args))
 		}
@@ -308,7 +243,7 @@ func (b *Base) checkAtom(atom *Atom) error {
 		}
 		return nil
 	}
-	return fmt.Errorf("query: unknown relation %q%s", rel, b.didYouMean(rel))
+	return fmt.Errorf("query: %s", b.unknown(rel))
 }
 
 // extendEDB fans an EDB atom over the tuples of its relation, unifying each into the binding.
@@ -387,7 +322,7 @@ func (b *Base) atomHolds(atom *Atom, bnd *binding) (bool, error) {
 // on the positive path, so a variadic built-in cannot be accepted in a positive atom while its
 // negation is rejected.
 func (b *Base) arityAccepts(rel string, n int) (ok bool, known bool) {
-	if bi, found := b.preds.lookup(rel); found {
+	if bi, found := b.reg.predicate(rel); found {
 		return bi.accepts(n), true
 	}
 	if s, found := b.schemaOf(rel); found {
@@ -401,7 +336,7 @@ func (b *Base) arityAccepts(rel string, n int) (ok bool, known bool) {
 
 // arityLabelOf renders a relation's accepted argument count for an error message.
 func (b *Base) arityLabelOf(rel string) string {
-	if bi, ok := b.preds.lookup(rel); ok {
+	if bi, ok := b.reg.predicate(rel); ok {
 		return bi.arityLabel()
 	}
 	if s, ok := b.schemaOf(rel); ok {

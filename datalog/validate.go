@@ -1,7 +1,7 @@
 package datalog
 
-// Validate reports why a query cannot run, reading only the query and the vocabulary it would run
-// against: the Source's schemas and the predicates. No tuple is read.
+// Validate reports why a query cannot run, reading only the query and the registry it would run
+// against: the schemas of its base relations and its predicates. No tuple is read.
 //
 // It exists because a rule compiled from a query used to be un-rejectable: RuleFromQuery returned no
 // error, and the failure surfaced only when the rule ran, where it was swallowed into a clean pass
@@ -13,8 +13,8 @@ package datalog
 // It cannot be implemented by evaluating against an empty fact base, which is the obvious shortcut.
 // Solving stops at the first atom that yields nothing, so on an empty base every atom after the first
 // goes unexamined and a wrong-arity relation in position two passes validation.
-func Validate(q Query, src Source, preds *Predicates) error {
-	// A Source serving NO relation cannot say a relation is unknown, and refusing every query on that
+func Validate(q Query, reg *Registry) error {
+	// A registry holding NO base relation cannot say a relation is unknown, and refusing every query on that
 	// basis would be a confident wrong answer about the query rather than about the vocabulary. This
 	// is not a corner case: a host that builds rules at package init may do so before its relations
 	// are registered. "No such relation" and "no relations at all" are different answers, and this is
@@ -22,10 +22,10 @@ func Validate(q Query, src Source, preds *Predicates) error {
 	//
 	// Everything else still runs: negation safety, projection safety, rule-head collisions, arity of a
 	// derived relation, stratification. Only the checks that need a vocabulary stand down.
-	if !installed(src) {
-		return validateWithoutVocabulary(q, src, preds)
+	if !reg.hasBase() {
+		return validateWithoutVocabulary(q, reg)
 	}
-	b := newValidationBase(src, preds)
+	b := newValidationBase(reg)
 	if _, _, err := b.checkRules(q.Rules); err != nil {
 		return err
 	}
@@ -55,8 +55,8 @@ func Validate(q Query, src Source, preds *Predicates) error {
 // A rule built here is not left unvalidated forever: the query still has to run, and the evaluator
 // checks every atom it reaches against the real vocabulary. What is lost is only the EARLY report,
 // for a caller that built its rule before any relation was installed.
-func validateWithoutVocabulary(q Query, src Source, preds *Predicates) error {
-	b := newValidationBase(src, preds)
+func validateWithoutVocabulary(q Query, reg *Registry) error {
+	b := newValidationBase(reg)
 	if _, _, err := b.checkRules(q.Rules); err != nil {
 		return err
 	}
@@ -96,10 +96,10 @@ func (b *Base) checkLiterals(lits []Literal) error {
 // It is deliberately NOT a usable evaluation base: it never reads a tuple, and nothing here
 // evaluates. Giving it its own constructor keeps it from being mistaken for one that answers
 // questions.
-func newValidationBase(src Source, preds *Predicates) *Base {
+func newValidationBase(reg *Registry) *Base {
 	return &Base{
-		src:      src,
-		preds:    preds,
+		src:      reg.Source(),
+		reg:      reg,
 		idb:      map[string][]idbTuple{},
 		idbArity: map[string]int{},
 		idbIdx:   map[idxKey]*idbIndex{},

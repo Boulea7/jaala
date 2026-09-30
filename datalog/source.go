@@ -50,9 +50,6 @@ type NoVocabularyHinter interface {
 	NoVocabularyHint() string
 }
 
-// installed reports whether the source serves any relation at all.
-func installed(src Source) bool { return src != nil && len(src.Relations()) > 0 }
-
 // MemSource is an in-memory Source, for tests and for hosts whose facts are already a handful of
 // tables. Declare a relation, then Add its tuples.
 type MemSource struct {

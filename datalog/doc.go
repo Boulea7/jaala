@@ -6,14 +6,19 @@
 // define derived relations, a goal to solve, and the columns to answer with. Parse reads the text
 // syntax; the builders (V, Rel, Pos, Def, Build, ...) construct the same Query in code.
 //
-// The engine knows nothing about any domain. A host supplies:
+// The engine knows nothing about any domain. A host supplies a Registry: one namespace tree in which
+// every name a query can call lives at a path, its segments separated by "." (edge, str.contains,
+// acme.power.rail_budget). A leaf of the tree is one of:
 //
-//   - a Source, serving its base relations as positional Tuples with citations;
-//   - Predicates, the filters and generators a query may call. StandardPredicates covers the string
-//     filters; a host adds its own, such as a walk over its graph.
+//   - a base relation, whose tuples come from the host's Source;
+//   - a predicate, a filter or generator the host computes. StandardPredicates registers the string
+//     tests under str (str.contains, str.prefix, ...) and absent at the root; a host adds its own,
+//     such as a walk over its graph.
 //
-// NewBase joins the two, and an Evaluator (Naive) answers a Query over the Base. A Base caches and
-// indexes what it reads, so one Base serves many queries, concurrently.
+// A segment is a module or a member, never both, and each path has one definer; the registry refuses
+// anything else when it is registered. NewBase builds a fact base over a Registry, and an Evaluator
+// (Naive) answers a Query over the Base. A Base caches and indexes what it reads, so one Base serves
+// many queries, concurrently.
 //
 // Evaluation is guaranteed to terminate because no rule can invent a value: every answer is built
 // from constants in the facts and values a host's generators draw from finite data. That guarantee
