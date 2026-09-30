@@ -1,0 +1,149 @@
+package datalog
+
+import (
+	"strings"
+	"testing"
+)
+
+// TestParse (WS3-029): the surface syntax parses atoms, comparisons, term kinds, and the
+// projection into the IR the evaluator runs.
+func TestParse(t *testing.T) {
+	q, err := Parse(`component.mpn(?ref,"REG-24"), net.max_voltage(?net,?v), ?v < 30 => ?ref, ?net`)
+	if err != nil {
+		t.Fatalf("Parse: %v", err)
+	}
+	if len(q.Goal.Literals) != 3 {
+		t.Fatalf("literals = %d, want 3", len(q.Goal.Literals))
+	}
+	// atom with a variable and a string constant
+	a0 := q.Goal.Literals[0].Pos
+	if a0 == nil || a0.Relation != "component.mpn" || len(a0.Args) != 2 {
+		t.Fatalf("literal 0 = %+v, want component.mpn/2", a0)
+	}
+	if a0.Args[0].Var != "ref" || a0.Args[1].Const == nil || a0.Args[1].Const.S != "REG-24" {
+		t.Errorf("component.mpn args = %+v, want ?ref, \"REG-24\"", a0.Args)
+	}
+	// comparison against a numeric literal (Num set, so it compares numerically)
+	c := q.Goal.Literals[2].Compare
+	if c == nil || c.Op != "<" || c.Right.Const == nil || c.Right.Const.Num == nil || *c.Right.Const.Num != 30 {
+		t.Errorf("comparison = %+v, want ?v < 30 (numeric)", c)
+	}
+	if len(q.Select) != 2 || q.Select[0].Var != "ref" || q.Select[1].Var != "net" {
+		t.Errorf("select = %v, want [?ref ?net]", q.Select)
+	}
+}
+
+// TestParseNegationAndAggregate (WS3-029 fast-follow): the surface parses a `not R(...)` literal
+// and a func(?x) aggregate projection column.
+func TestParseNegationAndAggregate(t *testing.T) {
+	q, err := Parse(`component.mpn(?r,?m), not param(?m,"VIN",?v) => ?m`)
+	if err != nil {
+		t.Fatalf("Parse negation: %v", err)
+	}
+	if q.Goal.Literals[1].Neg == nil || q.Goal.Literals[1].Neg.Relation != "param" {
+		t.Errorf("literal 1 = %+v, want a negated param atom", q.Goal.Literals[1])
+	}
+
+	q2, err := Parse(`component-on-net(?r,?n) => ?n, count(?r)`)
+	if err != nil {
+		t.Fatalf("Parse aggregate: %v", err)
+	}
+	if len(q2.Select) != 2 || q2.Select[0].Var != "n" || q2.Select[1].Agg == nil ||
+		q2.Select[1].Agg.Func != "count" || q2.Select[1].Agg.Var != "r" {
+		t.Errorf("select = %+v, want [?n count(?r)]", q2.Select)
+	}
+}
+
+// TestParseErrors (WS3-029): malformed queries are rejected with an error, not silently mis-parsed.
+func TestParseErrors(t *testing.T) {
+	for name, text := range map[string]string{
+		"empty":            ``,
+		"bad term":         `component.mpn(bareword) => ?x`,
+		"unterminated str": `component.mpn(?r,"REG) => ?r`,
+		"bad projection":   `component.mpn(?r,?m) => notavar`,
+		"double arrow":     `component.mpn(?r,?m) => ?r => ?m`,
+		"junk literal":     `this is not a query`,
+	} {
+		t.Run(name, func(t *testing.T) {
+			if _, err := Parse(text); err == nil {
+				t.Errorf("Parse(%q) succeeded; want an error", text)
+			}
+		})
+	}
+}
+
+// TestParseHaving: the group filter parses into Having rather than into the goal, so it is applied
+// after the reduce.
+func TestParseHaving(t *testing.T) {
+	q, err := Parse(`component-on-net(?r,?n) => ?n, count(?r) having count(?r) >= 2`)
+	if err != nil {
+		t.Fatalf("Parse: %v", err)
+	}
+	if len(q.Goal.Literals) != 1 {
+		t.Errorf("goal literals = %d, want 1 (the having must not land in the goal)", len(q.Goal.Literals))
+	}
+	if len(q.Having) != 1 {
+		t.Fatalf("Having = %+v, want one filter", q.Having)
+	}
+	h := q.Having[0]
+	if h.Left.Agg == nil || h.Left.Agg.Func != "count" || h.Left.Agg.Var != "r" || h.Op != ">=" || h.Right.Const == nil || h.Right.Const.S != "2" {
+		t.Errorf("Having[0] = %+v, want count(?r) >= 2", h)
+	}
+}
+
+// TestParseHavingRejectsAPlainComparison: a filter over a group key is a goal comparison written in
+// the wrong place, and the error says so rather than silently accepting a filter that never fires.
+func TestParseHavingRejectsAPlainComparison(t *testing.T) {
+	_, err := Parse(`component-on-net(?r,?n) => ?n having ?n < 2`)
+	if err == nil || !strings.Contains(err.Error(), "=>") {
+		t.Errorf("err = %v, want a complaint pointing at the goal", err)
+	}
+}
+
+// TestParseHavingKeywordNeedsAWordBoundary: "having" splits the projection only as a bare word, so a
+// name that merely contains those letters is left alone.
+func TestParseHavingKeywordNeedsAWordBoundary(t *testing.T) {
+	q, err := Parse(`shaving(?r,?n) => ?n, ?r`)
+	if err != nil {
+		t.Fatalf("Parse: %v", err)
+	}
+	if len(q.Having) != 0 {
+		t.Errorf("Having = %+v, want none: the relation is named shaving", q.Having)
+	}
+}
+
+// TestParseDistinctAggregate: distinct is a modifier inside the parens, and it labels its own column
+// so a projection may carry both spellings of one aggregate.
+func TestParseDistinctAggregate(t *testing.T) {
+	q, err := Parse(`component-on-net(?r,?n) => ?n, count(?r), count(distinct ?r), list(distinct ?r)`)
+	if err != nil {
+		t.Fatalf("Parse: %v", err)
+	}
+	if len(q.Select) != 4 {
+		t.Fatalf("Select = %+v, want four columns", q.Select)
+	}
+	if q.Select[1].Agg.Distinct {
+		t.Error("count(?r) parsed as distinct")
+	}
+	if !q.Select[2].Agg.Distinct || q.Select[2].Agg.Var != "r" {
+		t.Errorf("count(distinct ?r) = %+v", q.Select[2].Agg)
+	}
+	if !q.Select[3].Agg.Distinct || q.Select[3].Agg.Func != "list" {
+		t.Errorf("list(distinct ?r) = %+v", q.Select[3].Agg)
+	}
+	cols := q.Columns()
+	if len(cols) != 4 || cols[1] != "count(r)" || cols[2] != "count(distinct r)" {
+		t.Errorf("Columns() = %v, want the two count spellings to be different columns", cols)
+	}
+}
+
+// TestParseDistinctNeedsWhitespace: a variable whose name starts with the keyword is not a modifier.
+func TestParseDistinctNeedsWhitespace(t *testing.T) {
+	q, err := Parse(`component-on-net(?r,?distinctive) => ?r, count(?distinctive)`)
+	if err != nil {
+		t.Fatalf("Parse: %v", err)
+	}
+	if a := q.Select[1].Agg; a.Distinct || a.Var != "distinctive" {
+		t.Errorf("agg = %+v, want a plain count over ?distinctive", a)
+	}
+}
