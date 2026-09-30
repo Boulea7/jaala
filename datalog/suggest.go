@@ -1,59 +1,146 @@
 package datalog
 
-import "fmt"
+import (
+	"fmt"
+	"sort"
+	"strings"
+)
 
-// didYouMean returns a `; did you mean "X"?` hint for a relation name the engine does not know,
-// naming the closest known relation or predicate when one is a plausible typo, else "". It teaches
-// the vocabulary at the exact moment a user gets it wrong, since the most common newcomer error is a
-// mistyped or half-remembered relation name.
+// unknown describes a name the engine cannot resolve, for an error that follows "query: ". It names
+// what is missing and adds a hint, so the most common newcomer error, a mistyped or half-remembered
+// name, is answered with the vocabulary at the moment it is needed:
 //
-// When the Source serves NO relation it says that instead, because every name is unknown in that
-// state and a typo hint would send the reader hunting a spelling mistake they did not make. A host
-// that forgot to install its relations still runs; this is the one moment the omission is visible.
-func (b *Base) didYouMean(name string) string {
-	if !installed(b.src) {
-		if h, ok := b.src.(NoVocabularyHinter); ok {
+//	unknown relation "egde"; did you mean "edge"?
+//	unknown module "nett" in "nett.pin_count"; did you mean "net.pin_count"?
+//	"str" is a module, not a relation; it holds contains, glob, match, prefix, suffix
+//
+// A missing module is named as such because "unknown relation" would send the reader hunting a typo
+// in the last segment when the first one is wrong.
+func (b *Base) unknown(name string) string { return b.reg.unknown(name) }
+
+func (r *Registry) unknown(name string) string {
+	if !r.hasBase() {
+		return fmt.Sprintf("unknown relation %q%s", name, r.hint(name))
+	}
+	if r.isModule(name) {
+		return fmt.Sprintf("%q is a module, not a relation; it holds %s", name, strings.Join(r.children(name), ", "))
+	}
+	if mod, ok := r.missingModule(name); ok {
+		return fmt.Sprintf("unknown module %q in %q%s", mod, name, r.hint(name))
+	}
+	return fmt.Sprintf("unknown relation %q%s", name, r.hint(name))
+}
+
+// hint is the text after the name in an unknown-name error: `; did you mean "X"?` when a registered
+// name is a plausible typo, an explanation when no relation is registered at all, and "" otherwise.
+//
+// When no base relation is registered it says that instead of guessing, because every name is
+// unknown in that state and a typo hint would send the reader hunting a spelling mistake they did not
+// make. A host that forgot to install its relations still runs; this is the one moment the omission
+// is visible.
+func (r *Registry) hint(name string) string {
+	if !r.hasBase() {
+		if h, ok := r.Source().(NoVocabularyHinter); ok {
 			return "; " + h.NoVocabularyHint()
 		}
 		return "; no relations are installed"
 	}
-	if s := b.suggestRelation(name); s != "" {
+	if s := r.suggest(name); s != "" {
 		return fmt.Sprintf(`; did you mean %q?`, s)
 	}
 	return ""
 }
 
-// suggestCandidates is every name a suggestion may name: the Source's relations in the order it
-// prefers, then any predicate it did not already list, sorted.
-func (b *Base) suggestCandidates() []string {
-	rels := b.src.Relations()
-	seen := make(map[string]bool, len(rels))
-	out := make([]string, 0, len(rels))
-	for _, r := range rels {
-		if !seen[r] {
-			seen[r] = true
-			out = append(out, r)
+// missingModule reports the module part of a dotted name when no module of that path exists.
+func (r *Registry) missingModule(name string) (string, bool) {
+	i := strings.LastIndexByte(name, '.')
+	if i < 0 {
+		return "", false
+	}
+	mod := name[:i]
+	return mod, !r.isModule(mod)
+}
+
+// suggest returns the registered path a mistyped name most plausibly meant, or "".
+//
+// It searches where the name says to look. A name whose module exists is compared against that
+// module's members only, so `net.pin_cout` finds `net.pin_count` and never a closer-spelled member
+// of another module. A name whose module is missing is repaired at the module: the nearest existing
+// module stands in for it, and the member is suggested if that module holds it, else the module is.
+// A bare name that matches nothing at the root, but is the last segment of a member elsewhere, is
+// suggested at that path, which is what a query written before a name moved into a module needs.
+func (r *Registry) suggest(name string) string {
+	mod, leaf := "", name
+	if i := strings.LastIndexByte(name, '.'); i >= 0 {
+		mod, leaf = name[:i], name[i+1:]
+	}
+	if mod != "" && !r.isModule(mod) {
+		near := closest(mod, r.modulePaths())
+		if near == "" {
+			return ""
+		}
+		if _, ok := r.members[near+"."+leaf]; ok {
+			return near + "." + leaf
+		}
+		return near
+	}
+	var cands []string
+	for _, p := range r.candidates() {
+		if parent, _ := splitPath(p); parent == mod {
+			cands = append(cands, p)
 		}
 	}
-	for _, p := range b.preds.Names() {
-		if !seen[p] {
-			seen[p] = true
-			out = append(out, p)
+	best := closestBy(leaf, cands, func(p string) string { _, l := splitPath(p); return l })
+	if best == "" && mod == "" {
+		for _, p := range r.candidates() {
+			if _, l := splitPath(p); l == leaf && p != leaf {
+				return p
+			}
 		}
 	}
+	return best
+}
+
+// candidates is every member path a suggestion may name: base relations in the Source's order, then
+// predicates, sorted. On a tie the earlier candidate wins, which is why the Source controls the order.
+func (r *Registry) candidates() []string {
+	return append(append([]string(nil), r.baseOrder...), r.predicateNames()...)
+}
+
+// modulePaths is every module path, sorted.
+func (r *Registry) modulePaths() []string {
+	out := make([]string, 0, len(r.modules))
+	for m, n := range r.modules {
+		if n > 0 {
+			out = append(out, m)
+		}
+	}
+	sort.Strings(out)
 	return out
 }
 
-// suggestRelation returns the known name closest to `name` when it is within a plausible-typo
-// distance, else "", so a genuinely unrelated token gets no misleading suggestion. The threshold
-// scales with the name length (a longer name tolerates more slips) with a floor of 2. On a tie the
-// earlier candidate wins, which is why the Source controls the order.
-func (b *Base) suggestRelation(name string) string {
+// splitPath splits a path into its module and its last segment.
+func splitPath(p string) (module, leaf string) {
+	if i := strings.LastIndexByte(p, '.'); i >= 0 {
+		return p[:i], p[i+1:]
+	}
+	return "", p
+}
+
+// closest returns the candidate nearest to name when it is within a plausible-typo distance.
+func closest(name string, cands []string) string {
+	return closestBy(name, cands, func(s string) string { return s })
+}
+
+// closestBy is closest comparing name against key(candidate). The threshold scales with the name's
+// length (a longer name tolerates more slips) with a floor of 2, so an unrelated token gets no
+// misleading suggestion. On a tie the earlier candidate wins.
+func closestBy(name string, cands []string, key func(string) string) string {
 	best, bestDist := "", 0
-	for _, r := range b.suggestCandidates() {
-		d := levenshtein(name, r)
+	for _, c := range cands {
+		d := levenshtein(name, key(c))
 		if best == "" || d < bestDist {
-			best, bestDist = r, d
+			best, bestDist = c, d
 		}
 	}
 	threshold := len(name)/4 + 1
@@ -113,11 +200,8 @@ func didYouMeanValue(allowed []string, got string) string {
 	return fmt.Sprintf(", did you mean %q?", best)
 }
 
-// DidYouMean returns the hint the engine appends to an unknown-relation error: `; did you mean "X"?`
-// when a known relation or predicate is a plausible typo of name, an explanation when src serves no
-// relation at all, and "" otherwise. It is exported for a host that validates relation names itself,
-// such as one checking a rule that arrived over its own wire format, so its errors read the same as
-// the engine's.
-func DidYouMean(src Source, preds *Predicates, name string) string {
-	return (&Base{src: src, preds: preds}).didYouMean(name)
-}
+// DidYouMean returns the hint the engine appends to an unknown-name error: `; did you mean "X"?`
+// when a registered path is a plausible typo of name, an explanation when reg holds no base relation
+// at all, and "" otherwise. It is exported for a host that validates names itself, such as one
+// checking a rule that arrived over its own wire format, so its errors read the same as the engine's.
+func DidYouMean(reg *Registry, name string) string { return reg.hint(name) }

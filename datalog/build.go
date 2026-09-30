@@ -54,18 +54,19 @@ func MustParse(s string) Query {
 	return q
 }
 
-// Reads returns the base relations a query references, the ones src serves, sorted and deduped.
-// Rule-defined relations and predicates are excluded; only relations the Source serves count as
+// Reads returns the base relations a query references, the ones reg holds as base relations, sorted
+// and deduped. Rule-defined relations and predicates are excluded; only base relations count as
 // reads. A host uses it to declare which facts a query-backed check depends on.
-func Reads(q Query, src Source) []string {
+func Reads(q Query, reg *Registry) []string {
 	seen := map[string]bool{}
 	visit := func(b Body) {
 		for _, l := range b.Literals {
 			for _, a := range []*Atom{l.Pos, l.Neg} {
-				if a != nil && src != nil {
-					if _, ok := src.Schema(a.Relation); ok {
-						seen[a.Relation] = true
-					}
+				if a == nil {
+					continue
+				}
+				if _, ok := reg.schema(a.Relation); ok {
+					seen[a.Relation] = true
 				}
 			}
 		}
@@ -105,14 +106,14 @@ func Reads(q Query, src Source) []string {
 // since it is the obvious first idea: requiring the first literal to share a variable with the head
 // catches neither offender, because both `reaches(?n, ...)` and `component-on-net(?pu, ?n)` do mention
 // the head variable. Mentioning it is not binding it.
-func GeneratorFirstRules(q Query, preds *Predicates) []string {
+func GeneratorFirstRules(q Query, reg *Registry) []string {
 	var out []string
 	for _, r := range q.Rules {
 		for _, l := range r.Body.Literals {
 			if l.Pos == nil {
 				continue // a comparison or negation cannot enumerate, so it is not the opening scan
 			}
-			bi, ok := preds.lookup(l.Pos.Relation)
+			bi, ok := reg.predicate(l.Pos.Relation)
 			if ok && bi.generator() && len(l.Pos.Args) > 0 && l.Pos.Args[0].Const == nil {
 				out = append(out, r.Head.Relation)
 			}

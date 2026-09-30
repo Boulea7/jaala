@@ -33,9 +33,18 @@ func graph() *MemSource {
 	return src
 }
 
+// std is src's registry with the standard predicates, the vocabulary most tests query.
+func std(src Source) *Registry {
+	r := MustRegistry(src)
+	if err := StandardPredicates(r); err != nil {
+		panic(err)
+	}
+	return r
+}
+
 func eval(t *testing.T, src Source, text string) []Row {
 	t.Helper()
-	rows, err := Naive{}.Eval(mustParse(t, text), NewBase(src, StandardPredicates()))
+	rows, err := Naive{}.Eval(mustParse(t, text), NewBase(std(src)))
 	if err != nil {
 		t.Fatalf("Eval(%q): %v", text, err)
 	}
@@ -47,7 +56,7 @@ func evalErr(src Source, text string) error {
 	if err != nil {
 		return err
 	}
-	_, err = Naive{}.Eval(q, NewBase(src, StandardPredicates()))
+	_, err = Naive{}.Eval(q, NewBase(std(src)))
 	return err
 }
 

@@ -75,7 +75,7 @@ func (b *Base) checkRules(rules []Rule) (map[string][]Rule, [][]string, error) {
 		if _, ok := b.schemaOf(rel); ok {
 			return nil, nil, fmt.Errorf("query: rule head %q redefines a fact relation", rel)
 		}
-		if b.preds.Has(rel) {
+		if _, ok := b.reg.predicate(rel); ok {
 			return nil, nil, fmt.Errorf("query: rule head %q redefines a built-in relation", rel)
 		}
 		ar := len(r.Head.Args)
@@ -123,8 +123,8 @@ func (b *Base) validateRule(r Rule) error {
 		// Only when there IS a vocabulary to be unknown in. An empty registry cannot distinguish a
 		// misspelled relation from one nobody installed, and answering "unknown" there would be a
 		// statement about the query that the registry has no standing to make (see Validate).
-		if installed(b.src) && !b.knownRelation(rel) {
-			return fmt.Errorf("query: rule %q reads unknown relation %q%s", r.Head.Relation, rel, b.didYouMean(rel))
+		if b.reg.hasBase() && !b.knownRelation(rel) {
+			return fmt.Errorf("query: rule %q reads %s", r.Head.Relation, b.unknown(rel))
 		}
 	}
 	bound := map[Var]bool{}
@@ -142,7 +142,7 @@ func (b *Base) validateRule(r Rule) error {
 // knownRelation reports whether a relation name resolves to something the evaluator can read: an EDB
 // fact relation, a built-in (reaches or a string filter), or a rule-defined IDB relation.
 func (b *Base) knownRelation(rel string) bool {
-	if b.preds.Has(rel) {
+	if _, ok := b.reg.predicate(rel); ok {
 		return true
 	}
 	if _, ok := b.schemaOf(rel); ok {

@@ -7,12 +7,11 @@ import (
 	"strings"
 )
 
-// Base is the queryable fact base: a Source's relations, indexed by binding pattern on first use,
-// plus the Predicates a query may call. Built once per dataset; many queries reuse it, including
-// concurrently.
+// Base is the queryable fact base: a Registry's names, with its Source's relations indexed by binding
+// pattern on first use. Built once per dataset; many queries reuse it, including concurrently.
 type Base struct {
-	src   Source
-	preds *Predicates
+	src Source
+	reg *Registry
 	// edb caches each base relation's tuples the first time a query reads it, and the indexes over
 	// them. It belongs to the SHARED Base because a Source's tuples are immutable for the Base's
 	// life, so a second query over the same data reuses what the first one built.
@@ -39,13 +38,14 @@ type Base struct {
 	noIndex bool
 }
 
-// NewBase builds a fact base over a Source, answering with the given predicates. A nil preds means
-// no computed predicates at all; most hosts want StandardPredicates, plus their own.
-func NewBase(src Source, preds *Predicates) *Base {
-	return &Base{src: src, preds: preds, edb: newEDBCache(), work: new(int64)}
+// NewBase builds a fact base over a registry: its base relations read from the registry's Source,
+// and its predicates. The registry is read, never changed, so a host should finish registering
+// before building a Base over it. A nil reg is a base that knows no names at all.
+func NewBase(reg *Registry) *Base {
+	return &Base{src: reg.Source(), reg: reg, edb: newEDBCache(), work: new(int64)}
 }
 
-// Unindexed returns a Base over the same Source and predicates that scans every base relation
+// Unindexed returns a Base over the same registry that scans every base relation
 // instead of consulting an index. It answers exactly as the indexed Base does, only slower, which is
 // what makes it useful: comparing the two is how a host asserts that indexing changed no answer on
 // its own data, rather than hoping so.
@@ -57,6 +57,9 @@ func (b *Base) Unindexed() *Base {
 
 // Source returns the Source this base reads.
 func (b *Base) Source() Source { return b.src }
+
+// Registry returns the registry this base resolves names in.
+func (b *Base) Registry() *Registry { return b.reg }
 
 // Work reports how many candidate comparisons the solver has performed against this Base. It exists
 // for scaling guards: assert the RATIO of work at n and 2n rather than any absolute number, so the
@@ -101,7 +104,7 @@ type Naive struct{}
 // provenance of the facts that produced it.
 func (Naive) Eval(q Query, b *Base) ([]Row, error) {
 	if len(q.Rules) > 0 {
-		nb := *b // shallow copy: src, preds and the edb cache are shared; idb is fresh per query
+		nb := *b // shallow copy: src, reg and the edb cache are shared; idb is fresh per query
 		nb.idb = map[string][]idbTuple{}
 		nb.idbArity = map[string]int{}
 		// Fresh alongside idb, and for the same reason: an index of derived tuples describes THIS
@@ -176,7 +179,7 @@ func (b *Base) validateNegations(goal Body, negs []Literal) error {
 		rel := lit.Neg.Relation
 		ok, known := b.arityAccepts(rel, len(lit.Neg.Args))
 		if !known {
-			return fmt.Errorf("query: negation over unknown relation %q%s", rel, b.didYouMean(rel))
+			return fmt.Errorf("query: negation over %s", b.unknown(rel))
 		}
 		if !ok {
 			return fmt.Errorf("query: negated relation %q takes %s args, got %d", rel, b.arityLabelOf(rel), len(lit.Neg.Args))
