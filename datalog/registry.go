@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"sort"
 	"strings"
+	"sync"
 )
 
 // A Registry is the namespace tree a query's names resolve in. Every callable name lives at a PATH,
@@ -32,6 +33,20 @@ type Registry struct {
 	// baseOrder is the base relations in registration order, which is the Source's own order: a
 	// did-you-mean tie goes to the earlier one, so the Source keeps control of which name wins.
 	baseOrder []string
+	// units is every AddModule call, in order. A unit is the scope of its private members.
+	units []*unit
+	// check caches the semantic pass over the units (see Check). Any registration resets it.
+	check *checkState
+}
+
+// checkState is the cached result of Check: every unit's rules with their names resolved to paths,
+// or the error that stopped resolution. Behind a pointer so the lazily-filled cache is shared rather
+// than copied, and guarded because concurrent Evals may be the first to ask for it.
+type checkState struct {
+	mu       sync.Mutex
+	done     bool
+	err      error
+	resolved [][]Rule // by unit index
 }
 
 // memberKind is what defines a path.
@@ -40,11 +55,15 @@ type memberKind int
 const (
 	kindBase memberKind = iota
 	kindPredicate
+	kindDerived
 )
 
 func (k memberKind) String() string {
-	if k == kindPredicate {
+	switch k {
+	case kindPredicate:
 		return "predicate"
+	case kindDerived:
+		return "derived relation"
 	}
 	return "base relation"
 }
@@ -53,6 +72,7 @@ type member struct {
 	kind   memberKind
 	schema Schema  // kindBase
 	pred   Builtin // kindPredicate
+	unit   int     // kindDerived: index into Registry.units
 }
 
 // NewRegistry returns a registry holding every relation src serves, each as a base relation at the
@@ -62,7 +82,7 @@ type member struct {
 // It fails when two of the Source's own names break the tree's rules, such as `pin` beside
 // `pin.net`, because a query could not name both. A nil src gives an empty registry.
 func NewRegistry(src Source) (*Registry, error) {
-	r := &Registry{src: src, members: map[string]member{}, modules: map[string]int{}}
+	r := &Registry{src: src, members: map[string]member{}, modules: map[string]int{}, check: &checkState{}}
 	if src == nil {
 		return r, nil
 	}
@@ -114,6 +134,15 @@ func (r *Registry) AddPredicate(path string, b Builtin) error {
 
 // add places m at path after checking the path's shape and the tree's two rules.
 func (r *Registry) add(path string, m member) error {
+	if err := r.admits(path, m); err != nil {
+		return err
+	}
+	r.put(path, m)
+	return nil
+}
+
+// admits reports why m cannot be placed at path, or nil when it can.
+func (r *Registry) admits(path string, m member) error {
 	if err := checkPath(path); err != nil {
 		return err
 	}
@@ -130,11 +159,17 @@ func (r *Registry) add(path string, m member) error {
 			return fmt.Errorf("query: %q needs %q to be a module, but it is a %s", path, mod, prev.kind)
 		}
 	}
+	return nil
+}
+
+// put places m at path, which admits has accepted, and invalidates the semantic check.
+func (r *Registry) put(path string, m member) {
 	r.members[path] = m
+	segs := strings.Split(path, ".")
 	for i := 1; i < len(segs); i++ {
 		r.modules[strings.Join(segs[:i], ".")]++
 	}
-	return nil
+	r.check = &checkState{}
 }
 
 // checkPath refuses a path with an empty segment or a character a query cannot spell, since a member
@@ -158,7 +193,7 @@ func checkPath(path string) error {
 // changing the registry it copied. A test adding a predicate uses it to leave a shared registry as it
 // found it.
 func (r *Registry) Clone() *Registry {
-	out := &Registry{src: r.src, members: make(map[string]member, len(r.members)), modules: make(map[string]int, len(r.modules))}
+	out := &Registry{src: r.src, members: make(map[string]member, len(r.members)), modules: make(map[string]int, len(r.modules)), check: &checkState{}}
 	for k, v := range r.members {
 		out.members[k] = v
 	}
@@ -166,6 +201,7 @@ func (r *Registry) Clone() *Registry {
 		out.modules[k] = v
 	}
 	out.baseOrder = append([]string(nil), r.baseOrder...)
+	out.units = append([]*unit(nil), r.units...) // a unit is never changed after AddModule
 	return out
 }
 
@@ -237,17 +273,29 @@ func childOf(module, path string) (string, bool) {
 	return seg, true
 }
 
-// predicateNames returns every predicate path, sorted.
-func (r *Registry) predicateNames() []string {
+// namesOf returns every path of the given kind, sorted.
+func (r *Registry) namesOf(k memberKind) []string {
 	if r == nil {
 		return nil
 	}
 	var out []string
 	for p, m := range r.members {
-		if m.kind == kindPredicate {
+		if m.kind == k {
 			out = append(out, p)
 		}
 	}
 	sort.Strings(out)
 	return out
+}
+
+// derived returns the unit defining the derived relation at path.
+func (r *Registry) derived(path string) (int, bool) {
+	if r == nil {
+		return 0, false
+	}
+	m, ok := r.members[path]
+	if !ok || m.kind != kindDerived {
+		return 0, false
+	}
+	return m.unit, true
 }

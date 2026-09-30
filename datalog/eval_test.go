@@ -225,7 +225,7 @@ func TestRulesDoNotLeakBetweenQueriesOnOneBase(t *testing.T) {
 }
 
 func TestRuleHeadCannotRedefineARelationOrPredicate(t *testing.T) {
-	for _, q := range []string{`edge(?a, ?b) :- node(?a), node(?b); edge(?a, ?b)`, `str.contains(?a, ?b) :- edge(?a, ?b); str.contains(?a, ?b)`} {
+	for _, q := range []string{`edge(?a, ?b) :- node(?a), node(?b); edge(?a, ?b)`, `absent(?a) :- node(?a); absent(?a)`} {
 		if err := evalErr(graph(), q); err == nil || !strings.Contains(err.Error(), "redefines") {
 			t.Errorf("%s: err = %v, want a redefinition error", q, err)
 		}

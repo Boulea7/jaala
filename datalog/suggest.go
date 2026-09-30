@@ -102,9 +102,12 @@ func (r *Registry) suggest(name string) string {
 }
 
 // candidates is every member path a suggestion may name: base relations in the Source's order, then
-// predicates, sorted. On a tie the earlier candidate wins, which is why the Source controls the order.
+// predicates and derived relations, each sorted. On a tie the earlier candidate wins, which is why the
+// Source controls the order. A private member is never registered at a path, so it is never offered.
 func (r *Registry) candidates() []string {
-	return append(append([]string(nil), r.baseOrder...), r.predicateNames()...)
+	out := append([]string(nil), r.baseOrder...)
+	out = append(out, r.namesOf(kindPredicate)...)
+	return append(out, r.namesOf(kindDerived)...)
 }
 
 // modulePaths is every module path, sorted.

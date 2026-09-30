@@ -57,7 +57,14 @@ func MustParse(s string) Query {
 // Reads returns the base relations a query references, the ones reg holds as base relations, sorted
 // and deduped. Rule-defined relations and predicates are excluded; only base relations count as
 // reads. A host uses it to declare which facts a query-backed check depends on.
+//
+// It counts reads inside the derived modules the query links in, since a check built on
+// net.has_test_point depends on whatever net.has_test_point reads. When the query does not link, it
+// reports the query's own reads, and Validate says why.
 func Reads(q Query, reg *Registry) []string {
+	if linked, err := Link(q, reg); err == nil {
+		q = linked
+	}
 	seen := map[string]bool{}
 	visit := func(b Body) {
 		for _, l := range b.Literals {
@@ -85,7 +92,8 @@ func Reads(q Query, reg *Registry) []string {
 
 // GeneratorFirstRules reports the rules that OPEN their body with a value-producing generator whose
 // own input argument is unbound, naming each offender by its head relation. Empty means no rule starts
-// by enumerating the whole design.
+// by enumerating the whole design. It runs on the linked query, so a module rule the query reaches is
+// checked as well as the query's own.
 //
 // This is the shape that makes a generated rule non-terminating rather than merely slow. The evaluator
 // is a naive backtracking join running literals left to right, and `reaches` is the one built-in that
@@ -107,6 +115,9 @@ func Reads(q Query, reg *Registry) []string {
 // catches neither offender, because both `reaches(?n, ...)` and `component-on-net(?pu, ?n)` do mention
 // the head variable. Mentioning it is not binding it.
 func GeneratorFirstRules(q Query, reg *Registry) []string {
+	if linked, err := Link(q, reg); err == nil {
+		q = linked
+	}
 	var out []string
 	for _, r := range q.Rules {
 		for _, l := range r.Body.Literals {
@@ -120,8 +131,7 @@ func GeneratorFirstRules(q Query, reg *Registry) []string {
 			break // only the FIRST positive literal opens the scan
 		}
 	}
-	sort.Strings(out)
-	return out
+	return displayNames(out)
 }
 
 // NonInjectiveRules reports rules whose body puts two DIFFERENT variables in the SAME argument

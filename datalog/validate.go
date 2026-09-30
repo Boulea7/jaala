@@ -1,7 +1,8 @@
 package datalog
 
 // Validate reports why a query cannot run, reading only the query and the registry it would run
-// against: the schemas of its base relations and its predicates. No tuple is read.
+// against: the schemas of its base relations, its predicates and its derived modules, which it links
+// first (see Link). No tuple is read.
 //
 // It exists because a rule compiled from a query used to be un-rejectable: RuleFromQuery returned no
 // error, and the failure surfaced only when the rule ran, where it was swallowed into a clean pass
@@ -14,6 +15,10 @@ package datalog
 // Solving stops at the first atom that yields nothing, so on an empty base every atom after the first
 // goes unexamined and a wrong-arity relation in position two passes validation.
 func Validate(q Query, reg *Registry) error {
+	q, err := Link(q, reg)
+	if err != nil {
+		return err
+	}
 	// A registry holding NO base relation cannot say a relation is unknown, and refusing every query on that
 	// basis would be a confident wrong answer about the query rather than about the vocabulary. This
 	// is not a corner case: a host that builds rules at package init may do so before its relations
