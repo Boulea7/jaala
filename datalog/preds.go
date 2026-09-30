@@ -37,6 +37,12 @@ type Builtin struct {
 	MaxArity int
 	// Holds is a filter's test over its (all-bound) argument values.
 	Holds func(args []Value) (bool, error)
+	// Labels names the arguments, and Types says what each denotes, exactly as for a base relation's
+	// Schema. Both are optional; they are what a host lists and what column kinds are read from.
+	Labels []string
+	Types  []ArgType
+	// Doc is a one-line description a host shows when the predicate is listed.
+	Doc string
 	// Gen is a generator's enumeration. args holds each argument's value where the binding fixes
 	// it. Gen calls emit once per solution with a value for EVERY argument, plus the citations that
 	// justify it; the engine unifies each solution against the atom, so one that disagrees with a
@@ -87,16 +93,20 @@ func StandardPredicates(r *Registry) error {
 		path string
 		b    Builtin
 	}{
-		{"str.contains", strFilter(strings.Contains)},
-		{"str.prefix", strFilter(strings.HasPrefix)},
-		{"str.suffix", strFilter(strings.HasSuffix)},
-		{"str.glob", patFilter(CompileGlob)},
-		{"str.match", patFilter(CompilePattern)},
+		{"str.contains", strFilter(strings.Contains, "substring", "reports whether a string contains a substring")},
+		{"str.prefix", strFilter(strings.HasPrefix, "prefix", "reports whether a string starts with a prefix")},
+		{"str.suffix", strFilter(strings.HasSuffix, "suffix", "reports whether a string ends with a suffix")},
+		{"str.glob", patFilter(CompileGlob, "pattern", "reports whether a string matches a glob pattern")},
+		{"str.match", patFilter(CompilePattern, "regex", "reports whether a string matches a regular expression")},
 		// absent(?x) is the only way to ASK about a field the source did not state. Before
 		// Value.Absent existed such a field bound to the empty string, so it was not merely hard to
 		// select, it was indistinguishable from one that was stated as "". Its negation is the useful
 		// half as often as not: `not absent(?min)` reads "this row states a lower bound".
-		{"absent", Filter(1, func(args []Value) (bool, error) { return args[0].Absent, nil })},
+		{"absent", Builtin{
+			Arity: 1, Labels: []string{"value"},
+			Doc:   "reports whether the source left a field unstated, for any value",
+			Holds: func(args []Value) (bool, error) { return args[0].Absent, nil },
+		}},
 	} {
 		if err := r.AddPredicate(p.path, p.b); err != nil {
 			return err
@@ -107,22 +117,31 @@ func StandardPredicates(r *Registry) error {
 
 // strFilter wraps a string(value, pattern) bool as a 2-arity filter (the shape of
 // str.contains/str.prefix/str.suffix).
-func strFilter(fn func(s, pat string) bool) Builtin {
-	return Filter(2, func(args []Value) (bool, error) { return fn(args[0].S, args[1].S), nil })
+func strFilter(fn func(s, pat string) bool, second, doc string) Builtin {
+	b := Filter(2, func(args []Value) (bool, error) { return fn(args[0].S, args[1].S), nil })
+	return stringTest(b, second, doc)
+}
+
+// stringTest labels a two-argument string test and types both arguments as strings.
+func stringTest(b Builtin, second, doc string) Builtin {
+	b.Labels = []string{"string", second}
+	b.Types = []ArgType{{Type: TypeString}, {Type: TypeString}}
+	b.Doc = doc
+	return b
 }
 
 // patFilter is strFilter for the two PATTERN predicates (str.glob, str.match): the pattern must be compiled
 // before it can be tested, so a malformed one is an EVAL ERROR rather than a non-match. That
 // direction matters — a bad pattern that quietly matched nothing would read as "the data is clean"
 // on a completeness check.
-func patFilter(compile func(string) (*regexp.Regexp, error)) Builtin {
-	return Filter(2, func(args []Value) (bool, error) {
+func patFilter(compile func(string) (*regexp.Regexp, error), second, doc string) Builtin {
+	return stringTest(Filter(2, func(args []Value) (bool, error) {
 		re, err := compile(args[1].S)
 		if err != nil {
 			return false, err
 		}
 		return re.MatchString(args[0].S), nil
-	})
+	}), second, doc)
 }
 
 // extendBuiltin runs a builtin under the current binding.
@@ -194,15 +213,12 @@ func (b *Base) schemaOf(rel string) (Schema, bool) { return b.reg.schema(rel) }
 // "no results", which reads as a fact about the data rather than a typo. An empty answer to a
 // question that was never valid is the worst available outcome.
 func (b *Base) checkArgValues(atom *Atom, s Schema) error {
-	if len(s.Domains) == 0 {
-		return nil
-	}
 	for i, arg := range atom.Args {
-		if arg.Const == nil || i >= len(s.Labels) || i >= len(s.Domains) {
+		if arg.Const == nil || i >= len(s.Labels) || i >= len(s.Types) {
 			continue
 		}
 		label := s.Labels[i]
-		allowed := s.Domains[i]
+		allowed := s.Types[i].Domain
 		if len(allowed) == 0 {
 			continue
 		}
@@ -240,6 +256,9 @@ func (b *Base) checkAtom(atom *Atom) error {
 	if b.isIDB(rel) {
 		if len(atom.Args) != b.idbArity[rel] {
 			return fmt.Errorf("query: relation %q takes %d args, got %d", rel, b.idbArity[rel], len(atom.Args))
+		}
+		if s, ok := b.reg.derivedSchema(rel); ok {
+			return b.checkArgValues(atom, s)
 		}
 		return nil
 	}

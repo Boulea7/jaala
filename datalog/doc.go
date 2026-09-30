@@ -23,9 +23,20 @@
 // evaluator never sees a module.
 //
 // A segment is a module or a member, never both, and each path has one definer; the registry refuses
-// anything else when it is registered. NewBase builds a fact base over a Registry, and an Evaluator
-// (Naive) answers a Query over the Base. A Base caches and indexes what it reads, so one Base serves
-// many queries, concurrently.
+// anything else when it is registered. Inside a module's text a bare name is that module's member
+// first and the root's second. Registry.Check resolves and validates every module together, so a
+// broken library is reported before any query runs.
+//
+// Every member has a signature: per argument, a name and an ArgType saying what it denotes (an
+// opaque entity kind such as "net", a kind taken per row from another argument, a kind located
+// through an owner argument, or a scalar type with a unit), optionally closed over a vocabulary. Base
+// relations and predicates declare theirs; a derived relation may declare its own in a rule head,
+// `has_test_point(?n: net) :- ...`, and what it leaves undeclared is inferred through its rules and
+// marked so. Registry.Lookup and Registry.Members answer what is at a path, for a host offering
+// drill-down discovery, and ColumnKinds carries the kinds through to a query's answer columns.
+//
+// NewBase builds a fact base over a Registry, and an Evaluator (Naive) answers a Query over the
+// Base. A Base caches and indexes what it reads, so one Base serves many queries, concurrently.
 //
 // Evaluation is guaranteed to terminate because no rule can invent a value: every answer is built
 // from constants in the facts and values a host's generators draw from finite data. That guarantee

@@ -17,12 +17,18 @@ type Schema struct {
 	// Labels names the arguments for error messages ("ref_des", "net"). Optional, and may be shorter
 	// than Arity; an unlabelled argument is simply never named.
 	Labels []string
-	// Domains optionally closes an argument over a fixed vocabulary. A CONSTANT outside it is
-	// rejected before evaluation rather than silently matching nothing, because an empty answer to
-	// a question that was never valid reads as a fact about the data. A nil or empty entry, or an
-	// index past the end, leaves that argument open. A domain is only enforced on a labelled
-	// argument, since the error has to name what the argument is.
-	Domains [][]string
+	// Types says what each argument denotes: an entity kind, a scalar type with its unit, and
+	// optionally a closed vocabulary (see ArgType). Optional, and may be shorter than Arity; a missing
+	// entry is an argument the relation says nothing about. Kinds and owners name other arguments by
+	// their Labels, so a relation declaring them labels its arguments.
+	//
+	// A Domain here is enforced: a CONSTANT outside it is rejected before evaluation rather than
+	// silently matching nothing, because an empty answer to a question that was never valid reads as
+	// a fact about the data. It is only enforced on a labelled argument, since the error has to name
+	// what the argument is.
+	Types []ArgType
+	// Doc is a one-line description a host shows when the relation is listed (see Registry.Lookup).
+	Doc string
 }
 
 // A Source is where the base (extensional) relations come from. The engine asks it for a relation's
@@ -73,7 +79,7 @@ func (m *MemSource) Declare(rel string, labels ...string) *MemSource {
 	return m
 }
 
-// DeclareSchema adds a relation with an explicit schema, for one that needs Domains.
+// DeclareSchema adds a relation with an explicit schema, for one that declares Types or a Doc.
 func (m *MemSource) DeclareSchema(rel string, s Schema) *MemSource {
 	if _, ok := m.schemas[rel]; !ok {
 		m.order = append(m.order, rel)

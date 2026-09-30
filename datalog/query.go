@@ -42,6 +42,10 @@ type Rule struct {
 	Head Atom
 	Body Body
 	Hops int // 0 = run to fixpoint; >0 = bound recursion depth (reserved; the fixpoint is finite regardless)
+	// HeadTypes are the types the rule declares for its head's arguments, by position, written
+	// `has_test_point(?n: net)`. Empty, or a zero entry, declares nothing for that argument, which is
+	// then inferred (see Registry.Lookup). KindFrom and Owner name other head VARIABLES, without "?".
+	HeadTypes []ArgType
 }
 
 // A Body is an implicit conjunction (AND) of Literals. Disjunction (OR) is several Rules sharing

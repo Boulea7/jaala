@@ -2,6 +2,7 @@ package datalog
 
 import (
 	"fmt"
+	"slices"
 	"strconv"
 	"strings"
 )
@@ -9,7 +10,9 @@ import (
 // Parse reads a text query into a Query. Grammar (EBNF; whitespace is insignificant):
 //
 //	query       = { rule ";" } goal ;                 (* zero or more rules, then one goal *)
-//	rule        = atom ":-" literals ;                (* head :- body; defines a derived relation *)
+//	rule        = head ":-" literals ;                (* head :- body; defines a derived relation *)
+//	head        = relation "(" [ harg { "," harg } ] ")" ;
+//	harg        = term [ ":" decl ] ;                 (* a declared type: ?n: net, see parseArgType *)
 //	goal        = literals [ "=>" projection [ "having" havings ] ] ;
 //	literals    = literal { "," literal } ;
 //	literal     = atom | "not" atom | comparison ;    (* "not atom" = stratified negation *)
@@ -99,9 +102,9 @@ func splitHaving(proj string) (sel, having string) {
 		case c == '"':
 			inQuote = !inQuote
 		case inQuote:
-		case c == '(':
+		case c == '(' || c == '{':
 			depth++
-		case c == ')':
+		case c == ')' || c == '}':
 			depth--
 		case depth == 0 && isWordAt(proj, i, "having"):
 			return proj[:i], proj[i+len("having"):]
@@ -262,7 +265,7 @@ func splitClauses(s string) (rules []Rule, goals []string, err error) {
 // parseRule parses one "head :- body" clause into a Rule. The head is a single atom; the body is a
 // conjunction of literals, the same grammar a goal body uses.
 func parseRule(headText, bodyText string) (Rule, error) {
-	head, err := parseAtom(headText)
+	head, types, err := parseHead(headText)
 	if err != nil {
 		return Rule{}, err
 	}
@@ -270,7 +273,56 @@ func parseRule(headText, bodyText string) (Rule, error) {
 	if err != nil {
 		return Rule{}, err
 	}
-	return Rule{Head: head, Body: Body{Literals: lits}}, nil
+	return Rule{Head: head, Body: Body{Literals: lits}, HeadTypes: types}, nil
+}
+
+// parseHead parses a rule head, whose arguments may declare their types: `x(?n: net, ?v)`. The
+// declarations come back by position, nil when the head declares none. A KindFrom or Owner must name
+// another variable of the same head, since a type can only point at something the relation carries.
+func parseHead(s string) (Atom, []ArgType, error) {
+	open := strings.IndexByte(s, '(')
+	if open < 0 || !strings.HasSuffix(strings.TrimSpace(s), ")") || !strings.Contains(s, ":") {
+		a, err := parseAtom(s)
+		return a, nil, err
+	}
+	inner := strings.TrimSpace(s)
+	inner = inner[open+1 : len(inner)-1]
+	var plain []string
+	var types []ArgType
+	declared := false
+	for _, a := range splitTop(inner, ",") {
+		if strings.TrimSpace(a) == "" {
+			continue
+		}
+		var t ArgType
+		if parts := splitTop(a, ":"); len(parts) == 2 {
+			var err error
+			if t, err = parseArgType(parts[1]); err != nil {
+				return Atom{}, nil, err
+			}
+			if v := strings.TrimSpace(parts[0]); len(v) < 2 || v[0] != '?' {
+				return Atom{}, nil, fmt.Errorf("query: only a ?variable can declare a type, not %q", v)
+			}
+			a, declared = parts[0], true
+		}
+		plain = append(plain, a)
+		types = append(types, t)
+	}
+	head, err := parseAtom(strings.TrimSpace(s[:open]) + "(" + strings.Join(plain, ",") + ")")
+	if err != nil || !declared {
+		return head, nil, err
+	}
+	for i, t := range types {
+		for _, ref := range []string{t.KindFrom, t.Owner} {
+			if ref == "" {
+				continue
+			}
+			if ref == string(head.Args[i].Var) || !slices.ContainsFunc(head.Args, func(a Term) bool { return string(a.Var) == ref }) {
+				return Atom{}, nil, fmt.Errorf("query: %s's type %q must name another variable of its head", head.Relation, t)
+			}
+		}
+	}
+	return head, types, nil
 }
 
 // splitProjection splits a query on the top-level "=>" into body and projection (the projection
@@ -457,8 +509,8 @@ func isRelation(name string) bool {
 	return true
 }
 
-// splitTop splits s on sep at the top level: not inside parentheses and not inside a double-quoted
-// string. Returns the whole string as one element when sep does not occur at the top level.
+// splitTop splits s on sep at the top level: not inside parentheses or braces and not inside a
+// double-quoted string. Returns the whole string as one element when sep does not occur at the top level.
 func splitTop(s, sep string) []string {
 	var parts []string
 	depth, inQuote, start := 0, false, 0
@@ -469,9 +521,9 @@ func splitTop(s, sep string) []string {
 			inQuote = !inQuote
 		case inQuote:
 			// skip
-		case c == '(':
+		case c == '(' || c == '{':
 			depth++
-		case c == ')':
+		case c == ')' || c == '}':
 			depth--
 		case depth == 0 && strings.HasPrefix(s[i:], sep):
 			parts = append(parts, s[start:i])

@@ -47,6 +47,8 @@ type checkState struct {
 	done     bool
 	err      error
 	resolved [][]Rule // by unit index
+	// sigs is every public derived member's signature, declared or inferred.
+	sigs map[string][]ArgSig
 }
 
 // memberKind is what defines a path.
