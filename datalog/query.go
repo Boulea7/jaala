@@ -1,0 +1,165 @@
+package datalog
+
+// A Query is a datalog program answered over a fact base: Rules define derived (IDB) relations and
+// Goal is the conjunction to solve. Goal's free variables — narrowed by Select — are the answer
+// columns. EDB relations come from the Base's Source; IDB relations come from Rules; predicates are
+// computed (see Predicates).
+//
+// The whole IR is what Parse produces. For the query text
+//
+//	component.mpn(?r,?m), net.max_voltage(?n,?v), ?v < 30 => ?r, ?n
+//
+// the Query is: no Rules; Goal.Literals = [ Atom component.mpn(?r,?m), Atom net.max_voltage(?n,?v),
+// Compare(?v < 30) ]; Select = [?r, ?n].
+type Query struct {
+	Rules []Rule
+	Goal  Body
+	// Select is the answer columns: each item is a variable (a group key) or an aggregate over the
+	// group formed by the variable columns (count/min/max/sum/list). Empty selects Goal's variables
+	// in first-seen order. When any item is an aggregate, the result is grouped-and-reduced.
+	Select []Term
+	// Having filters the GROUPS a Select's aggregates form, after the reduce. Each item is a Compare
+	// whose left term is an aggregate, so `=> ?p, count(?n) having count(?n) < 2` keeps the groups of
+	// size one. A Goal comparison cannot express this: it is applied per binding, before there is a
+	// group to count.
+	//
+	// An aggregate may appear here without being selected, which is how you ask for the subjects
+	// rather than the tally. That still groups: a Having aggregate makes the query grouped-and-reduced
+	// exactly as a Select one does, and its column is computed, filtered on, and then not printed
+	// (Columns is keyed off Select alone).
+	Having []Compare
+}
+
+// A Rule derives its Head for every binding satisfying Body. A rule is recursive when its Head
+// relation is reachable from a Body atom in the rule dependency graph; recursion terminates by
+// finiteness of the fact base (no function symbols). Rules materialize by stratified fixpoint
+// (query.materialize): a program that reads a relation under negation from inside that relation's own
+// recursive cycle is rejected, which is what keeps `not` well-defined.
+//
+// Example (transitive closure over a derived edge): connected(?a,?c) :- connected(?a,?b), link(?b,?c)
+// is Rule{Head: Atom connected(?a,?c), Body: [Atom connected(?a,?b), Atom link(?b,?c)]}.
+type Rule struct {
+	Head Atom
+	Body Body
+	Hops int // 0 = run to fixpoint; >0 = bound recursion depth (reserved; the fixpoint is finite regardless)
+}
+
+// A Body is an implicit conjunction (AND) of Literals. Disjunction (OR) is several Rules sharing
+// one Head relation — never an OR node — so the program stays stratifiable. Example: the body of
+// `a(?x), b(?x,?y), ?y < 5` is Body{Literals: [Atom a, Atom b, Compare]}.
+type Body struct{ Literals []Literal }
+
+// A Literal is exactly one of: a positive atom, a negated atom (stratified negation), or a
+// comparison built-in. Exactly one field is non-nil. Examples: `param(?m,"VIN",?v)` is
+// Literal{Pos: &Atom{...}}; `not param(?m,"VIN",?v)` is Literal{Neg: ...}; `?v < 30` is
+// Literal{Compare: ...}.
+type Literal struct {
+	Pos     *Atom
+	Neg     *Atom
+	Compare *Compare
+}
+
+// An Atom applies a relation to argument terms: Relation(Args...). Relation is an EDB name
+// a Source serves, a computed predicate, or an IDB name a Rule defines. Example: `component.mpn(?r,?m)`
+// is Atom{Relation: "component.mpn", Args: [Var("r"), Var("m")]}.
+type Atom struct {
+	Relation string
+	Args     []Term
+}
+
+// A Compare is a built-in predicate over two terms, evaluated once both are bound: Left Op Right,
+// Op in {<, <=, =, !=, >, >=}. Numeric when both bound values carry a number, string otherwise.
+type Compare struct {
+	Left  Term
+	Op    string
+	Right Term
+}
+
+// A Term is a variable, a constant, or an aggregate over the group formed by the projection's plain
+// variables. Exactly one of Var/Const/Agg is set (Var == "" means not a variable). An Agg is legal in
+// a Select column and on the left of a Having; anywhere else there is no group for it to reduce.
+type Term struct {
+	Var   Var
+	Const *Value
+	Agg   *Aggregate
+}
+
+// Var is a logic variable name (the leading "?" is stripped at parse time).
+type Var string
+
+// A Value is a scalar fact value. A fact carries a string and, when numeric, a number, so a bound
+// term keeps both: string equality and numeric comparison both work with no re-parse.
+type Value struct {
+	S   string
+	Num *float64
+	// Absent marks a field the source did not state AT ALL, which is different from an empty string
+	// and different from zero. A datasheet row stating only a maximum leaves its minimum absent.
+	//
+	// It is a field rather than something inferred from a nil Num because the two are not the same
+	// question: a non-numeric string also has a nil Num, and conflating them means the engine
+	// RECONSTRUCTS absence from a coincidence instead of representing it. Before it was
+	// representable, an absent field bound to the empty string and ordering fell through to string
+	// order, where "" precedes everything and so "passed" every upper-bound test, including against a
+	// negative threshold.
+	Absent bool
+	// BaseUnit is the SI BASE symbol this value's number is expressed in ("V", "A", UnitOhm), or ""
+	// for a dimensionless value or a non-numeric one.
+	//
+	// NEVER A PREFIXED SPELLING. Scale normalization is the host's job and happens before a value
+	// reaches the engine, so a millivolt reading is already volts by the time it reaches a query.
+	// This layer checks DIMENSION (is this volts or amps) and never converts SCALE. Naming the field
+	// for that invariant is deliberate: a projector that set "mV" here would make a
+	// volts-against-millivolts comparison REFUSE rather than convert, which is a fresh silent wrong
+	// answer wearing the fix's clothes. A host should test that it never publishes a prefixed unit.
+	//
+	// Distinct from the `param.unit` RELATION, which reports what the vendor PRINTED ("mV") for a
+	// human checking a citation. This says what the number IS in, for a machine comparing it.
+	BaseUnit string
+}
+
+// An Aggregate reduces Var over each group of the projection's plain-variable columns. Example:
+// `component-on-net(?ref,?net) => ?net, count(?ref)` groups by ?net and counts the ?ref bindings
+// per group (parts per net); Aggregate{Func: "count", Var: "ref"}. min/max/sum reduce Var's numeric
+// value over the group, and list joins its values.
+//
+// EVERY AGGREGATE REDUCES BINDINGS, NOT VALUES, unless Distinct is set. A binding is the unit the
+// whole evaluator deals in, so a group holds one row per solution and a goal that binds anything Var
+// does not determine repeats Var once per combination. On a net carrying 7 test points and 20
+// capacitors, `component.class(?tp,"test_point"), component-on-net(?tp,?net),
+// component.class(?c,"capacitor"), component-on-net(?c,?net) => ?net, count(?tp)` reports 140.
+//
+// Distinct reduces the SET of Var's values instead: count(distinct ?tp) is 7 on that net, and
+// list(distinct ?tp) names those 7 once each. It is uniform across every function rather than
+// special-cased on count, deliberately. Making list implicitly distinct would put count(?tp) and
+// list(?tp) in one projection disagreeing about what the group holds, 140 against 7, with nothing in
+// the query saying why — which is this same trap one function over, and harder to see because both
+// columns look right on a group of size one.
+//
+// A derived relation is the other way to get a distinct reduce, by projecting the extra variable away
+// before the group forms:
+//
+//	has_tp(?n) :- component-on-net(?x,?n), component.class(?x,"test_point");
+//	component.class(?p,"capacitor"), component-on-net(?p,?n), has_tp(?n) => ?p, count(?n)
+//
+// The rule makes has_tp a SET of nets, so count(?n) counts nets whether or not Distinct is set.
+type Aggregate struct {
+	Func string // count | min | max | sum | list
+	Var  Var
+	// Distinct reduces Var's distinct values rather than one entry per binding. Spelled
+	// `count(distinct ?x)`. Bare aggregates keep their binding-wise meaning, so no existing query
+	// moves.
+	Distinct bool
+}
+
+// Row is one answer: the projected variables bound to values, plus the provenance of the base
+// facts that produced it — so an answer stays verifiable.
+type Row struct {
+	Bind  map[Var]Value
+	Cites []string
+}
+
+// v builds a variable term; k builds a constant string term. Kept unexported helpers for tests and
+// the parser to construct queries without the struct noise.
+func v(name string) Term { return Term{Var: Var(name)} }
+func k(s string) Term    { return Term{Const: &Value{S: s}} }
+func num(f float64) Term { return Term{Const: &Value{S: ftoa(f), Num: &f}} }

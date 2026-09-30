@@ -1,0 +1,32 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - name: gofmt
+        run: |
+          out=$(gofmt -l .)
+          if [ -n "$out" ]; then echo "gofmt needed:"; echo "$out"; exit 1; fi
+      - name: vet
+        run: go vet ./...
+      - name: test
+        run: go test -race -count=1 ./...
+      # The engine runs in the browser for its first host, so it may import nothing that does not
+      # build for WebAssembly: no os, net or cgo.
+      - name: wasm build
+        run: GOOS=js GOARCH=wasm go build ./...
+      # Only the standard library. A dependency here becomes every host's dependency.
+      - name: standard library only
+        run: |
+          extra=$(go list -deps ./... | grep '\.' | grep -v '^github.com/panyam/jaala' | grep -v '^vendor/' || true)
+          if [ -n "$extra" ]; then echo "non-stdlib dependencies:"; echo "$extra"; exit 1; fi
