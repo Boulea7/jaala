@@ -28,6 +28,8 @@ import (
 //	number      = [ "+" | "-" ] digit { digit } [ "." digit { digit } ] ;
 //	relation    = ident { "." | "-" | ident } ;       (* a path: net.max_voltage, component-on-net *)
 //
+// A "#" outside a string starts a comment that runs to the end of the line.
+//
 // Clauses are separated by ";"; a clause with ":-" is a rule, and the one clause without one is the
 // goal. A rule head defines a derived (IDB) relation the goal (or another rule) can then read, and a
 // rule whose body reads its own head is recursion (evaluated to a stratified fixpoint). Some relation
@@ -54,9 +56,18 @@ import (
 // Compare(?v < 30)], Select: [?r, ?n]}. And `component-on-net(?r,?n) => ?n, count(?r)` parses to a
 // Goal with one Atom and Select [Term{Var:"n"}, Term{Agg: &Aggregate{Func:"count", Var:"r"}}].
 func Parse(s string) (Query, error) {
-	rules, goalText, err := splitClauses(s)
+	rules, goals, err := splitClauses(stripComments(s))
 	if err != nil {
 		return Query{}, err
+	}
+	var goalText string
+	switch len(goals) {
+	case 1:
+		goalText = goals[0]
+	case 0:
+		return Query{}, fmt.Errorf("query: no goal clause (a query needs one clause without %q to ask)", ":-")
+	default:
+		return Query{}, fmt.Errorf("query: %d goal clauses; a query asks one goal (rules use %q, the goal does not)", len(goals), ":-")
 	}
 	body, proj, err := splitProjection(goalText)
 	if err != nil {
@@ -182,11 +193,50 @@ func parseHavingOne(piece string) (Compare, error) {
 	return Compare{}, fmt.Errorf("query: having %q is not a comparison (want an aggregate, an operator and a value, as in %q)", piece, "count(?n) < 2")
 }
 
-// splitClauses separates a query into its rule definitions and its single goal clause. Clauses are
-// separated by ";"; a clause containing ":-" is a rule (head :- body), and the one remaining clause
-// is the goal. A query with no ";" and no ":-" is just a goal, so the common case is unchanged.
-func splitClauses(s string) (rules []Rule, goal string, err error) {
-	var goals []string
+// ParseRules reads text that holds rules only, such as a derived module's body (see
+// Registry.AddModule). It accepts the same clause syntax as Parse and refuses a goal clause, since
+// rules with nothing to ask are a definition rather than a query.
+func ParseRules(s string) ([]Rule, error) {
+	rules, goals, err := splitClauses(stripComments(s))
+	if err != nil {
+		return nil, err
+	}
+	if len(goals) > 0 {
+		return nil, fmt.Errorf("query: %q is a goal; rules-only text defines relations and asks nothing", goals[0])
+	}
+	return rules, nil
+}
+
+// stripComments blanks every "#" comment, from the "#" to the end of its line, unless the "#" sits
+// inside a string. Blanking rather than deleting keeps the clause text otherwise intact.
+func stripComments(s string) string {
+	if !strings.Contains(s, "#") {
+		return s
+	}
+	b := []byte(s)
+	inQuote, inComment := false, false
+	for i, c := range b {
+		switch {
+		case inComment:
+			if c == '\n' {
+				inComment = false
+			} else {
+				b[i] = ' '
+			}
+		case c == '"':
+			inQuote = !inQuote
+		case c == '#' && !inQuote:
+			inComment = true
+			b[i] = ' '
+		}
+	}
+	return string(b)
+}
+
+// splitClauses separates text into its rule definitions and its goal clauses. Clauses are separated
+// by ";"; a clause containing ":-" is a rule (head :- body), and every other clause is a goal. The
+// caller decides how many goals it accepts: a query asks exactly one, a module none.
+func splitClauses(s string) (rules []Rule, goals []string, err error) {
 	for _, clause := range splitTop(s, ";") {
 		clause = strings.TrimSpace(clause)
 		if clause == "" {
@@ -199,21 +249,14 @@ func splitClauses(s string) (rules []Rule, goal string, err error) {
 		case 2:
 			rule, rerr := parseRule(parts[0], parts[1])
 			if rerr != nil {
-				return nil, "", rerr
+				return nil, nil, rerr
 			}
 			rules = append(rules, rule)
 		default:
-			return nil, "", fmt.Errorf("query: clause %q has more than one %q", clause, ":-")
+			return nil, nil, fmt.Errorf("query: clause %q has more than one %q", clause, ":-")
 		}
 	}
-	switch len(goals) {
-	case 1:
-		return rules, goals[0], nil
-	case 0:
-		return nil, "", fmt.Errorf("query: no goal clause (a query needs one clause without %q to ask)", ":-")
-	default:
-		return nil, "", fmt.Errorf("query: %d goal clauses; a query asks one goal (rules use %q, the goal does not)", len(goals), ":-")
-	}
+	return rules, goals, nil
 }
 
 // parseRule parses one "head :- body" clause into a Rule. The head is a single atom; the body is a

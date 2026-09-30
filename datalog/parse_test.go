@@ -147,3 +147,10 @@ func TestParseDistinctNeedsWhitespace(t *testing.T) {
 		t.Errorf("agg = %+v, want a plain count over ?distinctive", a)
 	}
 }
+
+func TestCommentsRunToTheEndOfTheLineOutsideStrings(t *testing.T) {
+	q := mustParse(t, "# nodes named with a hash\nnode(?n), ?n = \"a#b\" # trailing\n=> ?n")
+	if len(q.Goal.Literals) != 2 || q.Goal.Literals[1].Compare.Right.Const.S != "a#b" || len(q.Select) != 1 {
+		t.Errorf("parsed %+v, want two literals keeping \"a#b\" and one column", q)
+	}
+}

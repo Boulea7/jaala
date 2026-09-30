@@ -3,6 +3,7 @@ package datalog
 import (
 	"fmt"
 	"sort"
+	"strings"
 )
 
 // idbTuple is one derived fact of a rule-defined (IDB) relation: positional values plus the
@@ -259,11 +260,7 @@ func valsEqual(a, b []Value) bool {
 // unstratifiable `p :- ..., not q` with `q :- ..., not p`: each negative edge forces the other
 // strictly higher every round, relaxation never settles, and the program is rejected.
 func stratify(rules []Rule, arity map[string]int) ([][]string, error) {
-	type edge struct {
-		from, to string
-		neg      bool
-	}
-	var edges []edge
+	var edges []depEdge
 	for _, r := range rules {
 		head := r.Head.Relation
 		for _, lit := range r.Body.Literals {
@@ -275,7 +272,7 @@ func stratify(rules []Rule, arity map[string]int) ([][]string, error) {
 				continue // comparison
 			}
 			if _, isIDB := arity[atom.Relation]; isIDB {
-				edges = append(edges, edge{from: head, to: atom.Relation, neg: neg})
+				edges = append(edges, depEdge{from: head, to: atom.Relation, neg: neg})
 			}
 		}
 	}
@@ -300,7 +297,7 @@ func stratify(rules []Rule, arity map[string]int) ([][]string, error) {
 			break
 		}
 		if round == n {
-			return nil, fmt.Errorf("query: rules are not stratifiable (recursion through negation)")
+			return nil, fmt.Errorf("query: rules are not stratifiable (recursion through negation: %s)", strings.Join(negativeCycle(edges), ", "))
 		}
 	}
 	byStratum := map[int][]string{}
@@ -319,4 +316,43 @@ func stratify(rules []Rule, arity map[string]int) ([][]string, error) {
 		}
 	}
 	return out, nil
+}
+
+// depEdge is one rule dependency: from's rule reads to, under negation when neg.
+type depEdge struct {
+	from, to string
+	neg      bool
+}
+
+// negativeCycle names the relations whose rules read, under negation, a relation that depends back on
+// them: the relations a recursion-through-negation error is about. Private names are shown as written.
+func negativeCycle(edges []depEdge) []string {
+	adj := map[string][]string{}
+	for _, e := range edges {
+		adj[e.from] = append(adj[e.from], e.to)
+	}
+	reaches := func(from, to string) bool {
+		seen := map[string]bool{}
+		stack := []string{from}
+		for len(stack) > 0 {
+			n := stack[len(stack)-1]
+			stack = stack[:len(stack)-1]
+			if n == to {
+				return true
+			}
+			if seen[n] {
+				continue
+			}
+			seen[n] = true
+			stack = append(stack, adj[n]...)
+		}
+		return false
+	}
+	var out []string
+	for _, e := range edges {
+		if e.neg && reaches(e.to, e.from) {
+			out = append(out, e.from, e.to)
+		}
+	}
+	return displayNames(out)
 }

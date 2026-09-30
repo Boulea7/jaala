@@ -5,6 +5,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync/atomic"
 )
 
 // Base is the queryable fact base: a Registry's names, with its Source's relations indexed by binding
@@ -68,7 +69,7 @@ func (b *Base) Work() int64 {
 	if b.work == nil {
 		return 0
 	}
-	return *b.work
+	return atomic.LoadInt64(b.work)
 }
 
 // edbTuples returns a base relation's tuples, reading them from the Source once per Base.
@@ -97,12 +98,16 @@ type Evaluator interface {
 // covers all of them.
 type Naive struct{}
 
-// Eval answers the query. It solves the positive body (atoms + comparisons) by backtracking,
+// Eval answers the query. It links the query first (see Link), then solves the positive body (atoms + comparisons) by backtracking,
 // filters each binding through the negated literals (stratified negation), then projects — a plain
 // select-project, or a group-and-reduce when the projection contains an aggregate. Results are
 // deduplicated and sorted, so a query is a deterministic, regenerable view; each row carries the
 // provenance of the facts that produced it.
 func (Naive) Eval(q Query, b *Base) ([]Row, error) {
+	q, err := Link(q, b.reg)
+	if err != nil {
+		return nil, err
+	}
 	if len(q.Rules) > 0 {
 		nb := *b // shallow copy: src, reg and the edb cache are shared; idb is fresh per query
 		nb.idb = map[string][]idbTuple{}
@@ -130,7 +135,7 @@ func (Naive) Eval(q Query, b *Base) ([]Row, error) {
 	}
 
 	var raw []*binding
-	err := solve(pos, 0, newBinding(), b, func(bnd *binding) error {
+	err = solve(pos, 0, newBinding(), b, func(bnd *binding) error {
 		ok, err := passesNegations(bnd, negs, b)
 		if err != nil {
 			return err

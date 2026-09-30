@@ -13,7 +13,14 @@
 //   - a base relation, whose tuples come from the host's Source;
 //   - a predicate, a filter or generator the host computes. StandardPredicates registers the string
 //     tests under str (str.contains, str.prefix, ...) and absent at the root; a host adds its own,
-//     such as a walk over its graph.
+//     such as a walk over its graph;
+//   - a derived relation, written as Datalog rules and registered with AddModule, so a relation
+//     defined once sits beside the base relations it builds on (net.has_test_point next to
+//     net.pin_count) and any query can call it.
+//
+// A query naming a derived relation pulls in the module that defines it, and whatever that module
+// reads, when it is linked (Link, which Eval does first). A linked query is an ordinary query: the
+// evaluator never sees a module.
 //
 // A segment is a module or a member, never both, and each path has one definer; the registry refuses
 // anything else when it is registered. NewBase builds a fact base over a Registry, and an Evaluator

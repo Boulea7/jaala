@@ -3,6 +3,7 @@ package datalog
 import (
 	"strconv"
 	"sync"
+	"sync/atomic"
 )
 
 // Fact lookup by binding pattern.
@@ -139,10 +140,11 @@ type edbCache struct {
 	idx map[idxKey]edbIndex
 }
 
-// countWork records one candidate comparison. See Base.work.
+// countWork records one candidate comparison. See Base.work. Atomic because Evals sharing a Base
+// share the counter.
 func (b *Base) countWork() {
 	if b.work != nil {
-		*b.work++
+		atomic.AddInt64(b.work, 1)
 	}
 }
 
