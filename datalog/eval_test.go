@@ -119,7 +119,7 @@ func TestWrongArityIsAnError(t *testing.T) {
 }
 
 func TestClosedDomainRejectsAConstantOutsideIt(t *testing.T) {
-	src := NewMemSource().DeclareSchema("role", Schema{Arity: 2, Labels: []string{"node", "role"}, Domains: [][]string{nil, {"source", "sink"}}})
+	src := NewMemSource().DeclareSchema("role", Schema{Arity: 2, Labels: []string{"node", "role"}, Types: []ArgType{{}, {Domain: []string{"source", "sink"}}}})
 	src.Add("role", Tuple{Vals: []Value{S("a"), S("source")}})
 	err := evalErr(src, `role(?n, "sorce")`)
 	if err == nil || !strings.Contains(err.Error(), `did you mean "source"`) {

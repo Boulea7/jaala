@@ -13,6 +13,7 @@ type unit struct {
 	module   string
 	rules    []Rule // as written: heads bare, bodies unresolved
 	privates map[string]bool
+	docs     map[string]string // by bare member name, from the comment lines above its first rule
 }
 
 // AddModule registers derived relations, written as Datalog rules, in the module at path. Each rule
@@ -34,6 +35,10 @@ type unit struct {
 //
 // Several calls may register at one module path, provided each member path has one definer, which is
 // how a host's standard library and a project's own relations share a module.
+//
+// A rule head may declare its arguments' types, `has_test_point(?n: net)`; an argument no head
+// declares is inferred (see Registry.Lookup). The comment lines directly above a member's first rule
+// are its doc.
 func (r *Registry) AddModule(path, text string) error {
 	if path != "" {
 		if err := checkPath(path); err != nil {
@@ -44,7 +49,7 @@ func (r *Registry) AddModule(path, text string) error {
 	if err != nil {
 		return fmt.Errorf("%w (in module %q)", err, path)
 	}
-	u := &unit{module: path, rules: rules, privates: map[string]bool{}}
+	u := &unit{module: path, rules: rules, privates: map[string]bool{}, docs: moduleDocs(text)}
 	arity := map[string]int{}
 	var public []string
 	for _, rule := range rules {
@@ -140,6 +145,19 @@ func (r *Registry) resolveAll() ([][]Rule, error) {
 	if _, _, err := b.checkRules(all); err != nil {
 		return nil, err
 	}
+	t := newTyper(r, all)
+	sigs := map[string][]ArgSig{}
+	for path, m := range r.members {
+		if m.kind != kindDerived {
+			continue
+		}
+		sig, err := t.signature(path)
+		if err != nil {
+			return nil, err
+		}
+		sigs[path] = sig
+	}
+	r.check.sigs = sigs
 	if r.hasBase() {
 		for _, rule := range all {
 			if err := b.checkLiterals(rule.Body.Literals); err != nil {
@@ -169,7 +187,7 @@ func (r *Registry) resolveRule(u *unit, id int, rule Rule) Rule {
 		}
 		return n
 	}
-	out := Rule{Head: renameAtom(rule.Head, name), Hops: rule.Hops}
+	out := Rule{Head: renameAtom(rule.Head, name), Hops: rule.Hops, HeadTypes: rule.HeadTypes}
 	for _, lit := range rule.Body.Literals {
 		switch {
 		case lit.Pos != nil:
@@ -244,4 +262,31 @@ func displayNames(names []string) []string {
 	}
 	sort.Strings(out)
 	return out
+}
+
+// moduleDocs collects, for each member, the comment lines directly above the first rule that defines
+// it. A blank line ends a comment block, so a file header is not mistaken for its first member's doc.
+func moduleDocs(text string) map[string]string {
+	docs := map[string]string{}
+	var pending []string
+	for _, line := range strings.Split(text, "\n") {
+		tl := strings.TrimSpace(line)
+		switch {
+		case strings.HasPrefix(tl, "#"):
+			pending = append(pending, strings.TrimSpace(tl[1:]))
+			continue
+		case tl == "":
+			pending = nil
+			continue
+		}
+		if open := strings.IndexByte(tl, '('); open > 0 && len(pending) > 0 {
+			if name := strings.TrimSpace(tl[:open]); isRelation(name) {
+				if _, ok := docs[name]; !ok {
+					docs[name] = strings.Join(pending, " ")
+				}
+			}
+		}
+		pending = nil
+	}
+	return docs
 }
