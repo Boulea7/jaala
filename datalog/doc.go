@@ -22,8 +22,10 @@
 // ColumnKinds carries the kinds through to a query's answer columns.
 //
 // A Base caches and indexes what it reads, so one Base serves many queries, concurrently, and an
-// Evaluator answers a Query over it. SemiNaive is the one to run. Naive is the reference: kept simple
-// and unoptimized so every faster strategy can be tested against it.
+// Evaluator answers a Query over it. SemiNaive is the one to run: it derives recursive rules
+// semi-naively and plans each body, so a literal runs once as much as possible is bound and a
+// generator once one of its Modes is satisfied. Naive is the reference: written order, naive
+// fixpoint, kept simple so every faster strategy can be tested against it.
 //
 // Evaluation is guaranteed to terminate because no rule can invent a value: every answer is built
 // from constants in the facts and values a host's generators draw from finite data. That guarantee

@@ -190,3 +190,39 @@ func TestNsImportsNoEngine(t *testing.T) {
 		t.Errorf("positive control: datalog's imports %v do not include ns, so this check sees nothing", engine.Imports)
 	}
 }
+
+func TestAGeneratorMustDeclareItsModes(t *testing.T) {
+	gen := func(src Source, args []Arg, emit func([]Value, []string) error) error { return nil }
+	v := MustVocabulary(nil)
+	wantErr(t, v.AddPredicate("walk", Builtin{Arity: 2, Gen: gen}), `generator "walk" declares no Modes`)
+	wantErr(t, v.AddPredicate("walk", Builtin{Arity: 2, Modes: [][]bool{{true}}, Gen: gen}), `generator "walk" has a mode of 1 positions, want 2`)
+	wantErr(t, v.AddPredicate("walk", Builtin{Arity: 2, MaxArity: 3, Modes: [][]bool{{true, false}}, Gen: gen}), `has a mode of 2 positions, want 3`)
+	if err := v.AddPredicate("walk", Builtin{Arity: 2, MaxArity: 3, Modes: [][]bool{{true, false, false}}, Gen: gen}); err != nil {
+		t.Error(err)
+	}
+	if err := v.AddPredicate("pos", Filter(1, func([]Value) (bool, error) { return true, nil })); err != nil {
+		t.Errorf("a filter needs no modes: %v", err)
+	}
+}
+
+func TestSatisfiedReadsEachMode(t *testing.T) {
+	gen := Builtin{Arity: 2, MaxArity: 3, Modes: [][]bool{{true, false, false}, {false, true, true}}, Gen: func(Source, []Arg, func([]Value, []string) error) error { return nil }}
+	for _, c := range []struct {
+		bound []bool
+		want  bool
+	}{
+		{[]bool{true, false}, true},         // the first mode
+		{[]bool{false, true, true}, true},   // the second
+		{[]bool{false, true}, true},         // the second, its third position past this call's arity
+		{[]bool{false, true, false}, false}, // the second needs its third position bound
+		{[]bool{false, false}, false},
+	} {
+		if got := gen.Satisfied(c.bound); got != c.want {
+			t.Errorf("Satisfied(%v) = %v, want %v", c.bound, got, c.want)
+		}
+	}
+	filter := Filter(2, func([]Value) (bool, error) { return true, nil })
+	if filter.Satisfied([]bool{true, false}) || !filter.Satisfied([]bool{true, true}) {
+		t.Error("a filter is satisfied exactly when every argument is bound")
+	}
+}

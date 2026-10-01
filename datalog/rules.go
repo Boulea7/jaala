@@ -130,6 +130,9 @@ func (b *Base) validateRule(r Rule) error {
 			return fmt.Errorf("query: rule %q reads %s", r.Head.Relation, b.reg.Unknown(rel))
 		}
 	}
+	if err := checkModes(b, whereRule(r), r.Body); err != nil {
+		return err
+	}
 	bound := map[Var]bool{}
 	for _, vv := range positiveVars(r.Body) {
 		bound[vv] = true

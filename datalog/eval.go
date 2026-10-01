@@ -153,15 +153,22 @@ type Naive struct{}
 // literals (stratified negation), then projects: a plain select-project, or a group-and-reduce when
 // the projection contains an aggregate. Results are deduplicated and sorted, so a query is a
 // deterministic, regenerable view; each row carries the provenance of the facts that produced it.
-func (n Naive) Eval(q Query, b *Base) ([]Row, error) { return evaluate(q, b, n.materialize) }
+func (n Naive) Eval(q Query, b *Base) ([]Row, error) { return evaluate(q, b, nil, n.materialize) }
 
 // evaluate answers q over b, deriving its rules with the evaluator's fixpoint. Everything else is
 // shared: Base holds the derived relations and the primitives that read and extend them (checkRules,
-// applyRule, solve), and an evaluator decides only how to iterate them to a fixpoint.
-func evaluate(q Query, b *Base, fixpoint func(*Base, []Rule) error) ([]Row, error) {
+// applyRule, solve), and an evaluator decides only how to iterate them to a fixpoint and, through
+// rewrite (nil for none), how to rewrite the linked query first.
+func evaluate(q Query, b *Base, rewrite func(*Base, Query) Query, fixpoint func(*Base, []Rule) error) ([]Row, error) {
 	q, err := Link(q, b.reg)
 	if err != nil {
 		return nil, err
+	}
+	if err := checkModes(b, "the query", q.Goal); err != nil {
+		return nil, err
+	}
+	if rewrite != nil {
+		q = rewrite(b, q)
 	}
 	if len(q.Rules) > 0 {
 		nb := *b // shallow copy: src, reg and the edb cache are shared; idb is fresh per query

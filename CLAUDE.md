@@ -46,9 +46,15 @@ go list -deps ./... | grep '\.' | grep -v '^github.com/panyam/jaala' | grep -v '
   as a pass.
 - **`Naive` is the reference evaluator and stays unoptimized.** Every faster strategy (`SemiNaive`
   now; join planning and magic sets, #7) must answer exactly as it does. The test helpers
-  (`eval`, `evalErr`, `evalReg`, `evalRegErr`) route through `both()`, which runs Naive and
-  SemiNaive and panics on any difference in rows, citations or errors, so a new evaluator or option
-  belongs in `both()` too. `seminaive_test.go` adds a seeded random-graph corpus.
+  (`eval`, `evalErr`, `evalReg`, `evalRegErr`) route through `both()`, which runs Naive,
+  `SemiNaive{WrittenOrder: true}` (must match exactly: rows, citations, errors) and the planned
+  `SemiNaive{}` (same rows, and Naive's error whenever it errors; its citations may come from
+  another derivation). A new evaluator or option belongs in `both()` too. `seminaive_test.go` adds a
+  seeded random-graph corpus, and `plan_test.go` a clause-order shuffle property.
+- **Generators declare `Modes`; `checkModes` is shared validation, the planner is SemiNaive's.** A
+  body that can never satisfy a generator is refused by every evaluator and by `Validate` with one
+  message. Planning lives in `plan.go`, called only by `SemiNaive` (see the strategy-on-its-type
+  rule: nothing planner-specific goes on `Base`).
 - Fixtures: `graph()` and the `eval`/`evalErr`/`col`/`std`/`baseFor` helpers in `helpers_test.go`;
   `withModules`/`evalReg` in `module_test.go`; the agni-shaped `circuit()` in `signature_test.go`;
   `vocabulary()` (no Source) in `baseover_test.go`; the `stub` language in `ns/vocabulary_test.go`.

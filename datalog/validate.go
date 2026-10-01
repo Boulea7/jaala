@@ -46,6 +46,9 @@ func Validate(q Query, reg *ns.Vocabulary) error {
 	if err := b.checkLiterals(q.Goal.Literals); err != nil {
 		return err
 	}
+	if err := checkModes(b, "the query", q.Goal); err != nil {
+		return err
+	}
 	_, negs := splitNegations(q.Goal.Literals)
 	if err := b.validateNegations(q.Goal, negs); err != nil {
 		return err

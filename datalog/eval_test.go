@@ -145,7 +145,7 @@ func TestFilterNeedsBoundArguments(t *testing.T) {
 // (or out of every node when ?a is unbound). It exercises the path a host's own graph walk takes.
 func succRegistry() *ns.Vocabulary {
 	r := std(graph())
-	err := r.AddPredicate("succ", ns.Builtin{Arity: 2, Gen: func(src ns.Source, args []ns.Arg, emit func([]ns.Value, []string) error) error {
+	err := r.AddPredicate("succ", ns.Builtin{Arity: 2, Modes: [][]bool{{true, false}, {false, false}}, Gen: func(src ns.Source, args []ns.Arg, emit func([]ns.Value, []string) error) error {
 		for _, t := range src.Tuples("edge") {
 			if args[0].Bound && t.Vals[0].S != args[0].Value.S {
 				continue
@@ -176,13 +176,6 @@ func TestGeneratorBindsNegatesAndCites(t *testing.T) {
 	rows, err = Naive{}.Eval(mustParse(t, `succ("a", "c")`), b)
 	if err != nil || len(rows) != 0 {
 		t.Errorf("succ(a, c) = %v, %v; want nothing", rows, err)
-	}
-}
-
-func TestGeneratorFirstRulesNamesAnUnboundOpeningGenerator(t *testing.T) {
-	q := mustParse(t, `bad(?x) :- succ(?a, ?x); good(?x) :- node(?a), succ(?a, ?x); good(?x)`)
-	if got := GeneratorFirstRules(q, succRegistry()); len(got) != 1 || got[0] != "bad" {
-		t.Errorf("GeneratorFirstRules = %v, want [bad]", got)
 	}
 }
 

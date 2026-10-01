@@ -7,8 +7,8 @@ import (
 )
 
 // Link returns q with every derived module it reaches expanded into its rules, so the result is an
-// ordinary query that evaluates without the vocabulary's modules. Naive.Eval, Validate, Reads and
-// GeneratorFirstRules link first; a host calls Link itself to inspect or cache the expanded program.
+// ordinary query that evaluates without the vocabulary's modules. Every evaluator, Validate and
+// Reads link first; a host calls Link itself to inspect or cache the expanded program.
 //
 // Loading is transitive and by need, one relation at a time: a query naming net.has_test_point pulls
 // in the rules defining net.has_test_point, then the rules of whatever those read, and so on. A
