@@ -3,6 +3,7 @@ package datalog
 import (
 	"fmt"
 	"github.com/panyam/jaala/ns"
+	"github.com/panyam/jaala/stdlib"
 	"reflect"
 	"sort"
 	"strings"
@@ -43,7 +44,7 @@ func std(src ns.Source) *ns.Vocabulary {
 	if err := v.AddLanguage(Language); err != nil {
 		panic(err)
 	}
-	if err := ns.StandardPredicates(v); err != nil {
+	if err := stdlib.Register(v); err != nil {
 		panic(err)
 	}
 	sources[v] = src

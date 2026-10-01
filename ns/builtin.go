@@ -1,10 +1,6 @@
 package ns
 
-import (
-	"fmt"
-	"regexp"
-	"strings"
-)
+import "fmt"
 
 // A Builtin is a predicate the engine computes rather than looks up. It is exactly one of two kinds.
 //
@@ -109,64 +105,4 @@ func (bi Builtin) Satisfied(bound []bool) bool {
 // Filter builds a filter Builtin from a boolean over its all-bound argument values.
 func Filter(arity int, holds func(args []Value) (bool, error)) Builtin {
 	return Builtin{Arity: arity, Holds: holds}
-}
-
-// StandardPredicates registers the predicates every host gets unless it composes its own set: the
-// string tests str.contains, str.prefix, str.suffix, str.glob and str.match, and absent at the root.
-// absent is not a string test (it asks whether a field was stated at all, for any value), which is
-// why it stays out of str. A host that wants other names registers these builtins itself.
-func StandardPredicates(r *Vocabulary) error {
-	for _, p := range []struct {
-		path string
-		b    Builtin
-	}{
-		{"str.contains", strFilter(strings.Contains, "substring", "reports whether a string contains a substring")},
-		{"str.prefix", strFilter(strings.HasPrefix, "prefix", "reports whether a string starts with a prefix")},
-		{"str.suffix", strFilter(strings.HasSuffix, "suffix", "reports whether a string ends with a suffix")},
-		{"str.glob", patFilter(CompileGlob, "pattern", "reports whether the whole string matches a SQLite-style glob (`*` any run, `?` one character, `[a-z]` or `[^a-z]` one of a class, `[[]` a literal `[`)")},
-		{"str.match", patFilter(CompilePattern, "regex", "reports whether the string matches an unanchored regular expression")},
-		// absent(?x) is the only way to ASK about a field the source did not state. Before
-		// Value.Absent existed such a field bound to the empty string, so it was not merely hard to
-		// select, it was indistinguishable from one that was stated as "". Its negation is the useful
-		// half as often as not: `not absent(?min)` reads "this row states a lower bound".
-		{"absent", Builtin{
-			Arity: 1, Labels: []string{"value"},
-			Doc:   "reports whether the field carried no value at all, which is different from an empty string and from zero; `not absent(?x)` reads \"this field is stated\"",
-			Holds: func(args []Value) (bool, error) { return args[0].Absent, nil },
-		}},
-	} {
-		if err := r.AddPredicate(p.path, p.b); err != nil {
-			return err
-		}
-	}
-	return nil
-}
-
-// strFilter wraps a string(value, pattern) bool as a 2-arity filter (the shape of
-// str.contains/str.prefix/str.suffix).
-func strFilter(fn func(s, pat string) bool, second, doc string) Builtin {
-	b := Filter(2, func(args []Value) (bool, error) { return fn(args[0].S, args[1].S), nil })
-	return stringTest(b, second, doc)
-}
-
-// stringTest labels a two-argument string test and types both arguments as strings.
-func stringTest(b Builtin, second, doc string) Builtin {
-	b.Labels = []string{"string", second}
-	b.Types = []ArgType{{Type: TypeString}, {Type: TypeString}}
-	b.Doc = doc
-	return b
-}
-
-// patFilter is strFilter for the two PATTERN predicates (str.glob, str.match): the pattern must be compiled
-// before it can be tested, so a malformed one is an EVAL ERROR rather than a non-match. That
-// direction matters — a bad pattern that quietly matched nothing would read as "the data is clean"
-// on a completeness check.
-func patFilter(compile func(string) (*regexp.Regexp, error), second, doc string) Builtin {
-	return stringTest(Filter(2, func(args []Value) (bool, error) {
-		re, err := compile(args[1].S)
-		if err != nil {
-			return false, err
-		}
-		return re.MatchString(args[0].S), nil
-	}), second, doc)
 }

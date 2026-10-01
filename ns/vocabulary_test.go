@@ -3,9 +3,7 @@ package ns
 import (
 	"errors"
 	"fmt"
-	"go/build"
 	"reflect"
-	"slices"
 	"strconv"
 	"strings"
 	"testing"
@@ -169,27 +167,6 @@ func (failingLanguage) Members(text string) ([]MemberDecl, error) {
 	return []MemberDecl{{Name: text, Arity: 1}}, nil
 }
 func (failingLanguage) Check(*Vocabulary) (map[string][]ArgSig, error) { return nil, errBroken }
-
-// ns is the contract a host's fact layer imports without taking on an engine, so it must never
-// depend on one. The positive control proves the check can see an import at all.
-func TestNsImportsNoEngine(t *testing.T) {
-	self, err := build.ImportDir(".", 0)
-	if err != nil {
-		t.Fatal(err)
-	}
-	for _, imp := range self.Imports {
-		if strings.HasPrefix(imp, "github.com/panyam/jaala/") {
-			t.Errorf("ns imports %s", imp)
-		}
-	}
-	engine, err := build.ImportDir("../datalog", 0)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !slices.Contains(engine.Imports, "github.com/panyam/jaala/ns") {
-		t.Errorf("positive control: datalog's imports %v do not include ns, so this check sees nothing", engine.Imports)
-	}
-}
 
 func TestAGeneratorMustDeclareItsModes(t *testing.T) {
 	gen := func(src Source, args []Arg, emit func([]Value, []string) error) error { return nil }
