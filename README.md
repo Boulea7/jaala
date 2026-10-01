@@ -2,9 +2,12 @@
 
 Jaala (Sanskrit for "network") is a small query engine for graph-shaped data.
 
-Its first package, `datalog`, is a Datalog evaluator with stratified negation, recursion,
-aggregation and `having`, binding-pattern indexes, and provenance: every answer row carries the
-citations of the facts that produced it. It knows nothing about any particular domain.
+Its engine, `datalog`, is a Datalog evaluator with stratified negation, recursion, aggregation and
+`having`, binding-pattern indexes, and provenance: every answer row carries the citations of the
+facts that produced it, and on request a witness tree of the rules and facts behind it. `SemiNaive`
+derives only what a query's constants demand (magic sets, including through negation) and plans each
+rule body, so cost doesn't depend on the order a rule is written in. It knows nothing about any
+particular domain.
 
 It comes in three packages, layered one way:
 
@@ -33,7 +36,7 @@ if err := v.Check(); err != nil { ... }           // once, at load; *ns.ModuleEr
 
 base, err := datalog.NewBase(v, designSource)     // per dataset
 rows, err := datalog.SemiNaive{}.Eval(ctx, datalog.MustParse(`net.has_test_point(?n) => ?n`), base,
-    datalog.Budget(10_000_000))                   // optional: Bind goal variables, limit work
+    datalog.Budget(10_000_000))                   // optional: Bind, Budget, Witnesses
 ```
 
 A query naming `net.has_test_point` pulls in the module that defines it. Each member carries a
@@ -43,7 +46,7 @@ rules, which `v.Lookup(path)` returns for a host that lists and drills into what
 It started as the query engine inside [agni](https://github.com/panyam/agni), an EDA tooling
 engine, and was extracted so other graph tools could share it.
 
-Both packages import only the Go standard library (and `datalog` imports `ns`), and build for
-`GOOS=js GOARCH=wasm`.
+All three packages import only the Go standard library and each other, in that one direction, and
+build for `GOOS=js GOARCH=wasm`.
 
 Licensed under Apache-2.0.
