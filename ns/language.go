@@ -38,8 +38,30 @@ type Module struct {
 	Path     string
 	Language string
 	Text     string
-	Members  []MemberDecl
+	// Origin says where the text came from, such as the file it was read from, so a host can tell a
+	// reader where a member is defined or which file to fix. It is whatever the host passed, and may
+	// be empty.
+	Origin  string
+	Members []MemberDecl
 }
+
+// A ModuleError is a failure that one module is responsible for: a module AddModule refused, or a rule
+// of a registered module that Check refused. Several modules may share a path, so Module and Origin
+// are what tell a host which one, through errors.As; Error is the cause's message unchanged.
+type ModuleError struct {
+	// Module is the module's index into Modules(), or, for a module AddModule refused, the index it
+	// would have had.
+	Module int
+	Path   string
+	Origin string
+	Err    error
+}
+
+// Error returns the cause's message, exactly as it would read without the module attached.
+func (e *ModuleError) Error() string { return e.Err.Error() }
+
+// Unwrap returns the cause.
+func (e *ModuleError) Unwrap() error { return e.Err }
 
 // AddLanguage makes a language available to AddModule. Registering a second language under one
 // name is refused.
@@ -52,40 +74,42 @@ func (v *Vocabulary) AddLanguage(l Language) error {
 	return nil
 }
 
-// AddModule registers text written in lang at module path ("" for the root). The language reports
-// the public members the text defines, and each is entered at path.name under the tree's rules,
-// exactly as a relation or predicate would be: a member colliding with another path, or breaking
-// module-or-member, is refused here, and nothing is registered when anything is refused.
+// AddModule registers text written in lang at module path ("" for the root), recording origin as
+// where it came from (see Module.Origin; "" for nothing). The language reports the public members the
+// text defines, and each is entered at path.name under the tree's rules, exactly as a relation or
+// predicate would be: a member colliding with another path, or breaking module-or-member, is refused
+// here, and nothing is registered when anything is refused. Every refusal is a *ModuleError.
 //
 // A language nobody registered is refused with its name. What a module's rules READ is not checked
 // here, since what they read may be registered later; Check does that.
 //
 // Several modules may register at one module path, provided each member path has one definer, which
 // is how a host's standard library and a project's own definitions share a module.
-func (v *Vocabulary) AddModule(path, lang, text string) error {
+func (v *Vocabulary) AddModule(path, lang, text, origin string) error {
+	id := len(v.mods)
+	refuse := func(err error) error { return &ModuleError{Module: id, Path: path, Origin: origin, Err: err} }
 	if path != "" {
 		if err := checkPath(path); err != nil {
-			return err
+			return refuse(err)
 		}
 	}
 	l, ok := v.langs[lang]
 	if !ok {
-		return fmt.Errorf("query: module %q is written in %q, and no language of that name is registered", path, lang)
+		return refuse(fmt.Errorf("query: module %q is written in %q, and no language of that name is registered", path, lang))
 	}
 	decls, err := l.Members(text)
 	if err != nil {
-		return fmt.Errorf("%w (in module %q)", err, path)
+		return refuse(fmt.Errorf("%w (in module %q)", err, path))
 	}
-	id := len(v.mods)
 	for _, d := range decls {
 		if err := v.admits(joinPath(path, d.Name), member{kind: kindDerived, module: id}); err != nil {
-			return err
+			return refuse(err)
 		}
 	}
 	for _, d := range decls {
 		v.put(joinPath(path, d.Name), member{kind: kindDerived, module: id})
 	}
-	v.mods = append(v.mods, Module{Path: path, Language: lang, Text: text, Members: decls})
+	v.mods = append(v.mods, Module{Path: path, Language: lang, Text: text, Origin: origin, Members: decls})
 	v.cache = newMemo()
 	return nil
 }

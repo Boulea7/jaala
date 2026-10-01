@@ -1,6 +1,7 @@
 package datalog
 
 import (
+	"errors"
 	"fmt"
 	"github.com/panyam/jaala/ns"
 	"reflect"
@@ -19,7 +20,7 @@ func withModules(t *testing.T, mods ...string) *ns.Vocabulary {
 	t.Helper()
 	r := std(graph())
 	for i := 0; i < len(mods); i += 2 {
-		if err := r.AddModule(mods[i], LanguageName, mods[i+1]); err != nil {
+		if err := r.AddModule(mods[i], LanguageName, mods[i+1], ""); err != nil {
 			t.Fatalf("AddModule(%q): %v", mods[i], err)
 		}
 	}
@@ -83,7 +84,7 @@ func TestABareNameInAModuleResolvesLocallyThenAtTheRoot(t *testing.T) {
 	src := graph().Declare("m.node", "name")
 	src.Add("m.node", ns.Tuple{Vals: []ns.Value{ns.S("b")}})
 	r := std(src)
-	if err := r.AddModule("m", LanguageName, `picked(?x) :- node(?x), edge(?x, _);`); err != nil {
+	if err := r.AddModule("m", LanguageName, `picked(?x) :- node(?x), edge(?x, _);`, ""); err != nil {
 		t.Fatal(err)
 	}
 	if got := col(evalReg(t, r, `m.picked(?x) => ?x`), "x"); got != "b" {
@@ -163,7 +164,7 @@ func TestAddModuleRefusals(t *testing.T) {
 		{"str", `contains(?a) :- node(?a);`, `"str.contains" is defined twice`},
 		{"edge", `x(?a) :- node(?a);`, `needs "edge" to be a module`},
 	} {
-		err := std(graph()).AddModule(c.path, LanguageName, c.text)
+		err := std(graph()).AddModule(c.path, LanguageName, c.text, "")
 		if err == nil || !strings.Contains(err.Error(), c.want) {
 			t.Errorf("AddModule(%q, %q): err = %v, want %q", c.path, c.text, err, c.want)
 		}
@@ -172,7 +173,7 @@ func TestAddModuleRefusals(t *testing.T) {
 
 func TestAFailedAddModuleRegistersNothing(t *testing.T) {
 	r := withModules(t, "m", `taken(?x) :- node(?x);`)
-	if err := r.AddModule("m", LanguageName, `fresh(?x) :- node(?x); taken(?x) :- node(?x);`); err == nil {
+	if err := r.AddModule("m", LanguageName, `fresh(?x) :- node(?x); taken(?x) :- node(?x);`, ""); err == nil {
 		t.Fatal("a second definer of m.taken was accepted")
 	}
 	if err := evalRegErr(r, `m.fresh(?x)`); err == nil || !strings.Contains(err.Error(), `unknown relation "m.fresh"`) {
@@ -228,7 +229,7 @@ func TestCheckResolvesInAnyRegistrationOrderAndReportsUnknownNames(t *testing.T)
 		t.Errorf("after b.y: err = %v, want the earlier failure forgotten", err)
 	}
 	// A call registering only private members changes no path, and still has to be checked.
-	if err := r.AddModule("z", LanguageName, `_bad(?x, ?y) :- node(?x);`); err != nil {
+	if err := r.AddModule("z", LanguageName, `_bad(?x, ?y) :- node(?x);`, ""); err != nil {
 		t.Fatal(err)
 	}
 	if err := r.Check(); err == nil || !strings.Contains(err.Error(), "head variable ?y is not bound") {
@@ -289,7 +290,7 @@ _tested(?f) :- node(?f);
 test(?f) :- _tested(?f);
 _reached(?t, ?f) :- walk(?t, ?f);
 covers(?t, ?f) :- test(?t), _reached(?t, ?f);
-`); err != nil {
+`, ""); err != nil {
 		t.Fatal(err)
 	}
 	q, err := Link(mustParse(t, `go.test(?f) => ?f`), v)
@@ -318,5 +319,46 @@ func TestReadsFollowOnlyReachedRelations(t *testing.T) {
 	v := withModules(t, "m", `cheap(?x) :- node(?x); pricey(?x, ?w) :- weight(?x, ?w);`)
 	if got := strings.Join(Reads(mustParse(t, `m.cheap(?x)`), v), ","); got != "node" {
 		t.Errorf("Reads(m.cheap) = %s, want node only", got)
+	}
+}
+
+// Each failure Check can pin on one module says which module, where it came from, through errors.As;
+// two modules share net and only the second is broken. The message reads as it always has.
+func TestCheckFailuresNameTheirModule(t *testing.T) {
+	for _, c := range []struct {
+		why, text, msg string
+	}{
+		{"an unknown read", `y(?n) :- nope(?n);`, `query: module "net" rule "net.y" reads unknown relation "nope"`},
+		{"an unbound head variable", `y(?n, ?m) :- node(?n);`, `query: rule "net.y" head variable ?m is not bound by a positive body relation`},
+		{"a contradicted type", `y(?n: component) :- net.x(?n);`, `query: net.y declares ?n: component, but its rules make it net`},
+		{"an unanchored negation", `y(?n) :- node(?n), not edge(?a, ?b);`, `shares no variable`},
+		{"a wrong arity", `y(?n) :- edge(?n);`, `query: relation "edge" takes 2 args, got 1 (in module rule "net.y")`},
+	} {
+		v := std(graph())
+		if err := v.AddModule("net", LanguageName, `x(?n: net) :- node(?n);`, "shipped/net.dl"); err != nil {
+			t.Fatal(err)
+		}
+		if err := v.AddModule("net", LanguageName, c.text, "project/lib/net.dl"); err != nil {
+			t.Fatalf("%s: %v", c.why, err)
+		}
+		err := v.Check()
+		var me *ns.ModuleError
+		if !errors.As(err, &me) {
+			t.Errorf("%s: err = %v (%T), want a *ns.ModuleError", c.why, err, err)
+			continue
+		}
+		if me.Module != 1 || me.Path != "net" || me.Origin != "project/lib/net.dl" || !strings.Contains(err.Error(), c.msg) {
+			t.Errorf("%s: %+v; want module 1, net, project/lib/net.dl, and %q", c.why, me, c.msg)
+		}
+	}
+}
+
+// Recursion through negation across two modules is no one module's fault, so it stays a plain error.
+func TestACycleAcrossModulesNamesNoModule(t *testing.T) {
+	v := withModules(t, "p", `x(?n) :- node(?n), not q.y(?n);`, "q", `y(?n) :- node(?n), not p.x(?n);`)
+	err := v.Check()
+	var me *ns.ModuleError
+	if err == nil || errors.As(err, &me) {
+		t.Errorf("err = %v (module error: %v), want a plain stratification error", err, me)
 	}
 }

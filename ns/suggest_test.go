@@ -55,7 +55,7 @@ func TestAModuleNameSuggestsTheMemberItEnds(t *testing.T) {
 
 func TestAPrivateMemberIsNeverSuggested(t *testing.T) {
 	v := moved(t)
-	if err := v.AddModule("m", "stub", "_secret/1"); err != nil {
+	if err := v.AddModule("m", "stub", "_secret/1", ""); err != nil {
 		t.Fatal(err)
 	}
 	if got := v.Hint("_secret"); strings.Contains(got, "m._secret") {

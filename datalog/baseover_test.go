@@ -39,7 +39,7 @@ func vocabulary(t *testing.T) *ns.Vocabulary {
 	}}); err != nil {
 		t.Fatal(err)
 	}
-	if err := r.AddModule("path", LanguageName, reachModule); err != nil {
+	if err := r.AddModule("path", LanguageName, reachModule, ""); err != nil {
 		t.Fatal(err)
 	}
 	if err := r.Check(); err != nil {

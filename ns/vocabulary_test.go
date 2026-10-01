@@ -70,20 +70,20 @@ func wantErr(t *testing.T, err error, frag string) {
 
 func TestTheTreesRulesHoldAcrossAllThreeKinds(t *testing.T) {
 	v, _ := newTestVocabulary(t)
-	if err := v.AddModule("net", "stub", "has_tp/1"); err != nil {
+	if err := v.AddModule("net", "stub", "has_tp/1", ""); err != nil {
 		t.Fatal(err)
 	}
 	pred := Filter(1, func([]Value) (bool, error) { return true, nil })
 	// One definer per path, whatever the kinds.
 	wantErr(t, v.AddPredicate("edge", pred), `"edge" is defined twice, as a base relation and as a predicate`)
 	wantErr(t, v.AddRelation("str.contains", Schema{Arity: 2}), `"str.contains" is defined twice, as a predicate and as a base relation`)
-	wantErr(t, v.AddModule("", "stub", "edge/2"), `"edge" is defined twice, as a base relation and as a derived relation`)
-	wantErr(t, v.AddModule("net", "stub", "has_tp/1"), `"net.has_tp" is defined twice, as a derived relation and as a derived relation`)
+	wantErr(t, v.AddModule("", "stub", "edge/2", ""), `"edge" is defined twice, as a base relation and as a derived relation`)
+	wantErr(t, v.AddModule("net", "stub", "has_tp/1", ""), `"net.has_tp" is defined twice, as a derived relation and as a derived relation`)
 	wantErr(t, v.AddPredicate("net.has_tp", pred), `as a derived relation and as a predicate`)
 	// A segment is a module or a member.
 	wantErr(t, v.AddPredicate("edge.x", pred), `"edge.x" needs "edge" to be a module, but it is a base relation`)
-	wantErr(t, v.AddModule("str.contains", "stub", "x/1"), `needs "str.contains" to be a module, but it is a predicate`)
-	wantErr(t, v.AddModule("", "stub", "net/1"), `"net" cannot be a derived relation: it is already a module holding has_tp, pin_count`)
+	wantErr(t, v.AddModule("str.contains", "stub", "x/1", ""), `needs "str.contains" to be a module, but it is a predicate`)
+	wantErr(t, v.AddModule("", "stub", "net/1", ""), `"net" cannot be a derived relation: it is already a module holding has_tp, pin_count`)
 	wantErr(t, v.AddRelation("str", Schema{Arity: 1}), `"str" cannot be a base relation: it is already a module holding contains`)
 	_, err := NewVocabulary(NewMemSource().Declare("pin", "ref").Declare("pin.net", "pin", "net"))
 	wantErr(t, err, `"pin.net" needs "pin" to be a module`)
@@ -97,7 +97,7 @@ func TestTheTreesRulesHoldAcrossAllThreeKinds(t *testing.T) {
 
 func TestAModuleInAnUnregisteredLanguageIsRefused(t *testing.T) {
 	v, _ := newTestVocabulary(t)
-	wantErr(t, v.AddModule("net", "prolog", "x/1"), `module "net" is written in "prolog", and no language of that name is registered`)
+	wantErr(t, v.AddModule("net", "prolog", "x/1", ""), `module "net" is written in "prolog", and no language of that name is registered`)
 	wantErr(t, v.AddLanguage(stub{new(int)}), `language "stub" is already registered`)
 	if v.Has("net.x") {
 		t.Error("a refused module registered a member")
@@ -106,8 +106,8 @@ func TestAModuleInAnUnregisteredLanguageIsRefused(t *testing.T) {
 
 func TestAFailedModuleRegistersNothing(t *testing.T) {
 	v, _ := newTestVocabulary(t)
-	wantErr(t, v.AddModule("net", "stub", "fresh/1 pin_count/2"), `"net.pin_count" is defined twice`)
-	wantErr(t, v.AddModule("net", "stub", "fresh/1 bad"), `bad stub member "bad"`)
+	wantErr(t, v.AddModule("net", "stub", "fresh/1 pin_count/2", ""), `"net.pin_count" is defined twice`)
+	wantErr(t, v.AddModule("net", "stub", "fresh/1 bad", ""), `bad stub member "bad"`)
 	if v.Has("net.fresh") || len(v.Modules()) != 0 {
 		t.Errorf("a refused module left net.fresh=%v and %d modules behind", v.Has("net.fresh"), len(v.Modules()))
 	}
@@ -115,7 +115,7 @@ func TestAFailedModuleRegistersNothing(t *testing.T) {
 
 func TestCheckRunsOncePerStateAndFeedsLookup(t *testing.T) {
 	v, checks := newTestVocabulary(t)
-	if err := v.AddModule("net", "stub", "has_tp/1"); err != nil {
+	if err := v.AddModule("net", "stub", "has_tp/1", ""); err != nil {
 		t.Fatal(err)
 	}
 	for i := 0; i < 3; i++ {
@@ -149,7 +149,7 @@ func TestACheckFailureIsLookupsFailure(t *testing.T) {
 	if err := v.AddLanguage(failing); err != nil {
 		t.Fatal(err)
 	}
-	if err := v.AddModule("m", "failing", "x"); err != nil {
+	if err := v.AddModule("m", "failing", "x", ""); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := v.Lookup("m.x"); !errors.Is(err, errBroken) {

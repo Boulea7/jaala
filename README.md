@@ -24,8 +24,9 @@ v.AddLanguage(datalog.Language)
 v.AddModule("net", datalog.LanguageName, `
 # Nets that carry a test point.
 has_test_point(?n: net) :- component.net(?tp, ?n), component.class(?tp, "test_point");
-`)
-if err := v.Check(); err != nil { ... }           // once, at load
+`, "inline")                                      // origin: where the text came from
+v.AddModulesFS(libFS, "lib", datalog.LanguageName, ns.ByDirectory(".dl"))   // or a whole tree
+if err := v.Check(); err != nil { ... }           // once, at load; *ns.ModuleError names the file
 
 base, err := datalog.NewBase(v, designSource)     // per dataset
 rows, err := datalog.SemiNaive{}.Eval(datalog.MustParse(`net.has_test_point(?n) => ?n`), base)
