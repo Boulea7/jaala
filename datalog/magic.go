@@ -32,6 +32,10 @@ import (
 // Right-linear recursion called from the goal with constants is factored instead (see factor): plain
 // magic sets would derive a full answer set for every node the recursion passes through.
 //
+// Demand also starts from a constant in a rule that nothing demands, such as one the query defines and
+// asks for with nothing bound (#57): uses(?t) :- covers(?t, "p.write") calls covers_fb, demanded by the
+// fact m_covers_fb("p.write"). See fromConstants.
+//
 // Which arguments are bound at a call depends on the order a body runs in, so each body is ordered by
 // the planner first, starting from what its head has bound. A call with nothing bound is left calling
 // the original relation, which is evaluated in full as before.
@@ -70,16 +74,55 @@ func magicWith(b *Base, q Query, intoNeg bool) Query {
 	// its bindings (see countsBindings).
 	supply := !countsBindings(out.Select, q.Having)
 	out.Goal = Body{Literals: m.body(nil, planBody(b, q.Goal, nil).Literals, nil, supply)}
+	m.drain()
+	originals := make([]Rule, len(q.Rules))
+	for i, r := range q.Rules {
+		r.Body = m.fromConstants(r)
+		originals[i] = r
+	}
+	m.drain()
+	if len(m.rules) == 0 {
+		return q
+	}
+	out.Rules = append(originals, m.rules...)
+	return dropUnreached(q, out)
+}
+
+// drain adorns the rules of every relation demand has reached so far.
+func (m *magician) drain() {
 	for len(m.queue) > 0 {
 		a := m.queue[0]
 		m.queue = m.queue[1:]
 		m.adornRules(a.rel, a.adorn)
 	}
-	if len(m.rules) == 0 {
-		return q
+}
+
+// fromConstants rewrites the calls a rule makes with constants, for a rule evaluated in full (#57):
+// nothing demands its head, but a constant in its body is demand all the same. Such a call is adorned
+// by its constants alone, so its demand rule is a fact, which depends on nothing and so cannot make
+// the program unstratifiable; this holds for a negated call as much as a positive one. Arguments that
+// earlier literals bind are not used: a rule evaluated in full binds them for every row, which would
+// demand as much as the whole relation. A call into the rule's own recursion is left alone, since that
+// relation is being evaluated in full already.
+func (m *magician) fromConstants(r Rule) Body {
+	none := map[Var]bool{}
+	lits := make([]Literal, len(r.Body.Literals))
+	for i, lit := range r.Body.Literals {
+		switch {
+		case lit.Pos != nil && !m.reaches(lit.Pos.Relation, r.Head.Relation):
+			if call, ok := m.factor(*lit.Pos, none); ok {
+				lit = Literal{Pos: &call, at: lit.at}
+			} else if m.wants(*lit.Pos, none) {
+				call := m.call(*lit.Pos, none, nil)
+				lit = Literal{Pos: &call, at: lit.at}
+			}
+		case lit.Neg != nil && !m.reaches(lit.Neg.Relation, r.Head.Relation) && m.wants(*lit.Neg, none):
+			call := m.call(*lit.Neg, none, nil)
+			lit = Literal{Neg: &call, at: lit.at}
+		}
+		lits[i] = lit
 	}
-	out.Rules = append(append([]Rule(nil), q.Rules...), m.rules...)
-	return dropUnreached(q, out)
+	return Body{Literals: lits}
 }
 
 // derivedArity is the arity of each relation the rules derive, as stratify takes it.
