@@ -3,6 +3,7 @@ package datalog
 import (
 	"context"
 	"math"
+	"sort"
 )
 
 // SemiNaive is the evaluator a host should run. It answers exactly as Naive does, deriving rules by
@@ -47,15 +48,16 @@ func (s SemiNaive) Eval(ctx context.Context, q Query, b *Base, opts ...Option) (
 // round. The parser never accepts it in a relation name, so no query can read a delta.
 const deltaSep = "\x00delta"
 
-// materialize is SemiNaive's fixpoint: it derives the rules stratum by stratum, as Naive's does, with
-// a semi-naive fixpoint in each.
+// materialize is SemiNaive's fixpoint: it derives the rules stratum by stratum, as Naive's does, and
+// within a stratum component by component (see components), with a semi-naive fixpoint in each
+// recursive one. A relation that does not read itself, even through others, is derived once.
 //
-// In a stratum, round zero runs every rule in full. After that a rule matters only if its body reads
-// a relation of the same stratum (a rule reading only lower strata has seen all its inputs already),
-// and for such a rule each round runs one variant per same-stratum atom, with that atom reading the
-// delta and every other atom reading the whole relation. A new tuple's derivation uses some
-// same-stratum fact that was new last round, at the latest, so one of the variants finds it; the
-// fixpoint is reached when a round adds nothing. Unless WrittenOrder is set, a variant starts from its
+// In a component, round zero runs every rule in full. After that a rule matters only if its body reads
+// a relation of the same component (everything else it reads is complete already), and for such a rule
+// each round runs one variant per such atom, with that atom reading the delta and every other atom
+// reading the whole relation. A new tuple's derivation uses some fact of the component that was new
+// last round, at the latest, so one of the variants finds it; the fixpoint is reached when a round
+// adds nothing. Unless WrittenOrder is set, a variant starts from its
 // delta when the delta is the smaller side (see variant.pick).
 //
 // The delta is installed as an ordinary derived relation under a name no query can spell, so solving,
@@ -66,62 +68,141 @@ func (s SemiNaive) materialize(b *Base, rules []Rule) error {
 	if err != nil {
 		return err
 	}
-	for _, stratum := range strata {
-		in := make(map[string]bool, len(stratum))
-		for _, rel := range stratum {
-			in[rel] = true
-		}
-		// The delta variants are made once per stratum: one per rule and recursive atom, in the
-		// planned order and, unless that already starts at the delta, a second one that does (see
-		// deltaFirst). Each round runs whichever starts from fewer tuples.
-		var variants []variant
-		for _, rel := range stratum {
-			for _, r := range byHead[rel] {
-				for i, lit := range r.Body.Literals {
-					if lit.Pos == nil || !in[lit.Pos.Relation] {
-						continue
-					}
-					v := variant{reads: lit.Pos.Relation, rule: readingDelta(r, i)}
-					if !s.WrittenOrder && i > 0 {
-						first := deltaFirst(b, v.rule, i)
-						v.first = &first
-					}
-					variants = append(variants, v)
-				}
-			}
-		}
-		mark := marks(b, stratum)
-		for _, rel := range stratum {
-			for _, r := range byHead[rel] {
-				if err := derive(b, r); err != nil {
-					return err
-				}
-			}
-		}
-		delta := since(b, stratum, mark)
-		for len(delta) > 0 {
-			if err := b.run.done(); err != nil {
+	for _, level := range strata {
+		for _, comp := range components(level, byHead) {
+			if err := s.fixpoint(b, byHead, comp); err != nil {
 				return err
 			}
-			installDeltas(b, stratum, delta)
-			mark = marks(b, stratum)
-			for _, v := range variants {
-				if len(delta[v.reads]) == 0 {
-					continue
-				}
-				r, err := v.pick(b, len(delta[v.reads]))
-				if err != nil {
-					return err
-				}
-				if err := derive(b, r); err != nil {
-					return err
-				}
-			}
-			delta = since(b, stratum, mark)
 		}
-		dropDeltas(b, stratum)
 	}
 	return nil
+}
+
+// fixpoint derives one component of a stratum (see materialize).
+func (s SemiNaive) fixpoint(b *Base, byHead map[string][]Rule, comp []string) error {
+	in := make(map[string]bool, len(comp))
+	for _, rel := range comp {
+		in[rel] = true
+	}
+	// The delta variants are made once per component: one per rule and recursive atom, in the
+	// planned order and, unless that already starts at the delta, a second one that does (see
+	// deltaFirst). Each round runs whichever starts from fewer tuples.
+	var variants []variant
+	for _, rel := range comp {
+		for _, r := range byHead[rel] {
+			for i, lit := range r.Body.Literals {
+				if lit.Pos == nil || !in[lit.Pos.Relation] {
+					continue
+				}
+				v := variant{reads: lit.Pos.Relation, rule: readingDelta(r, i)}
+				if !s.WrittenOrder && i > 0 {
+					first := deltaFirst(b, v.rule, i)
+					v.first = &first
+				}
+				variants = append(variants, v)
+			}
+		}
+	}
+	mark := marks(b, comp)
+	for _, rel := range comp {
+		for _, r := range byHead[rel] {
+			if err := derive(b, r); err != nil {
+				return err
+			}
+		}
+	}
+	if len(variants) == 0 {
+		return nil // not recursive: one pass derived everything
+	}
+	delta := since(b, comp, mark)
+	for len(delta) > 0 {
+		if err := b.run.done(); err != nil {
+			return err
+		}
+		installDeltas(b, comp, delta)
+		mark = marks(b, comp)
+		for _, v := range variants {
+			if len(delta[v.reads]) == 0 {
+				continue
+			}
+			r, err := v.pick(b, len(delta[v.reads]))
+			if err != nil {
+				return err
+			}
+			if err := derive(b, r); err != nil {
+				return err
+			}
+		}
+		delta = since(b, comp, mark)
+	}
+	dropDeltas(b, comp)
+	return nil
+}
+
+// components splits a stratum into its strongly connected components, the sets of relations that read
+// one another, directly or through others, ordered so a component comes after every one it reads.
+// Stratification only separates relations by negation, so a stratum mixes recursion with plain
+// dependencies; deriving it as one fixpoint would count everything a relation read as new in the
+// round after it was derived, and run the reading rules over it again (#51).
+func components(stratum []string, byHead map[string][]Rule) [][]string {
+	in := make(map[string]bool, len(stratum))
+	for _, rel := range stratum {
+		in[rel] = true
+	}
+	reads := map[string][]string{}
+	for _, rel := range stratum {
+		seen := map[string]bool{}
+		for _, r := range byHead[rel] {
+			for _, lit := range r.Body.Literals {
+				if lit.Pos != nil && in[lit.Pos.Relation] && !seen[lit.Pos.Relation] {
+					seen[lit.Pos.Relation] = true
+					reads[rel] = append(reads[rel], lit.Pos.Relation)
+				}
+			}
+		}
+		sort.Strings(reads[rel])
+	}
+	// Tarjan's algorithm: it completes a component only after every component reachable from it,
+	// which, with edges from a relation to what it reads, is dependency order.
+	index, low := map[string]int{}, map[string]int{}
+	onStack := map[string]bool{}
+	var stack []string
+	var out [][]string
+	var visit func(string)
+	visit = func(rel string) {
+		index[rel], low[rel] = len(index), len(index)
+		stack = append(stack, rel)
+		onStack[rel] = true
+		for _, next := range reads[rel] {
+			if _, done := index[next]; !done {
+				visit(next)
+				low[rel] = min(low[rel], low[next])
+			} else if onStack[next] {
+				low[rel] = min(low[rel], index[next])
+			}
+		}
+		if low[rel] != index[rel] {
+			return
+		}
+		var comp []string
+		for {
+			top := stack[len(stack)-1]
+			stack = stack[:len(stack)-1]
+			onStack[top] = false
+			comp = append(comp, top)
+			if top == rel {
+				break
+			}
+		}
+		sort.Strings(comp)
+		out = append(out, comp)
+	}
+	for _, rel := range stratum {
+		if _, done := index[rel]; !done {
+			visit(rel)
+		}
+	}
+	return out
 }
 
 // A variant is a recursive rule with one same-stratum atom reading its relation's delta.

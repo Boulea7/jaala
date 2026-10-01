@@ -173,6 +173,10 @@ func magicName(rel, adorn string) string   { return magicPrefix + rel + "/" + ad
 func adornedName(rel, adorn string) string { return rel + "\x00/" + adorn }
 func isMagic(rel string) bool              { return strings.HasPrefix(rel, magicPrefix) }
 
+// isGuard reports whether rel holds demand: a magic relation, or a factored reachable set. A rule the
+// rewrite guards with one reads it first, and only for the values it holds.
+func isGuard(rel string) bool { return isMagic(rel) || strings.Contains(rel, fromSep) }
+
 // negationFree is every derived relation whose rules, and the rules of everything they read,
 // transitively, contain no negated literal.
 func negationFree(rules []Rule) map[string]bool {

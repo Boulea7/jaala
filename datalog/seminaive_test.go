@@ -1,6 +1,7 @@
 package datalog
 
 import (
+	"context"
 	"fmt"
 	"math/rand"
 	"testing"
@@ -154,5 +155,86 @@ func TestARoundStartsFromTheSmallerSide(t *testing.T) {
 	}
 	if got, written := workOf(t, SemiNaive{}, reversedLine(100), q), workOf(t, SemiNaive{WrittenOrder: true}, reversedLine(100), q); got*3 > written*2 {
 		t.Errorf("reversed: work %d, written order %d; want under two thirds, since the small deltas should go first", got, written)
+	}
+}
+
+// counter registers probe(?x), a generator that echoes its bound argument and counts its calls, so a
+// test can see how often a rule's body ran.
+func counter(t *testing.T, v *ns.Vocabulary) *int {
+	t.Helper()
+	n := 0
+	if err := v.AddPredicate("probe", ns.Builtin{Arity: 1, Modes: [][]bool{{true}}, Gen: func(_ context.Context, _ ns.Source, args []ns.Arg, emit func([]ns.Value, []string) error) error {
+		n++
+		return emit([]ns.Value{args[0].Value}, nil)
+	}}); err != nil {
+		t.Fatal(err)
+	}
+	return &n
+}
+
+// A relation that only reads others is derived once, after them, however its name sorts (#51): a
+// stratum holds every relation no negation separates, but only the ones reading one another need
+// rounds. Here b reads a and probes each row, and c joins b with a recursive closure. Before, round
+// zero ran b over a whenever a's name sorted first, and round one counted a's tuples as new and ran b
+// over them again.
+func TestAPlainDependencyIsDerivedOnce(t *testing.T) {
+	for _, names := range [][3]string{{"a", "b", "c"}, {"z", "y", "x"}} {
+		a, b, c := names[0], names[1], names[2]
+		text := `r(?x, ?y) :- edge(?x, ?y); r(?x, ?z) :- r(?x, ?y), edge(?y, ?z); ` +
+			a + `(?x) :- node(?x); ` + b + `(?x) :- ` + a + `(?x), probe(?x); ` + c + `(?x) :- ` + b + `(?x), r("v0", ?x); ` + c + `(?x) => ?x`
+		for _, ev := range []Evaluator{SemiNaive{}, SemiNaive{WrittenOrder: true}} {
+			v := std(line(8))
+			n := counter(t, v)
+			rows, err := ev.Eval(bg, mustParse(t, text), baseFor(v), Witnesses())
+			if err != nil || len(rows) != 7 {
+				t.Fatalf("%T %v: %d rows, %v", ev, names, len(rows), err)
+			}
+			if *n != 8 {
+				t.Errorf("%T, relations named %v: probe ran %d times, want once per node (8)", ev, names, *n)
+			}
+		}
+	}
+}
+
+// The shapes #36 left to this issue: two rules, or a witnessed Eval (nothing inlined), walk from the
+// bound end once per rule. Demand passes into test by copying the walk into test's magic rule, so the
+// witnessed shape walks twice until supplementary magic sets store that prefix once (#54).
+func TestAGeneratorInADerivedRelationRunsOncePerRule(t *testing.T) {
+	const test = `test(?f) :- attr(?f, "role", "test"); `
+	for _, c := range []struct {
+		name, rules string
+		opts        []Option
+		walks       int
+	}{
+		{"two rules", test + `covers(?t, ?f) :- test(?t), walk(?t, ?f); covers(?t, ?f) :- test(?t), walk(?t, ?f), node(?f); `, nil, 2},
+		{"witnessed", test + `covers(?t, ?f) :- test(?t), walk(?t, ?f); `, []Option{Witnesses()}, 2},
+	} {
+		v := std(tested())
+		calls := walker(t, v, [][]bool{{true, false}, {false, true}})
+		rows, err := SemiNaive{}.Eval(bg, mustParse(t, c.rules+`covers(?t, "v5") => ?t`), baseFor(v), c.opts...)
+		if err != nil || col(rows, "t") != "v0,v1,v2" {
+			t.Fatalf("%s: %v, %v", c.name, rows, err)
+		}
+		if len(*calls) != c.walks {
+			t.Errorf("%s: walks %v, want %d, each from the bound end", c.name, *calls, c.walks)
+		}
+		for _, w := range *calls {
+			if w != [2]bool{false, true} {
+				t.Errorf("%s: a walk with %v bound, want the end", c.name, w)
+			}
+		}
+	}
+}
+
+// Components come out in dependency order, each sorted, a recursive one whole.
+func TestComponentsAreInDependencyOrder(t *testing.T) {
+	q := mustParse(t, `p(?x) :- q(?x); q(?x) :- r(?x); r(?x) :- q(?x), edge(?x, ?y); r(?x) :- node(?x); s(?x) :- p(?x), r(?x); s(?x)`)
+	byHead := map[string][]Rule{}
+	for _, r := range q.Rules {
+		byHead[r.Head.Relation] = append(byHead[r.Head.Relation], r)
+	}
+	got := fmt.Sprint(components([]string{"p", "q", "r", "s"}, byHead))
+	if want := "[[q r] [p] [s]]"; got != want {
+		t.Errorf("components = %s, want %s", got, want)
 	}
 }

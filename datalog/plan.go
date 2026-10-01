@@ -103,11 +103,26 @@ func plan(b *Base, q Query) Query {
 	}
 	out.Rules = make([]Rule, len(q.Rules))
 	for i, r := range q.Rules {
-		r.Body = planBody(b, r.Body, nil)
+		r.Body = planRule(b, r.Body)
 		out.Rules[i] = r
 	}
 	out.Goal = planBody(b, q.Goal, nil)
 	return out
+}
+
+// planRule plans a rule body. A body the demand rewrite guarded keeps its guard first and is planned
+// from what the guard binds: the guard holds only the demanded values, and ranked from nothing bound
+// it would score as an unbound scan and fall behind a relation bound by constants, undoing the
+// demand.
+func planRule(b *Base, body Body) Body {
+	lits := body.Literals
+	if len(lits) == 0 || lits[0].Pos == nil || !isGuard(lits[0].Pos.Relation) {
+		return planBody(b, body, nil)
+	}
+	entry := map[Var]bool{}
+	bindAll(lits[0].Pos, entry)
+	rest := planBody(b, Body{Literals: lits[1:]}, entry)
+	return Body{Literals: append([]Literal{lits[0]}, rest.Literals...)}
 }
 
 // planBody orders a body greedily. At each step it takes the first check whose arguments are all

@@ -94,7 +94,13 @@ go list -deps ./... | grep '\.' | grep -v '^github.com/panyam/jaala' | grep -v '
   message, checked on the linked program before any rewrite. Planning lives in `plan.go`, called
   only by `SemiNaive`. A generator runs as soon as one of its modes is satisfied, after only the
   ready checks (comparisons, filters, and relations with every argument bound), so a host never
-  has to write a body generator-first (#36).
+  has to write a body generator-first (#36). A body the demand rewrite guarded (a magic relation or
+  a factored set, `isGuard`) keeps the guard first when `plan` runs over it (`planRule`); ranked
+  from nothing bound, the guard would fall behind any relation bound by constants.
+- **SemiNaive derives a stratum component by component** (`components`, Tarjan, in dependency
+  order). A stratum is a level, so it mixes recursion with plain dependencies; a relation that
+  doesn't read itself, even through others, is derived once, and delta rounds run only inside a
+  recursive component (#51). `stratify`'s strata, its errors, and `Naive` are unchanged.
 - Fixtures: `graph()` and the `eval`/`evalErr`/`col`/`std`/`baseFor` helpers in `helpers_test.go`;
   `withModules`/`evalReg` in `module_test.go`; the agni-shaped `circuit()` in `signature_test.go`;
   `vocabulary()` (no Source) in `baseover_test.go`; the `stub` language in `ns/vocabulary_test.go`.
