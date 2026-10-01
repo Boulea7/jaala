@@ -26,7 +26,7 @@ func vocabulary(t *testing.T) *ns.Vocabulary {
 	if err := ns.StandardPredicates(r); err != nil {
 		t.Fatal(err)
 	}
-	if err := r.AddPredicate("succ", ns.Builtin{Arity: 2, Gen: func(src ns.Source, args []ns.Arg, emit func([]ns.Value, []string) error) error {
+	if err := r.AddPredicate("succ", ns.Builtin{Arity: 2, Modes: [][]bool{{true, false}}, Gen: func(src ns.Source, args []ns.Arg, emit func([]ns.Value, []string) error) error {
 		for _, tu := range src.Tuples("edge") {
 			if args[0].Bound && tu.Vals[0].S != args[0].Value.S {
 				continue

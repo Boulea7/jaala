@@ -92,50 +92,6 @@ func Reads(q Query, reg *ns.Vocabulary) []string {
 	return out
 }
 
-// GeneratorFirstRules reports the rules that OPEN their body with a value-producing generator whose
-// own input argument is unbound, naming each offender by its head relation. Empty means no rule starts
-// by enumerating the whole design. It runs on the linked query, so a module rule the query reaches is
-// checked as well as the query's own.
-//
-// This is the shape that makes a generated rule non-terminating rather than merely slow. The evaluator
-// is a naive backtracking join running literals left to right, and `reaches` is the one built-in that
-// PRODUCES values instead of filtering: given a bound start net it walks that net's series
-// neighborhood, but given an unbound one it walks from EVERY net on the board. In first position
-// nothing can have bound it, so the walk is unconditional. A shipped profile rule opened with
-// `reaches(?n, ?rn, ?h)` and took `agni check` from 13s to not finishing at all on a real design
-// . The fix was to lead with the guard the consuming rule already conjoined, which binds the
-// start net before the walk begins.
-//
-// A generator whose input is a CONSTANT is fine (`reaches("VBUS", ?n, ?h)` is one walk), so only an
-// unbound first argument is reported.
-//
-// SCOPE, stated because it is narrower than it looks. This catches the catastrophic case, not every
-// bad join order. `pulled` opened with `component-on-net(?pu, ?n)`, both variables unbound, which is a
-// full EDB scan re-entered per survivor: 21s rather than forever, and NOT reported here. A general
-// answer is a cost-based join planner, not a lint. Note also what does NOT work as a guard,
-// since it is the obvious first idea: requiring the first literal to share a variable with the head
-// catches neither offender, because both `reaches(?n, ...)` and `component-on-net(?pu, ?n)` do mention
-// the head variable. Mentioning it is not binding it.
-func GeneratorFirstRules(q Query, reg *ns.Vocabulary) []string {
-	if linked, err := Link(q, reg); err == nil {
-		q = linked
-	}
-	var out []string
-	for _, r := range q.Rules {
-		for _, l := range r.Body.Literals {
-			if l.Pos == nil {
-				continue // a comparison or negation cannot enumerate, so it is not the opening scan
-			}
-			bi, ok := reg.Predicate(l.Pos.Relation)
-			if ok && bi.IsGenerator() && len(l.Pos.Args) > 0 && l.Pos.Args[0].Const == nil {
-				out = append(out, r.Head.Relation)
-			}
-			break // only the FIRST positive literal opens the scan
-		}
-	}
-	return displayNames(out)
-}
-
 // NonInjectiveRules reports rules whose body puts two DIFFERENT variables in the SAME argument
 // position of the SAME relation without separating them, naming each offender by its head relation.
 // Empty means every such pair is separated.
@@ -168,7 +124,7 @@ func GeneratorFirstRules(q Query, reg *ns.Vocabulary) []string {
 // genuine answer and separating the two would break the rule. Two positions of one atom are not the
 // interchangeable shape; two atoms of one relation are.
 //
-// Like GeneratorFirstRules it examines rule bodies, not the goal, because a goal is written per
+// It examines rule bodies, not the goal, because a goal is written per
 // query by someone reading its result while a rule is authored once and consumed silently.
 func NonInjectiveRules(q Query) []string {
 	var out []string

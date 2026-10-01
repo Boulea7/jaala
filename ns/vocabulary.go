@@ -120,13 +120,25 @@ func (v *Vocabulary) AddRelation(path string, s Schema) error {
 
 // AddPredicate registers a computed predicate at path: a filter (Holds set) or a generator (Gen
 // set), exactly one. It fails on a builtin that is neither or both, on a filter with arity below
-// one, and on a path the tree's rules refuse (see Vocabulary).
+// one, on a generator without Modes or with a mode of the wrong length, and on a path the tree's
+// rules refuse (see Vocabulary).
 func (v *Vocabulary) AddPredicate(path string, b Builtin) error {
 	if (b.Holds == nil) == (b.Gen == nil) {
 		return fmt.Errorf("query: predicate %q needs exactly one of Holds and Gen", path)
 	}
 	if b.Holds != nil && b.Arity < 1 {
 		return fmt.Errorf("query: filter %q needs arity >= 1", path)
+	}
+	if b.Gen != nil {
+		if len(b.Modes) == 0 {
+			return fmt.Errorf("query: generator %q declares no Modes; list the binding patterns it accepts (an all-false mode if it may enumerate with nothing bound)", path)
+		}
+		width := max(b.Arity, b.MaxArity)
+		for _, m := range b.Modes {
+			if len(m) != width {
+				return fmt.Errorf("query: generator %q has a mode of %d positions, want %d", path, len(m), width)
+			}
+		}
 	}
 	return v.add(path, member{kind: kindPredicate, pred: b})
 }

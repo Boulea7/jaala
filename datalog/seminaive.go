@@ -9,10 +9,26 @@ package datalog
 // an earlier round, so a semi-naive round only runs the derivations that use at least one fact new in
 // the last round (the delta). Each fact is joined against once rather than once per round, and the
 // same closure grows with about n².
-type SemiNaive struct{}
+//
+// It also plans each rule body and the goal before evaluating (see plan): a literal runs once as much
+// as possible is bound, a comparison or filter as soon as its variables are, and a generator once one
+// of its Modes is satisfied. That makes cost independent of how a body is written, at the price of
+// citations: a different join order can make a different derivation of a tuple the first, so a planned
+// answer's rows match Naive's while a row's citations may come from another valid derivation.
+type SemiNaive struct {
+	// WrittenOrder runs bodies as written instead of planning them. Its answers then match Naive's
+	// citations too, which is what the tests compare it on.
+	WrittenOrder bool
+}
 
 // Eval answers the query as Naive.Eval does.
-func (s SemiNaive) Eval(q Query, b *Base) ([]Row, error) { return evaluate(q, b, s.materialize) }
+func (s SemiNaive) Eval(q Query, b *Base) ([]Row, error) {
+	var rewrite func(*Base, Query) Query
+	if !s.WrittenOrder {
+		rewrite = plan
+	}
+	return evaluate(q, b, rewrite, s.materialize)
+}
 
 // deltaSep marks the relation holding a stratum relation's delta: the tuples it gained in the last
 // round. The parser never accepts it in a relation name, so no query can read a delta.

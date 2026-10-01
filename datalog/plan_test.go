@@ -1,0 +1,252 @@
+package datalog
+
+import (
+	"fmt"
+	"math/rand"
+	"reflect"
+	"sort"
+	"strings"
+	"testing"
+
+	"github.com/panyam/jaala/ns"
+)
+
+// line is a path v0 -> ... -> v(n-1), with every node listed.
+func line(n int) *ns.MemSource {
+	src := ns.NewMemSource().Declare("edge", "from", "to").Declare("node", "name")
+	for i := 0; i < n; i++ {
+		src.Add("node", ns.Tuple{Vals: []ns.Value{ns.S(fmt.Sprintf("v%d", i))}})
+		if i+1 < n {
+			src.Add("edge", ns.Tuple{Vals: []ns.Value{ns.S(fmt.Sprintf("v%d", i)), ns.S(fmt.Sprintf("v%d", i+1))}})
+		}
+	}
+	return src
+}
+
+// walker registers walk(from, to), which follows edges from a bound start or back from a bound end,
+// in the modes given, and records which ends each call had bound.
+func walker(t *testing.T, v *ns.Vocabulary, modes [][]bool) *[][2]bool {
+	t.Helper()
+	var calls [][2]bool
+	err := v.AddPredicate("walk", ns.Builtin{Arity: 2, Modes: modes, Gen: func(src ns.Source, args []ns.Arg, emit func([]ns.Value, []string) error) error {
+		calls = append(calls, [2]bool{args[0].Bound, args[1].Bound})
+		next, prev := map[string]string{}, map[string]string{}
+		for _, e := range src.Tuples("edge") {
+			next[e.Vals[0].S], prev[e.Vals[1].S] = e.Vals[1].S, e.Vals[0].S
+		}
+		var starts []string
+		switch {
+		case args[0].Bound:
+			starts = []string{args[0].Value.S}
+		case args[1].Bound:
+			for cur, ok := prev[args[1].Value.S]; ok; cur, ok = prev[cur] {
+				if err := emit([]ns.Value{ns.S(cur), args[1].Value}, nil); err != nil {
+					return err
+				}
+			}
+			return nil
+		default:
+			for _, n := range src.Tuples("node") {
+				starts = append(starts, n.Vals[0].S)
+			}
+		}
+		for _, s := range starts {
+			for cur, ok := next[s]; ok; cur, ok = next[cur] {
+				if err := emit([]ns.Value{ns.S(s), ns.S(cur)}, nil); err != nil {
+					return err
+				}
+			}
+		}
+		return nil
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return &calls
+}
+
+// Written in the order that forms a cross product, the body costs n² under Naive and n planned.
+func TestPlanningRemovesTheCrossProduct(t *testing.T) {
+	q := mustParse(t, `node(?a), node(?b), edge(?a, ?b), ?a = "v7" => ?b`)
+	work := func(ev Evaluator) int64 {
+		b := baseFor(std(line(400)))
+		rows, err := ev.Eval(q, b)
+		if err != nil || col(rows, "b") != "v8" {
+			t.Fatalf("%T: %v, %v", ev, rows, err)
+		}
+		return b.Work()
+	}
+	if w := work(SemiNaive{}); w > 800 {
+		t.Errorf("planned work = %d over 400 nodes, want about one comparison per node (under 800)", w)
+	}
+	if w := work(Naive{}); w < 100000 {
+		t.Errorf("control: Naive's work = %d, so the written order is not the cross product it should be", w)
+	}
+}
+
+// A generator that needs its start bound waits until the body binds it, however it is written.
+func TestAGeneratorWaitsForItsInput(t *testing.T) {
+	v := std(line(50))
+	calls := walker(t, v, [][]bool{{true, false}})
+	rows, err := SemiNaive{}.Eval(mustParse(t, `near(?m) :- walk(?n, ?m), node(?n), ?n = "v45"; near(?m) => ?m`), baseFor(v))
+	if err != nil || col(rows, "m") != "v46,v47,v48,v49" {
+		t.Fatalf("near = %v, %v", rows, err)
+	}
+	if len(*calls) != 1 || !(*calls)[0][0] {
+		t.Errorf("walk calls (from bound, to bound) = %v, want one call from the bound start", *calls)
+	}
+}
+
+// A generator with a mode for each end runs from whichever end the body binds.
+func TestATwoModeGeneratorRunsFromTheBoundEnd(t *testing.T) {
+	for _, c := range []struct {
+		query, want string
+		end         [2]bool
+	}{
+		{`walk(?a, ?z), node(?a), ?a = "v2" => ?z`, "v3,v4,v5", [2]bool{true, false}},
+		{`walk(?z, ?a), node(?a), ?a = "v3" => ?z`, "v0,v1,v2", [2]bool{false, true}},
+	} {
+		v := std(line(6))
+		calls := walker(t, v, [][]bool{{true, false}, {false, true}})
+		rows, err := SemiNaive{}.Eval(mustParse(t, c.query), baseFor(v))
+		if err != nil || col(rows, "z") != c.want {
+			t.Errorf("%s = %v, %v; want %s", c.query, rows, err, c.want)
+		}
+		if len(*calls) != 1 || (*calls)[0] != c.end {
+			t.Errorf("%s: walk calls = %v, want one with %v bound", c.query, *calls, c.end)
+		}
+	}
+}
+
+// A body that can never satisfy a generator's modes is refused before evaluation, with the same
+// message from every entry point.
+func TestABodyThatNeverSatisfiesAGeneratorIsRefused(t *testing.T) {
+	for _, c := range []struct {
+		modes [][]bool
+		query string
+		want  string
+	}{
+		{[][]bool{{true, false}}, `near(?m) :- walk(?n, ?m); near(?m)`,
+			`query: rule "near" calls walk(?n, ?m), and nothing binds what walk needs first: it needs ?n bound`},
+		{[][]bool{{true, false}, {false, true}}, `walk(?n, ?m), ?n = "v1" => ?m`,
+			`query: the query calls walk(?n, ?m), and nothing binds what walk needs first: it needs ?n bound, or ?m bound`},
+		{[][]bool{{true, false}}, `node(?x), not walk(?y, ?x) => ?x`,
+			`query: the query calls walk(?y, ?x), and nothing binds what walk needs first: it needs ?y bound`},
+	} {
+		v := std(line(3))
+		walker(t, v, c.modes)
+		q := mustParse(t, c.query)
+		for name, err := range map[string]error{
+			"Validate":  Validate(q, v),
+			"Naive":     second(Naive{}.Eval(q, baseFor(v))),
+			"SemiNaive": second(SemiNaive{}.Eval(q, baseFor(v))),
+		} {
+			if err == nil || err.Error() != c.want {
+				t.Errorf("%s(%s): err = %v\n want %s", name, c.query, err, c.want)
+			}
+		}
+	}
+}
+
+func second(_ []Row, err error) error { return err }
+
+// The planner's whole claim: an answer does not depend on how a body is written. Every program is run
+// with its rule bodies and goal shuffled, and the planned answer must equal Naive's on the original.
+func TestPlannedAnswersDoNotDependOnClauseOrder(t *testing.T) {
+	programs := append([]string{
+		`node(?a), node(?b), edge(?a, ?b), ?a != ?b, str.prefix(?b, "v") => ?a, ?b`,
+		`two(?a, ?c) :- edge(?a, ?b), edge(?b, ?c), node(?b); two(?a, ?c), not edge(?a, ?c) => ?a, ?c`,
+		`heavy(?n) :- weight(?n, ?w), node(?n), ?w > 4; heavy(?n), edge(?m, ?n) => ?m, count(?n)`,
+	}, recursivePrograms...)
+	for seed := int64(1); seed <= 12; seed++ {
+		src := randomGraph(seed, 6+int(seed%5), 0.2)
+		b := baseFor(std(src))
+		for _, text := range programs {
+			q := mustParse(t, text)
+			want, err := Naive{}.Eval(q, b)
+			if err != nil {
+				t.Fatalf("%s: %v", text, err)
+			}
+			shuffled := shuffle(q, rand.New(rand.NewSource(seed)))
+			got, err := SemiNaive{}.Eval(shuffled, b)
+			if err != nil {
+				t.Fatalf("seed %d, shuffled %s: %v", seed, text, err)
+			}
+			if !reflect.DeepEqual(rowSet(want), rowSet(got)) {
+				t.Errorf("seed %d: %s\n written:  %v\n shuffled: %v", seed, text, rowSet(want), rowSet(got))
+			}
+		}
+	}
+}
+
+// shuffle permutes every rule body and the goal, keeping the answer's columns as the written goal
+// gives them.
+func shuffle(q Query, rnd *rand.Rand) Query {
+	out := q
+	if len(out.Select) == 0 {
+		out.Select = defaultSelect(q.Goal)
+	}
+	perm := func(b Body) Body {
+		lits := append([]Literal(nil), b.Literals...)
+		rnd.Shuffle(len(lits), func(i, j int) { lits[i], lits[j] = lits[j], lits[i] })
+		return Body{Literals: lits}
+	}
+	out.Rules = make([]Rule, len(q.Rules))
+	for i, r := range q.Rules {
+		r.Body = perm(r.Body)
+		out.Rules[i] = r
+	}
+	out.Goal = perm(q.Goal)
+	return out
+}
+
+// rowSet is an answer's bindings as sorted strings, independent of row order.
+func rowSet(rows []Row) []string {
+	out := make([]string, len(rows))
+	for i, r := range rows {
+		keys := make([]string, 0, len(r.Bind))
+		for k, v := range r.Bind {
+			keys = append(keys, string(k)+"="+v.S)
+		}
+		sort.Strings(keys)
+		out[i] = strings.Join(keys, " ")
+	}
+	sort.Strings(out)
+	return out
+}
+
+// A check nothing can bind is not dropped by planning, which would answer with more rows than the
+// query allows; it still fails as it does unplanned.
+func TestAnUnbindableCheckStillFailsWhenPlanned(t *testing.T) {
+	for _, q := range []string{`str.contains(?n, "x") => ?n`, `node(?n), ?m > 3 => ?n`, `node(?n), str.prefix(?m, "v") => ?n`} {
+		_, want := Naive{}.Eval(mustParse(t, q), baseFor(std(graph())))
+		_, got := SemiNaive{}.Eval(mustParse(t, q), baseFor(std(graph())))
+		if want == nil || fmt.Sprint(got) != fmt.Sprint(want) {
+			t.Errorf("%s: planned err = %v, want Naive's %v", q, got, want)
+		}
+	}
+}
+
+// Planning may start the goal with a later literal, but the answer keeps the columns, and so the row
+// order, its written goal gives it.
+func TestPlanningKeepsTheWrittenColumnOrder(t *testing.T) {
+	src := ns.NewMemSource().Declare("node", "name").Declare("pair", "k", "v")
+	for _, n := range []string{"a", "b"} {
+		src.Add("node", ns.Tuple{Vals: []ns.Value{ns.S(n)}})
+	}
+	for _, v := range []string{"1", "2"} {
+		src.Add("pair", ns.Tuple{Vals: []ns.Value{ns.S("k"), ns.S(v)}})
+	}
+	q := mustParse(t, `node(?x), pair("k", ?y)`)
+	want, err := Naive{}.Eval(q, baseFor(std(src)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, err := SemiNaive{}.Eval(q, baseFor(std(src)))
+	if err != nil || !reflect.DeepEqual(binds(got), binds(want)) {
+		t.Errorf("planned rows = %v, %v\n want, in Naive's order, %v", binds(got), err, binds(want))
+	}
+	if p := plan(baseFor(std(src)), q).Goal.Literals[0].Pos; p == nil || p.Relation != "pair" {
+		t.Errorf("control: the plan starts with %v, so this goal is not reordered and the test proves nothing", p)
+	}
+}

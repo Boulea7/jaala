@@ -16,7 +16,9 @@ import (
 // A GENERATOR (Gen set) PRODUCES values, enumerating solutions from wherever the host keeps them.
 // That is the property that makes clause order matter: a generator whose own input is unbound
 // enumerates from every candidate, so appearing first in a rule body is a whole-dataset scan no later
-// literal can undo (see GeneratorFirstRules). A generator must also only ever emit values drawn from
+// literal can undo. Modes says which bindings a generator accepts, so an engine can schedule it once
+// one is satisfied and refuse a body that can never satisfy any. A generator must also only ever emit
+// values drawn from
 // finite host data, or evaluation stops being guaranteed to terminate.
 type Builtin struct {
 	// Arity is the argument count, or the minimum when MaxArity is set.
@@ -27,6 +29,15 @@ type Builtin struct {
 	MaxArity int
 	// Holds is a filter's test over its (all-bound) argument values.
 	Holds func(args []Value) (bool, error)
+	// Modes lists the binding patterns a generator accepts: in each mode, the positions that must be
+	// bound when it is called. A generator that walks out from either end of a path has two modes,
+	// {true, false, ...} and {false, true, ...}. A generator that may enumerate with nothing bound
+	// says so with an all-false mode, so a full scan is a declaration rather than an accident.
+	//
+	// It is required for a generator, with every mode as long as the generator's longest call (MaxArity
+	// when set, else Arity); a position past a call's own arity is not required. A filter needs none:
+	// it is always called with every argument bound.
+	Modes [][]bool
 	// Labels names the arguments, and Types says what each denotes, exactly as for a base relation's
 	// Schema. Both are optional; they are what a host lists and what column kinds are read from.
 	Labels []string
@@ -67,6 +78,32 @@ func (bi Builtin) ArityLabel() string {
 		return fmt.Sprintf("%d", bi.Arity)
 	}
 	return fmt.Sprintf("%d or %d", bi.Arity, bi.MaxArity)
+}
+
+// Satisfied reports whether a call whose bound positions are bound satisfies one of the builtin's
+// modes. A filter is satisfied only when every argument is bound.
+func (bi Builtin) Satisfied(bound []bool) bool {
+	if !bi.IsGenerator() {
+		for _, b := range bound {
+			if !b {
+				return false
+			}
+		}
+		return true
+	}
+	for _, m := range bi.Modes {
+		ok := true
+		for i, need := range m {
+			if need && i < len(bound) && !bound[i] { // a position past the call's arity is not required
+				ok = false
+				break
+			}
+		}
+		if ok {
+			return true
+		}
+	}
+	return false
 }
 
 // Filter builds a filter Builtin from a boolean over its all-bound argument values.

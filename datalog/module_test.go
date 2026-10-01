@@ -244,16 +244,6 @@ func TestCheckResolvesInAnyRegistrationOrderAndReportsUnknownNames(t *testing.T)
 	}
 }
 
-func TestGeneratorFirstRulesSeesLinkedModuleRules(t *testing.T) {
-	r := succRegistry()
-	if err := r.AddModule("m", LanguageName, `_open(?x) :- succ(?a, ?x); bad(?x) :- _open(?x);`); err != nil {
-		t.Fatal(err)
-	}
-	if got := GeneratorFirstRules(mustParse(t, `m.bad(?x)`), r); !reflect.DeepEqual(got, []string{"m._open"}) {
-		t.Errorf("GeneratorFirstRules = %v, want [m._open]", got)
-	}
-}
-
 // Check runs on first use, and the first use may be several Evals at once.
 func TestConcurrentEvalsShareOneCheck(t *testing.T) {
 	b := baseFor(withModules(t, "path", reachModule))
@@ -280,7 +270,7 @@ func TestConcurrentEvalsShareOneCheck(t *testing.T) {
 func countingWalk(t *testing.T, v *ns.Vocabulary) *int {
 	t.Helper()
 	calls := new(int)
-	if err := v.AddPredicate("walk", ns.Builtin{Arity: 2, Gen: func(src ns.Source, args []ns.Arg, emit func([]ns.Value, []string) error) error {
+	if err := v.AddPredicate("walk", ns.Builtin{Arity: 2, Modes: [][]bool{{false, false}}, Gen: func(src ns.Source, args []ns.Arg, emit func([]ns.Value, []string) error) error {
 		*calls++
 		return nil
 	}}); err != nil {
