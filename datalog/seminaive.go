@@ -10,14 +10,16 @@ package datalog
 // the last round (the delta). Each fact is joined against once rather than once per round, and the
 // same closure grows with about n².
 //
-// It also plans each rule body and the goal before evaluating (see plan): a literal runs once as much
+// It also inlines single-rule, non-recursive derived relations into their callers (see unfold), so a
+// bound argument reaches the literals that can use it, and then plans each rule body and the goal
+// before evaluating (see plan): a literal runs once as much
 // as possible is bound, a comparison or filter as soon as its variables are, and a generator once one
 // of its Modes is satisfied. That makes cost independent of how a body is written, at the price of
 // citations: a different join order can make a different derivation of a tuple the first, so a planned
 // answer's rows match Naive's while a row's citations may come from another valid derivation.
 type SemiNaive struct {
-	// WrittenOrder runs bodies as written instead of planning them. Its answers then match Naive's
-	// citations too, which is what the tests compare it on.
+	// WrittenOrder runs bodies as written, neither inlining nor planning them. Its answers then match
+	// Naive's citations too, which is what the tests compare it on.
 	WrittenOrder bool
 }
 
@@ -25,7 +27,7 @@ type SemiNaive struct {
 func (s SemiNaive) Eval(q Query, b *Base) ([]Row, error) {
 	var rewrite func(*Base, Query) Query
 	if !s.WrittenOrder {
-		rewrite = plan
+		rewrite = func(b *Base, q Query) Query { return plan(b, unfold(b, q)) }
 	}
 	return evaluate(q, b, rewrite, s.materialize)
 }

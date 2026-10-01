@@ -164,6 +164,13 @@ func evaluate(q Query, b *Base, rewrite func(*Base, Query) Query, fixpoint func(
 	if err != nil {
 		return nil, err
 	}
+	// Modes are checked on the program as linked, before any rewrite, so an evaluator that inlines a
+	// rule away still refuses what its body could never run, with the message Validate gives.
+	for _, r := range q.Rules {
+		if err := checkModes(b, whereRule(r), r.Body); err != nil {
+			return nil, err
+		}
+	}
 	if err := checkModes(b, "the query", q.Goal); err != nil {
 		return nil, err
 	}
