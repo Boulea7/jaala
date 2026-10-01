@@ -1,8 +1,9 @@
 # jaala
 
-A Datalog engine for graph-shaped data, extracted from agni. One package, `datalog/`. Its model
-(the namespace tree, derived modules, linking, signatures) is described in `datalog/doc.go`, and
-that's the page to read first.
+A Datalog engine for graph-shaped data, extracted from agni. Two packages: `ns/`, the vocabulary
+(the namespace tree, value and signature types, members, suggestions, the `Language` hook), and
+`datalog/`, the engine (parsing, linking, `Check`'s resolution and inference, evaluation). Read
+`ns/doc.go`, then `datalog/doc.go`.
 
 ## Commands
 
@@ -20,13 +21,18 @@ go list -deps ./... | grep '\.' | grep -v '^github.com/panyam/jaala' | grep -v '
 
 - **Standard library only, and it must build for wasm.** agni runs the engine in the browser, and
   any dependency here becomes every host's dependency.
+- **`ns` never imports `datalog`, or any engine.** A host's fact layer imports `ns` precisely
+  because it may not import an engine (agni's C29). `TestNsImportsNoEngine` guards it.
 - **Error text keeps its `query:` prefix, and existing fragments stay stable** (`unknown relation
   "x"`, `takes N args`, `not stratifiable`). agni prints these messages and its tests match on
   fragments of them. New cases get new wording; existing wording doesn't move.
 - **`Base` is shared across concurrent `Eval`s.** Anything mutable reachable from it must be
   per-query (the `idb*` fields on Eval's shallow copy), atomic (`work`), or locked (`edbCache`,
-  the registry's `checkState`). `TestConcurrentEvalsShareOneCheck` catches a regression under
-  `-race`.
+  the vocabulary's `Memo` entries). `TestConcurrentEvalsShareOneCheck` and
+  `TestBasesOverDifferentSourcesEvaluateConcurrently` catch a regression under `-race`.
+- **Nothing inside a module resolution may call `Vocabulary.Signature` or `Check`.** They run
+  through the memo entry that is mid-computation, and `sync.Once` deadlocks on re-entry. That is
+  why the validation base carries `sigs` while it checks module rules.
 - **Comments use agni's circuit vocabulary on purpose** (`doc.go` says so). Host-specific test
   data doesn't belong here, though: checks against agni's real catalog, such as its
   `columnkinds.golden`, live in agni. Copying another repo's catalog in creates a fixture that goes
@@ -38,8 +44,9 @@ go list -deps ./... | grep '\.' | grep -v '^github.com/panyam/jaala' | grep -v '
   fails on its assertion. When scripting mutations, **treat a build failure as "not checked", not
   as red**. An unused variable left by a mutation fails the build, and a naive harness counts that
   as a pass.
-- Fixtures: `graph()` and the `eval`/`evalErr`/`col`/`std` helpers in `helpers_test.go`;
-  `withModules`/`evalReg` in `module_test.go`; the agni-shaped `circuit()` in `signature_test.go`.
+- Fixtures: `graph()` and the `eval`/`evalErr`/`col`/`std`/`baseFor` helpers in `helpers_test.go`;
+  `withModules`/`evalReg` in `module_test.go`; the agni-shaped `circuit()` in `signature_test.go`;
+  `vocabulary()` (no Source) in `baseover_test.go`; the `stub` language in `ns/vocabulary_test.go`.
 
 ## Releasing
 

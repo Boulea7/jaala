@@ -1,13 +1,16 @@
 package datalog
 
-import "testing"
+import (
+	"github.com/panyam/jaala/ns"
+	"testing"
+)
 
 // v is a present scalar; absentV is a field the source did not state. Both are spelled out here
 // because the whole point of this change is that they are different things.
-func numV(x float64, unit string) Value { return Value{S: ftoa(x), Num: &x, BaseUnit: unit} }
-func absentV() Value                    { return Value{Absent: true} }
+func numV(x float64, unit string) ns.Value { return ns.Value{S: ftoa(x), Num: &x, BaseUnit: unit} }
+func absentV() ns.Value                    { return ns.Value{Absent: true} }
 
-func cmpOf(t *testing.T, l Value, op string, r Value) bool {
+func cmpOf(t *testing.T, l ns.Value, op string, r ns.Value) bool {
 	t.Helper()
 	got, err := evalCompare(Compare{Left: Term{Const: &l}, Op: op, Right: Term{Const: &r}}, newBinding())
 	if err != nil {
@@ -20,13 +23,13 @@ func cmpOf(t *testing.T, l Value, op string, r Value) bool {
 // to be Value{S: ""}, indistinguishable from a field genuinely stated as the empty string, so nothing
 // downstream could tell "the datasheet states no minimum" from "the minimum is blank".
 func TestAbsentIsNotEmptyString(t *testing.T) {
-	if valueEq(absentV(), Value{S: ""}) {
+	if valueEq(absentV(), ns.Value{S: ""}) {
 		t.Error("an absent field must not unify with a stated empty string")
 	}
 	if !valueEq(absentV(), absentV()) {
 		t.Error("two absent fields must unify; see the SQL deviation below")
 	}
-	if !valueEq(Value{S: ""}, Value{S: ""}) {
+	if !valueEq(ns.Value{S: ""}, ns.Value{S: ""}) {
 		t.Error("two stated empty strings must still unify")
 	}
 }
@@ -52,7 +55,7 @@ func TestCompareRefusesToOrderAbsentAgainstPresent(t *testing.T) {
 	for _, op := range []string{"<", "<=", ">", ">="} {
 		for _, c := range []struct {
 			name string
-			l, r Value
+			l, r ns.Value
 		}{
 			{"absent on the left", absentV(), numV(5, "")},
 			{"absent on the right", numV(5, ""), absentV()},
@@ -106,16 +109,16 @@ func TestEqualityIsNotDimensionChecked(t *testing.T) {
 
 // TestCompareStillOrdersTwoStrings and equality across kinds are unchanged by the absence work.
 func TestCompareStillOrdersTwoStrings(t *testing.T) {
-	if !cmpOf(t, Value{S: "ALPHA"}, "<", Value{S: "BETA"}) {
+	if !cmpOf(t, ns.Value{S: "ALPHA"}, "<", ns.Value{S: "BETA"}) {
 		t.Error(`"ALPHA" < "BETA" must still hold; string ordering is a feature`)
 	}
 }
 
 func TestCompareStillEqualsAcrossKinds(t *testing.T) {
-	if cmpOf(t, Value{S: "ALPHA"}, "=", numV(5, "")) {
+	if cmpOf(t, ns.Value{S: "ALPHA"}, "=", numV(5, "")) {
 		t.Error("a word does not equal a number")
 	}
-	if !cmpOf(t, Value{S: "ALPHA"}, "!=", numV(5, "")) {
+	if !cmpOf(t, ns.Value{S: "ALPHA"}, "!=", numV(5, "")) {
 		t.Error("a word is not-equal to a number")
 	}
 }
@@ -125,7 +128,7 @@ func TestCompareStillEqualsAcrossKinds(t *testing.T) {
 // other, and only the exact comparison downstream would reject it.
 func TestAbsentDoesNotCollideInIndex(t *testing.T) {
 	a := valueKeys(absentV())
-	e := valueKeys(Value{S: ""})
+	e := valueKeys(ns.Value{S: ""})
 	if len(a) != 1 || len(e) != 1 {
 		t.Fatalf("want one key each, got absent=%v empty=%v", a, e)
 	}

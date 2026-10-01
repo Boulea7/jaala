@@ -2,6 +2,7 @@ package datalog
 
 import (
 	"fmt"
+	"github.com/panyam/jaala/ns"
 	"reflect"
 	"strings"
 	"testing"
@@ -14,32 +15,32 @@ reach(?a, ?c) :- reach(?a, ?b), edge(?b, ?c);
 `
 
 // withModules is graph()'s standard registry plus the given modules, path then text.
-func withModules(t *testing.T, mods ...string) *Registry {
+func withModules(t *testing.T, mods ...string) *ns.Vocabulary {
 	t.Helper()
 	r := std(graph())
 	for i := 0; i < len(mods); i += 2 {
-		if err := r.AddModule(mods[i], mods[i+1]); err != nil {
+		if err := r.AddModule(mods[i], LanguageName, mods[i+1]); err != nil {
 			t.Fatalf("AddModule(%q): %v", mods[i], err)
 		}
 	}
 	return r
 }
 
-func evalReg(t *testing.T, r *Registry, text string) []Row {
+func evalReg(t *testing.T, r *ns.Vocabulary, text string) []Row {
 	t.Helper()
-	rows, err := Naive{}.Eval(mustParse(t, text), NewBase(r))
+	rows, err := Naive{}.Eval(mustParse(t, text), baseFor(r))
 	if err != nil {
 		t.Fatalf("Eval(%q): %v", text, err)
 	}
 	return rows
 }
 
-func evalRegErr(r *Registry, text string) error {
+func evalRegErr(r *ns.Vocabulary, text string) error {
 	q, err := Parse(text)
 	if err != nil {
 		return err
 	}
-	_, err = Naive{}.Eval(q, NewBase(r))
+	_, err = Naive{}.Eval(q, baseFor(r))
 	return err
 }
 
@@ -80,9 +81,9 @@ func TestAModuleAnswersAsTheSameRulesPastedInline(t *testing.T) {
 // Inside a module a bare name is this module's member first, then the root's.
 func TestABareNameInAModuleResolvesLocallyThenAtTheRoot(t *testing.T) {
 	src := graph().Declare("m.node", "name")
-	src.Add("m.node", Tuple{Vals: []Value{S("b")}})
+	src.Add("m.node", ns.Tuple{Vals: []ns.Value{ns.S("b")}})
 	r := std(src)
-	if err := r.AddModule("m", `picked(?x) :- node(?x), edge(?x, _);`); err != nil {
+	if err := r.AddModule("m", LanguageName, `picked(?x) :- node(?x), edge(?x, _);`); err != nil {
 		t.Fatal(err)
 	}
 	if got := col(evalReg(t, r, `m.picked(?x) => ?x`), "x"); got != "b" {
@@ -138,6 +139,11 @@ func TestPrivateMembersAreScopedToTheirModule(t *testing.T) {
 	if err := evalRegErr(r, `node(?x), not _helper(?x)`); err == nil || !strings.Contains(err.Error(), "unknown relation") {
 		t.Errorf("err = %v, want a bare _helper unknown to a query", err)
 	}
+	// A private member defined by several rules is one relation.
+	r = withModules(t, "c", `_h(?x) :- edge(?x, _); _h(?x) :- edge(_, ?x); all(?x) :- _h(?x);`)
+	if got := col(evalReg(t, r, `c.all(?x) => ?x`), "x"); got != "a,b,c,d" {
+		t.Errorf("c.all = %s, want a,b,c,d (both of _h's rules)", got)
+	}
 	// Two calls at one module path are two scopes too.
 	r = withModules(t,
 		"m", `_helper(?x) :- edge(?x, _); from(?x) :- _helper(?x);`,
@@ -152,11 +158,12 @@ func TestAddModuleRefusals(t *testing.T) {
 		{"m", `x(?a) :- node(?a); x(?a)`, `rules-only text defines relations and asks nothing`},
 		{"m", `n.x(?a) :- node(?a);`, `rule head "n.x" is qualified`},
 		{"m", `x(?a) :- node(?a); x(?a, ?b) :- edge(?a, ?b);`, `defines "x" with 1 and 2 args`},
+		{"m", `_h(?a) :- node(?a); _h(?a, ?b) :- edge(?a, ?b); x(?a) :- _h(?a);`, `defines "_h" with 1 and 2 args`},
 		{"", `edge(?a, ?b) :- node(?a), node(?b);`, `"edge" is defined twice, as a base relation and as a derived relation`},
 		{"str", `contains(?a) :- node(?a);`, `"str.contains" is defined twice`},
 		{"edge", `x(?a) :- node(?a);`, `needs "edge" to be a module`},
 	} {
-		err := std(graph()).AddModule(c.path, c.text)
+		err := std(graph()).AddModule(c.path, LanguageName, c.text)
 		if err == nil || !strings.Contains(err.Error(), c.want) {
 			t.Errorf("AddModule(%q, %q): err = %v, want %q", c.path, c.text, err, c.want)
 		}
@@ -165,7 +172,7 @@ func TestAddModuleRefusals(t *testing.T) {
 
 func TestAFailedAddModuleRegistersNothing(t *testing.T) {
 	r := withModules(t, "m", `taken(?x) :- node(?x);`)
-	if err := r.AddModule("m", `fresh(?x) :- node(?x); taken(?x) :- node(?x);`); err == nil {
+	if err := r.AddModule("m", LanguageName, `fresh(?x) :- node(?x); taken(?x) :- node(?x);`); err == nil {
 		t.Fatal("a second definer of m.taken was accepted")
 	}
 	if err := evalRegErr(r, `m.fresh(?x)`); err == nil || !strings.Contains(err.Error(), `unknown relation "m.fresh"`) {
@@ -214,14 +221,14 @@ func TestCheckResolvesInAnyRegistrationOrderAndReportsUnknownNames(t *testing.T)
 	if err == nil || !strings.Contains(err.Error(), `module "a" rule "a.x" reads unknown module "b" in "b.y"`) {
 		t.Errorf("before b: err = %v, want b.y unknown", err)
 	}
-	if err := r.AddRelation("b.y", Schema{Arity: 1}); err != nil {
+	if err := r.AddRelation("b.y", ns.Schema{Arity: 1}); err != nil {
 		t.Fatal(err)
 	}
 	if err := r.Check(); err != nil {
 		t.Errorf("after b.y: err = %v, want the earlier failure forgotten", err)
 	}
 	// A call registering only private members changes no path, and still has to be checked.
-	if err := r.AddModule("z", `_bad(?x, ?y) :- node(?x);`); err != nil {
+	if err := r.AddModule("z", LanguageName, `_bad(?x, ?y) :- node(?x);`); err != nil {
 		t.Fatal(err)
 	}
 	if err := r.Check(); err == nil || !strings.Contains(err.Error(), "head variable ?y is not bound") {
@@ -239,7 +246,7 @@ func TestCheckResolvesInAnyRegistrationOrderAndReportsUnknownNames(t *testing.T)
 
 func TestGeneratorFirstRulesSeesLinkedModuleRules(t *testing.T) {
 	r := succRegistry()
-	if err := r.AddModule("m", `_open(?x) :- succ(?a, ?x); bad(?x) :- _open(?x);`); err != nil {
+	if err := r.AddModule("m", LanguageName, `_open(?x) :- succ(?a, ?x); bad(?x) :- _open(?x);`); err != nil {
 		t.Fatal(err)
 	}
 	if got := GeneratorFirstRules(mustParse(t, `m.bad(?x)`), r); !reflect.DeepEqual(got, []string{"m._open"}) {
@@ -249,7 +256,7 @@ func TestGeneratorFirstRulesSeesLinkedModuleRules(t *testing.T) {
 
 // Check runs on first use, and the first use may be several Evals at once.
 func TestConcurrentEvalsShareOneCheck(t *testing.T) {
-	b := NewBase(withModules(t, "path", reachModule))
+	b := baseFor(withModules(t, "path", reachModule))
 	q := mustParse(t, `path.reach("a", ?x) => ?x`)
 	errs := make(chan error, 8)
 	for i := 0; i < 8; i++ {

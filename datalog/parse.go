@@ -2,6 +2,7 @@ package datalog
 
 import (
 	"fmt"
+	"github.com/panyam/jaala/ns"
 	"slices"
 	"strconv"
 	"strings"
@@ -38,7 +39,7 @@ import (
 // rule whose body reads its own head is recursion (evaluated to a stratified fixpoint). Some relation
 // names are predicates the host registered rather than fact-base relations: reaches(from, net)
 // (transitive connectivity) and the string filters str.contains/str.prefix/str.suffix(?value,
-// "pattern"). A dotted name is a path in the Registry's tree (see Registry). They parse as
+// "pattern"). A dotted name is a path in the vocabulary's tree (see ns.Vocabulary). They parse as
 // ordinary atoms; the evaluator dispatches them. A rule head may not redefine a built-in or an EDB
 // relation.
 //
@@ -197,7 +198,7 @@ func parseHavingOne(piece string) (Compare, error) {
 }
 
 // ParseRules reads text that holds rules only, such as a derived module's body (see
-// Registry.AddModule). It accepts the same clause syntax as Parse and refuses a goal clause, since
+// Language). It accepts the same clause syntax as Parse and refuses a goal clause, since
 // rules with nothing to ask are a definition rather than a query.
 func ParseRules(s string) ([]Rule, error) {
 	rules, goals, err := splitClauses(stripComments(s))
@@ -279,7 +280,7 @@ func parseRule(headText, bodyText string) (Rule, error) {
 // parseHead parses a rule head, whose arguments may declare their types: `x(?n: net, ?v)`. The
 // declarations come back by position, nil when the head declares none. A KindFrom or Owner must name
 // another variable of the same head, since a type can only point at something the relation carries.
-func parseHead(s string) (Atom, []ArgType, error) {
+func parseHead(s string) (Atom, []ns.ArgType, error) {
 	open := strings.IndexByte(s, '(')
 	if open < 0 || !strings.HasSuffix(strings.TrimSpace(s), ")") || !strings.Contains(s, ":") {
 		a, err := parseAtom(s)
@@ -288,13 +289,13 @@ func parseHead(s string) (Atom, []ArgType, error) {
 	inner := strings.TrimSpace(s)
 	inner = inner[open+1 : len(inner)-1]
 	var plain []string
-	var types []ArgType
+	var types []ns.ArgType
 	declared := false
 	for _, a := range splitTop(inner, ",") {
 		if strings.TrimSpace(a) == "" {
 			continue
 		}
-		var t ArgType
+		var t ns.ArgType
 		if parts := splitTop(a, ":"); len(parts) == 2 {
 			var err error
 			if t, err = parseArgType(parts[1]); err != nil {
@@ -443,10 +444,10 @@ func parseTerm(s string) (Term, error) {
 		if len(s) < 2 || s[len(s)-1] != '"' {
 			return Term{}, fmt.Errorf("query: unterminated string %q", s)
 		}
-		return Term{Const: &Value{S: s[1 : len(s)-1]}}, nil
+		return Term{Const: &ns.Value{S: s[1 : len(s)-1]}}, nil
 	default:
 		if f, err := strconv.ParseFloat(s, 64); err == nil {
-			return Term{Const: &Value{S: s, Num: &f}}, nil
+			return Term{Const: &ns.Value{S: s, Num: &f}}, nil
 		}
 		return Term{}, fmt.Errorf("query: bare identifier %q — a term must be a ?variable, a \"string\", or a number", s)
 	}

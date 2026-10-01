@@ -3,7 +3,7 @@ package datalog
 import (
 	"errors"
 	"fmt"
-	"regexp"
+	"github.com/panyam/jaala/ns"
 	"slices"
 	"strings"
 )
@@ -16,138 +16,10 @@ import (
 // is why there is one dispatch, not one per kind, and why `not R(...)` works uniformly for EDB, IDB,
 // filters, and generators.
 
-// A Builtin is a predicate the engine computes rather than looks up. It is exactly one of two kinds.
-//
-// A FILTER (Holds set) tests arguments that must all be bound, keeping a binding when Holds is true.
-// Because negation runs the same test and asks whether it yielded, `not name(...)` keeps a binding
-// exactly when Holds is false, so the two directions cannot disagree. An unbound argument is an
-// error, the same shape as an unbound comparison operand.
-//
-// A GENERATOR (Gen set) PRODUCES values, enumerating solutions from wherever the host keeps them.
-// That is the property that makes clause order matter: a generator whose own input is unbound
-// enumerates from every candidate, so appearing first in a rule body is a whole-dataset scan no later
-// literal can undo (see GeneratorFirstRules). A generator must also only ever emit values drawn from
-// finite host data, or evaluation stops being guaranteed to terminate.
-type Builtin struct {
-	// Arity is the argument count, or the minimum when MaxArity is set.
-	Arity int
-	// MaxArity, when non-zero, is the inclusive maximum argument count. It exists so an optional
-	// trailing argument is admitted by the POSITIVE path and the NEGATION path through one test
-	// (accepts) rather than two length checks that could drift.
-	MaxArity int
-	// Holds is a filter's test over its (all-bound) argument values.
-	Holds func(args []Value) (bool, error)
-	// Labels names the arguments, and Types says what each denotes, exactly as for a base relation's
-	// Schema. Both are optional; they are what a host lists and what column kinds are read from.
-	Labels []string
-	Types  []ArgType
-	// Doc is a one-line description a host shows when the predicate is listed.
-	Doc string
-	// Gen is a generator's enumeration. args holds each argument's value where the binding fixes
-	// it. Gen calls emit once per solution with a value for EVERY argument, plus the citations that
-	// justify it; the engine unifies each solution against the atom, so one that disagrees with a
-	// bound argument is dropped there rather than in Gen. src is the Base's Source, for a generator
-	// that reads the host's data through it.
-	//
-	// The engine copies what it needs out of vals and cites before emit returns and never keeps
-	// either slice, so a generator may reuse one buffer for every solution it emits.
-	Gen func(src Source, args []Arg, emit func(vals []Value, cites []string) error) error
-}
-
-// An Arg is one argument as a generator sees it: its value when the binding fixes it.
-type Arg struct {
-	Value Value
-	Bound bool
-}
-
-// generator reports whether the builtin produces values rather than filtering them.
-func (bi Builtin) generator() bool { return bi.Gen != nil }
-
-// accepts reports whether n is a valid argument count for this builtin.
-func (bi Builtin) accepts(n int) bool {
-	if bi.MaxArity == 0 {
-		return n == bi.Arity
-	}
-	return n >= bi.Arity && n <= bi.MaxArity
-}
-
-// arityLabel renders the accepted arity for an error message ("2" or "2 or 3").
-func (bi Builtin) arityLabel() string {
-	if bi.MaxArity == 0 {
-		return fmt.Sprintf("%d", bi.Arity)
-	}
-	return fmt.Sprintf("%d or %d", bi.Arity, bi.MaxArity)
-}
-
-// Filter builds a filter Builtin from a boolean over its all-bound argument values.
-func Filter(arity int, holds func(args []Value) (bool, error)) Builtin {
-	return Builtin{Arity: arity, Holds: holds}
-}
-
-// StandardPredicates registers the predicates every host gets unless it composes its own set: the
-// string tests str.contains, str.prefix, str.suffix, str.glob and str.match, and absent at the root.
-// absent is not a string test (it asks whether a field was stated at all, for any value), which is
-// why it stays out of str. A host that wants other names registers these builtins itself.
-func StandardPredicates(r *Registry) error {
-	for _, p := range []struct {
-		path string
-		b    Builtin
-	}{
-		{"str.contains", strFilter(strings.Contains, "substring", "reports whether a string contains a substring")},
-		{"str.prefix", strFilter(strings.HasPrefix, "prefix", "reports whether a string starts with a prefix")},
-		{"str.suffix", strFilter(strings.HasSuffix, "suffix", "reports whether a string ends with a suffix")},
-		{"str.glob", patFilter(CompileGlob, "pattern", "reports whether a string matches a glob pattern")},
-		{"str.match", patFilter(CompilePattern, "regex", "reports whether a string matches a regular expression")},
-		// absent(?x) is the only way to ASK about a field the source did not state. Before
-		// Value.Absent existed such a field bound to the empty string, so it was not merely hard to
-		// select, it was indistinguishable from one that was stated as "". Its negation is the useful
-		// half as often as not: `not absent(?min)` reads "this row states a lower bound".
-		{"absent", Builtin{
-			Arity: 1, Labels: []string{"value"},
-			Doc:   "reports whether the source left a field unstated, for any value",
-			Holds: func(args []Value) (bool, error) { return args[0].Absent, nil },
-		}},
-	} {
-		if err := r.AddPredicate(p.path, p.b); err != nil {
-			return err
-		}
-	}
-	return nil
-}
-
-// strFilter wraps a string(value, pattern) bool as a 2-arity filter (the shape of
-// str.contains/str.prefix/str.suffix).
-func strFilter(fn func(s, pat string) bool, second, doc string) Builtin {
-	b := Filter(2, func(args []Value) (bool, error) { return fn(args[0].S, args[1].S), nil })
-	return stringTest(b, second, doc)
-}
-
-// stringTest labels a two-argument string test and types both arguments as strings.
-func stringTest(b Builtin, second, doc string) Builtin {
-	b.Labels = []string{"string", second}
-	b.Types = []ArgType{{Type: TypeString}, {Type: TypeString}}
-	b.Doc = doc
-	return b
-}
-
-// patFilter is strFilter for the two PATTERN predicates (str.glob, str.match): the pattern must be compiled
-// before it can be tested, so a malformed one is an EVAL ERROR rather than a non-match. That
-// direction matters — a bad pattern that quietly matched nothing would read as "the data is clean"
-// on a completeness check.
-func patFilter(compile func(string) (*regexp.Regexp, error), second, doc string) Builtin {
-	return stringTest(Filter(2, func(args []Value) (bool, error) {
-		re, err := compile(args[1].S)
-		if err != nil {
-			return false, err
-		}
-		return re.MatchString(args[0].S), nil
-	}), second, doc)
-}
-
 // extendBuiltin runs a builtin under the current binding.
-func extendBuiltin(bi Builtin, atom *Atom, bnd *binding, b *Base, yield func(*binding) error) error {
+func extendBuiltin(bi ns.Builtin, atom *Atom, bnd *binding, b *Base, yield func(*binding) error) error {
 	if bi.Holds != nil {
-		args := make([]Value, len(atom.Args))
+		args := make([]ns.Value, len(atom.Args))
 		for i, a := range atom.Args {
 			v, ok := resolve(a, bnd)
 			if !ok {
@@ -164,12 +36,12 @@ func extendBuiltin(bi Builtin, atom *Atom, bnd *binding, b *Base, yield func(*bi
 		}
 		return nil
 	}
-	args := make([]Arg, len(atom.Args))
+	args := make([]ns.Arg, len(atom.Args))
 	for i, a := range atom.Args {
 		v, ok := resolve(a, bnd)
-		args[i] = Arg{Value: v, Bound: ok}
+		args[i] = ns.Arg{Value: v, Bound: ok}
 	}
-	return bi.Gen(b.src, args, func(vals []Value, cites []string) error {
+	return bi.Gen(b.src, args, func(vals []ns.Value, cites []string) error {
 		if len(vals) != len(atom.Args) {
 			return fmt.Errorf("query: internal: %s emitted %d values for %d arguments", atom.Relation, len(vals), len(atom.Args))
 		}
@@ -193,7 +65,7 @@ func (b *Base) extendAtom(atom *Atom, bnd *binding, yield func(*binding) error) 
 		return err
 	}
 	rel := atom.Relation
-	if bi, ok := b.reg.predicate(rel); ok {
+	if bi, ok := b.reg.Predicate(rel); ok {
 		return extendBuiltin(bi, atom, bnd, b, yield)
 	}
 	if _, ok := b.schemaOf(rel); ok {
@@ -203,7 +75,7 @@ func (b *Base) extendAtom(atom *Atom, bnd *binding, yield func(*binding) error) 
 }
 
 // schemaOf is the schema of the base relation registered at rel.
-func (b *Base) schemaOf(rel string) (Schema, bool) { return b.reg.schema(rel) }
+func (b *Base) schemaOf(rel string) (ns.Schema, bool) { return b.reg.Schema(rel) }
 
 // checkArgValues rejects a CONSTANT naming a value its argument cannot hold, for the arguments whose
 // values are a vocabulary the Source defines. A variable is unaffected, and a relation declaring no
@@ -212,7 +84,7 @@ func (b *Base) schemaOf(rel string) (Schema, bool) { return b.reg.schema(rel) }
 // It exists because the alternative is silence: a misspelled constant matches nothing and answers
 // "no results", which reads as a fact about the data rather than a typo. An empty answer to a
 // question that was never valid is the worst available outcome.
-func (b *Base) checkArgValues(atom *Atom, s Schema) error {
+func (b *Base) checkArgValues(atom *Atom, s ns.Schema) error {
 	for i, arg := range atom.Args {
 		if arg.Const == nil || i >= len(s.Labels) || i >= len(s.Types) {
 			continue
@@ -227,7 +99,7 @@ func (b *Base) checkArgValues(atom *Atom, s Schema) error {
 			continue
 		}
 		return fmt.Errorf("query: %s's %q argument cannot be %q%s (it holds one of: %s)",
-			atom.Relation, label, got, didYouMeanValue(allowed, got), strings.Join(allowed, ", "))
+			atom.Relation, label, got, ns.DidYouMeanValue(allowed, got), strings.Join(allowed, ", "))
 	}
 	return nil
 }
@@ -241,9 +113,9 @@ func (b *Base) checkArgValues(atom *Atom, s Schema) error {
 // a solve happens to arrive is checking it sometimes.
 func (b *Base) checkAtom(atom *Atom) error {
 	rel := atom.Relation
-	if bi, ok := b.reg.predicate(rel); ok {
-		if !bi.accepts(len(atom.Args)) {
-			return fmt.Errorf("query: %s takes %s args, got %d", rel, bi.arityLabel(), len(atom.Args))
+	if bi, ok := b.reg.Predicate(rel); ok {
+		if !bi.Accepts(len(atom.Args)) {
+			return fmt.Errorf("query: %s takes %s args, got %d", rel, bi.ArityLabel(), len(atom.Args))
 		}
 		return nil
 	}
@@ -257,12 +129,12 @@ func (b *Base) checkAtom(atom *Atom) error {
 		if len(atom.Args) != b.idbArity[rel] {
 			return fmt.Errorf("query: relation %q takes %d args, got %d", rel, b.idbArity[rel], len(atom.Args))
 		}
-		if s, ok := b.reg.derivedSchema(rel); ok {
+		if s, ok := b.derivedSchema(rel); ok {
 			return b.checkArgValues(atom, s)
 		}
 		return nil
 	}
-	return fmt.Errorf("query: %s", b.unknown(rel))
+	return fmt.Errorf("query: %s", b.reg.Unknown(rel))
 }
 
 // extendEDB fans an EDB atom over the tuples of its relation, unifying each into the binding.
@@ -274,7 +146,7 @@ func (b *Base) extendEDB(atom *Atom, bnd *binding, yield func(*binding) error) e
 	rows := b.edbTuples(atom.Relation)
 	pos, all := b.edbCandidates(atom, rows, bnd)
 	for i := 0; ; i++ {
-		var t Tuple
+		var t ns.Tuple
 		if all {
 			if i >= len(rows) {
 				break
@@ -341,8 +213,8 @@ func (b *Base) atomHolds(atom *Atom, bnd *binding) (bool, error) {
 // on the positive path, so a variadic built-in cannot be accepted in a positive atom while its
 // negation is rejected.
 func (b *Base) arityAccepts(rel string, n int) (ok bool, known bool) {
-	if bi, found := b.reg.predicate(rel); found {
-		return bi.accepts(n), true
+	if bi, found := b.reg.Predicate(rel); found {
+		return bi.Accepts(n), true
 	}
 	if s, found := b.schemaOf(rel); found {
 		return n == s.Arity, true
@@ -355,11 +227,33 @@ func (b *Base) arityAccepts(rel string, n int) (ok bool, known bool) {
 
 // arityLabelOf renders a relation's accepted argument count for an error message.
 func (b *Base) arityLabelOf(rel string) string {
-	if bi, ok := b.reg.predicate(rel); ok {
-		return bi.arityLabel()
+	if bi, ok := b.reg.Predicate(rel); ok {
+		return bi.ArityLabel()
 	}
 	if s, ok := b.schemaOf(rel); ok {
 		return fmt.Sprintf("%d", s.Arity)
 	}
 	return fmt.Sprintf("%d", b.idbArity[rel])
+}
+
+// derivedSchema is a derived member's signature as a Schema, so a query constant outside a closed
+// vocabulary is refused for it exactly as for a base relation.
+func (b *Base) derivedSchema(rel string) (ns.Schema, bool) {
+	sigs := b.sigs
+	if sigs == nil {
+		res, err := resolved(b.reg)
+		if err != nil {
+			return ns.Schema{}, false
+		}
+		sigs = res.sigs
+	}
+	sig, ok := sigs[rel]
+	if !ok {
+		return ns.Schema{}, false
+	}
+	s := ns.Schema{Arity: len(sig), Labels: make([]string, len(sig)), Types: make([]ns.ArgType, len(sig))}
+	for i, a := range sig {
+		s.Labels[i], s.Types[i] = a.Name, a.ArgType
+	}
+	return s, true
 }

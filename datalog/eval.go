@@ -2,17 +2,18 @@ package datalog
 
 import (
 	"fmt"
+	"github.com/panyam/jaala/ns"
 	"sort"
 	"strconv"
 	"strings"
 	"sync/atomic"
 )
 
-// Base is the queryable fact base: a Registry's names, with its Source's relations indexed by binding
+// Base is the queryable fact base: a Vocabulary's names, with one Source's relations indexed by binding
 // pattern on first use. Built once per dataset; many queries reuse it, including concurrently.
 type Base struct {
-	src Source
-	reg *Registry
+	src ns.Source
+	reg *ns.Vocabulary
 	// edb caches each base relation's tuples the first time a query reads it, and the indexes over
 	// them. It belongs to the SHARED Base because a Source's tuples are immutable for the Base's
 	// life, so a second query over the same data reuses what the first one built.
@@ -37,43 +38,37 @@ type Base struct {
 	work *int64
 	// noIndex sends every base-relation probe down the full scan. See Unindexed.
 	noIndex bool
+	// sigs, when set, are the derived members' signatures to check constants against. Only a
+	// validation base inside module resolution sets it, since the memoized signatures are not
+	// available until that resolution finishes.
+	sigs map[string][]ns.ArgSig
 }
 
-// NewBase builds a fact base over a registry: its base relations read from the registry's Source,
-// and its predicates. NewBaseOver binds the registry to a different Source instead. The registry is read, never changed, so a host should finish registering
-// before building a Base over it. A nil reg is a base that knows no names at all.
-func NewBase(reg *Registry) *Base {
-	return &Base{src: reg.Source(), reg: reg, edb: newEDBCache(), work: new(int64)}
-}
-
-// NewBaseOver builds a fact base that answers with reg's vocabulary over src's facts, so one
-// registry, composed and checked once, can serve many Sources: one per design read, say. The Bases
-// share the registry and its Check result; each reads tuples, and hands generators, only its own
-// Source. The registry's Source, if it has one, is not read.
+// NewBase builds a fact base that answers with v's names over src's facts. A host composes and
+// checks its vocabulary once, and builds a Base per dataset it reads: every Base over v shares v's
+// resolved modules and signatures, and each reads tuples, and hands generators, only its own Source.
 //
-// The registry stays the authority on what each relation is. src must serve every base relation the
-// registry holds, at the same arity, and NewBaseOver refuses it otherwise, naming each relation that
-// is missing or disagrees: a relation silently reading as empty would answer as if the design had
-// none of it. Relations src serves beyond the registry's are ignored, since no query can name them.
+// The vocabulary stays the authority on what each relation is. src must serve every base relation v
+// holds, at the same arity, and NewBase refuses it otherwise, naming each relation that is missing or
+// disagrees: a relation silently reading as empty would answer as if the dataset had none of it.
+// Relations src serves beyond v's are ignored, since no query can name them.
 //
-// The registry is read, never changed, by any number of Bases at once; registering into it while
-// they evaluate is not supported.
-func NewBaseOver(reg *Registry, src Source) (*Base, error) {
+// v is read, never changed, by any number of Bases at once; registering into it while they evaluate
+// is not supported. A nil v is a base that knows no names at all.
+func NewBase(v *ns.Vocabulary, src ns.Source) (*Base, error) {
 	var missing, mismatched []string
-	if reg != nil {
-		for _, rel := range reg.baseOrder {
-			want, _ := reg.schema(rel)
-			var got Schema
-			ok := false
-			if src != nil {
-				got, ok = src.Schema(rel)
-			}
-			switch {
-			case !ok:
-				missing = append(missing, rel)
-			case got.Arity != want.Arity:
-				mismatched = append(mismatched, fmt.Sprintf("%s takes %d args in the registry and %d in the source", rel, want.Arity, got.Arity))
-			}
+	for _, rel := range v.BaseRelations() {
+		want, _ := v.Schema(rel)
+		var got ns.Schema
+		ok := false
+		if src != nil {
+			got, ok = src.Schema(rel)
+		}
+		switch {
+		case !ok:
+			missing = append(missing, rel)
+		case got.Arity != want.Arity:
+			mismatched = append(mismatched, fmt.Sprintf("%s takes %d args in the vocabulary and %d in the source", rel, want.Arity, got.Arity))
 		}
 	}
 	var problems []string
@@ -85,10 +80,20 @@ func NewBaseOver(reg *Registry, src Source) (*Base, error) {
 	if len(problems) > 0 {
 		return nil, fmt.Errorf("query: %s", strings.Join(problems, "; "))
 	}
-	return &Base{src: src, reg: reg, edb: newEDBCache(), work: new(int64)}, nil
+	return &Base{src: src, reg: v, edb: newEDBCache(), work: new(int64)}, nil
 }
 
-// Unindexed returns a Base over the same registry that scans every base relation
+// MustBase is NewBase for a Source known to match its vocabulary, such as a test fixture. It panics
+// on the error NewBase would return.
+func MustBase(v *ns.Vocabulary, src ns.Source) *Base {
+	b, err := NewBase(v, src)
+	if err != nil {
+		panic(err)
+	}
+	return b
+}
+
+// Unindexed returns a Base over the same vocabulary and Source that scans every base relation
 // instead of consulting an index. It answers exactly as the indexed Base does, only slower, which is
 // what makes it useful: comparing the two is how a host asserts that indexing changed no answer on
 // its own data, rather than hoping so.
@@ -99,10 +104,10 @@ func (b *Base) Unindexed() *Base {
 }
 
 // Source returns the Source this base reads.
-func (b *Base) Source() Source { return b.src }
+func (b *Base) Source() ns.Source { return b.src }
 
-// Registry returns the registry this base resolves names in.
-func (b *Base) Registry() *Registry { return b.reg }
+// Vocabulary returns the vocabulary this base resolves names in.
+func (b *Base) Vocabulary() *ns.Vocabulary { return b.reg }
 
 // Work reports how many candidate comparisons the solver has performed against this Base. It exists
 // for scaling guards: assert the RATIO of work at n and 2n rather than any absolute number, so the
@@ -115,7 +120,7 @@ func (b *Base) Work() int64 {
 }
 
 // edbTuples returns a base relation's tuples, reading them from the Source once per Base.
-func (b *Base) edbTuples(rel string) []Tuple {
+func (b *Base) edbTuples(rel string) []ns.Tuple {
 	if b.edb == nil {
 		if b.src == nil {
 			return nil
@@ -226,7 +231,7 @@ func (b *Base) validateNegations(goal Body, negs []Literal) error {
 		rel := lit.Neg.Relation
 		ok, known := b.arityAccepts(rel, len(lit.Neg.Args))
 		if !known {
-			return fmt.Errorf("query: negation over %s", b.unknown(rel))
+			return fmt.Errorf("query: negation over %s", b.reg.Unknown(rel))
 		}
 		if !ok {
 			return fmt.Errorf("query: negated relation %q takes %s args, got %d", rel, b.arityLabelOf(rel), len(lit.Neg.Args))
@@ -306,14 +311,14 @@ func passesNegations(bnd *binding, negs []Literal, b *Base) (bool, error) {
 
 // binding is a partial solution: variable bindings plus the cites of the facts consumed so far.
 type binding struct {
-	vals  map[Var]Value
+	vals  map[Var]ns.Value
 	cites []string
 }
 
-func newBinding() *binding { return &binding{vals: map[Var]Value{}} }
+func newBinding() *binding { return &binding{vals: map[Var]ns.Value{}} }
 
 func (b *binding) clone() *binding {
-	nv := make(map[Var]Value, len(b.vals))
+	nv := make(map[Var]ns.Value, len(b.vals))
 	for k, v := range b.vals {
 		nv[k] = v
 	}
@@ -366,7 +371,7 @@ func solve(lits []Literal, i int, bnd *binding, b *Base, emit func(*binding) err
 // is symmetric — an argument matches whether the value comes from the fact or from an existing
 // binding — and it commits variables into the binding as a side result, closer to destructuring a
 // value against a pattern than to calling a function with arguments.
-func unify(args []Term, t Tuple, bnd *binding) (*binding, bool) {
+func unify(args []Term, t ns.Tuple, bnd *binding) (*binding, bool) {
 	out := bnd.clone()
 	for j, arg := range args {
 		if !bindArg(out, arg, t.Vals[j]) {
@@ -379,7 +384,7 @@ func unify(args []Term, t Tuple, bnd *binding) (*binding, bool) {
 
 // bindArg unifies one argument term with a value: a constant must equal it, a variable binds it (or
 // must match its existing binding). "_" and the empty variable are wildcards.
-func bindArg(bnd *binding, arg Term, val Value) bool {
+func bindArg(bnd *binding, arg Term, val ns.Value) bool {
 	switch {
 	case arg.Const != nil:
 		return valueEq(val, *arg.Const)
@@ -396,7 +401,7 @@ func bindArg(bnd *binding, arg Term, val Value) bool {
 
 // resolve reads a term's value under the binding: a constant is itself, a bound variable its
 // binding. ok is false for an unbound variable.
-func resolve(t Term, bnd *binding) (Value, bool) {
+func resolve(t Term, bnd *binding) (ns.Value, bool) {
 	if t.Const != nil {
 		return *t.Const, true
 	}
@@ -411,7 +416,7 @@ func resolve(t Term, bnd *binding) (Value, bool) {
 // SQL's UNKNOWN. That is a deliberate deviation: full three-valued logic would have to thread UNKNOWN
 // through negation, aggregation and the index, and "both unstated" is the reading an engineer running
 // a search actually wants.
-func valueEq(a, b Value) bool {
+func valueEq(a, b ns.Value) bool {
 	if a.Absent || b.Absent {
 		return a.Absent && b.Absent
 	}
@@ -478,7 +483,7 @@ func evalCompare(c Compare, bnd *binding) (bool, error) {
 // same rules a goal comparison does. The three refusals documented on evalCompare live here; that
 // function keeps the binding resolution and the unbound-operand error, which a having does not have
 // (its operands are a reduced column and a group key, both already values).
-func compareValues(l Value, op string, r Value) bool {
+func compareValues(l ns.Value, op string, r ns.Value) bool {
 	if l.Absent || r.Absent {
 		// An unstated value has no ORDER, but it does have an IDENTITY: two unstated bounds are the
 		// same answer to "what does this row state". Routing equality through valueEq keeps the
@@ -670,7 +675,7 @@ func hasAggregate(sel []Term) bool {
 func projectRows(sel []Term, raw []*binding) []Row {
 	rows := make([]Row, 0, len(raw))
 	for _, bnd := range raw {
-		row := Row{Bind: make(map[Var]Value, len(sel)), Cites: dedupStrings(bnd.cites)}
+		row := Row{Bind: make(map[Var]ns.Value, len(sel)), Cites: dedupStrings(bnd.cites)}
 		for _, t := range sel {
 			if t.Var != "" {
 				row.Bind[t.Var] = bnd.vals[t.Var]
@@ -714,7 +719,7 @@ func aggregate(sel []Term, having []Compare, raw []*binding) ([]Row, error) {
 		}
 	}
 	type group struct {
-		keyVals map[Var]Value
+		keyVals map[Var]ns.Value
 		rows    []*binding
 	}
 	groups := map[string]*group{}
@@ -722,7 +727,7 @@ func aggregate(sel []Term, having []Compare, raw []*binding) ([]Row, error) {
 		key := groupKeyOf(keyVars, bnd)
 		g := groups[key]
 		if g == nil {
-			g = &group{keyVals: map[Var]Value{}}
+			g = &group{keyVals: map[Var]ns.Value{}}
 			for _, kv := range keyVars {
 				g.keyVals[kv] = bnd.vals[kv]
 			}
@@ -734,11 +739,11 @@ func aggregate(sel []Term, having []Compare, raw []*binding) ([]Row, error) {
 	// so count over nothing answers 0 rather than no rows, as SQL's COUNT(*) does (agni issue 726).
 	// A grouped projection gets no such row: over nothing there is no key to name a group by.
 	if len(keyVars) == 0 && len(groups) == 0 {
-		groups[""] = &group{keyVals: map[Var]Value{}}
+		groups[""] = &group{keyVals: map[Var]ns.Value{}}
 	}
 	var out []Row
 	for _, g := range groups {
-		row := Row{Bind: map[Var]Value{}}
+		row := Row{Bind: map[Var]ns.Value{}}
 		var cites []string
 		for _, kv := range keyVars {
 			row.Bind[kv] = g.keyVals[kv]
@@ -777,7 +782,7 @@ func aggregate(sel []Term, having []Compare, raw []*binding) ([]Row, error) {
 func passesHaving(row Row, having []Compare) (bool, error) {
 	for _, h := range having {
 		left := row.Bind[colLabel(h.Left)]
-		var right Value
+		var right ns.Value
 		switch {
 		case h.Right.Const != nil:
 			right = *h.Right.Const
@@ -864,7 +869,7 @@ func numericValues(a Aggregate, rows []*binding) []float64 {
 // sum are over their numeric value (a row whose value is non-numeric is skipped). Distinct reduces the
 // group's distinct values of the aggregated variable instead of one entry per binding, which changes
 // count, sum and list, and leaves min and max where they were.
-func reduce(a Aggregate, rows []*binding) Value {
+func reduce(a Aggregate, rows []*binding) ns.Value {
 	if a.Func == "count" {
 		// Bare count counts BINDINGS, so it counts a row that binds nothing for Var; distinct counts
 		// the values, so it cannot. That asymmetry is the definition rather than an oversight: a
@@ -873,14 +878,14 @@ func reduce(a Aggregate, rows []*binding) Value {
 		if a.Distinct {
 			n = float64(len(groupValues(a, rows)))
 		}
-		return Value{S: ftoa(n), Num: &n}
+		return ns.Value{S: ftoa(n), Num: &n}
 	}
 	if a.Func == "list" {
-		return Value{S: strings.Join(groupValues(a, rows), listSep)}
+		return ns.Value{S: strings.Join(groupValues(a, rows), listSep)}
 	}
 	nums := numericValues(a, rows)
 	if len(nums) == 0 {
-		return Value{}
+		return ns.Value{}
 	}
 	r := nums[0]
 	switch a.Func {
@@ -902,7 +907,7 @@ func reduce(a Aggregate, rows []*binding) Value {
 			r += x
 		}
 	}
-	return Value{S: ftoa(r), Num: &r}
+	return ns.Value{S: ftoa(r), Num: &r}
 }
 
 // dedupSort removes duplicate answer rows (same projected values) and sorts them, so a query is a

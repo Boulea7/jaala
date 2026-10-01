@@ -1,6 +1,7 @@
 package datalog
 
 import (
+	"github.com/panyam/jaala/ns"
 	"strconv"
 	"sync"
 	"sync/atomic"
@@ -58,7 +59,7 @@ type idxKey struct {
 // A numeric value built with N or NU is already canonical (its S is ftoa of its number), so this
 // usually returns one key. It is a query constant like `10.0`, or a rule head deriving one, that produces
 // two.
-func valueKeys(v Value) []string {
+func valueKeys(v ns.Value) []string {
 	// An absent field must not share a bucket with a legitimately empty string, or a probe for one
 	// would find the other and the exact comparison would then have to reject it. The sentinel is a
 	// byte no fact value can contain, so it cannot collide with real content.
@@ -86,7 +87,7 @@ const absentKey = "\x00absent"
 // Each segment is length-prefixed so the encoding is injective: without it ("a|b","c") and
 // ("a","b|c") would collide. Collisions would only cost comparisons rather than correctness, but
 // they are free to avoid.
-func tupleKeys(vals []Value) []string {
+func tupleKeys(vals []ns.Value) []string {
 	keys := []string{""}
 	for _, v := range vals {
 		vks := valueKeys(v)
@@ -104,7 +105,7 @@ func tupleKeys(vals []Value) []string {
 // boundArgs reads the atom's bound positions under the current binding, returning the mask and the
 // values in positional order. ok is false when nothing is bound, which is the driver atom of a body
 // and stays a full scan: there is nothing to look up by.
-func boundArgs(args []Term, bnd *binding) (mask patternMask, vals []Value, ok bool) {
+func boundArgs(args []Term, bnd *binding) (mask patternMask, vals []ns.Value, ok bool) {
 	for i, a := range args {
 		if i >= maskWidth {
 			break
@@ -136,7 +137,7 @@ type edbIndex map[string][]int
 // so a second query over the same data reuses what the first one built.
 type edbCache struct {
 	mu  sync.RWMutex
-	tup map[string][]Tuple
+	tup map[string][]ns.Tuple
 	idx map[idxKey]edbIndex
 }
 
@@ -150,18 +151,18 @@ func (b *Base) countWork() {
 
 // newEDBCache builds an empty cache.
 func newEDBCache() *edbCache {
-	return &edbCache{tup: map[string][]Tuple{}, idx: map[idxKey]edbIndex{}}
+	return &edbCache{tup: map[string][]ns.Tuple{}, idx: map[idxKey]edbIndex{}}
 }
 
 // tuples returns rel's tuples, asking the Source the first time.
-func (c *edbCache) tuples(rel string, src Source) []Tuple {
+func (c *edbCache) tuples(rel string, src ns.Source) []ns.Tuple {
 	c.mu.RLock()
 	t, ok := c.tup[rel]
 	c.mu.RUnlock()
 	if ok {
 		return t
 	}
-	var fresh []Tuple
+	var fresh []ns.Tuple
 	if src != nil {
 		fresh = src.Tuples(rel)
 	}
@@ -177,7 +178,7 @@ func (c *edbCache) tuples(rel string, src Source) []Tuple {
 // get returns the index for a relation at a pattern, building it once on first use. Lazy because a
 // rule set probes a handful of the possible patterns, and eagerly indexing every relation at every
 // mask would cost more than the scans it saves on data nobody queries deeply.
-func (c *edbCache) get(rel string, tuples []Tuple, mask patternMask) edbIndex {
+func (c *edbCache) get(rel string, tuples []ns.Tuple, mask patternMask) edbIndex {
 	k := idxKey{rel: rel, mask: mask}
 	c.mu.RLock()
 	idx, ok := c.idx[k]
@@ -199,9 +200,9 @@ func (c *edbCache) get(rel string, tuples []Tuple, mask patternMask) edbIndex {
 
 // buildEDBIndex indexes every tuple of a relation at the given mask. Tuples are immutable for the
 // life of a Base, so this is built once per (relation, pattern) and reused across queries.
-func buildEDBIndex(tuples []Tuple, mask patternMask) edbIndex {
+func buildEDBIndex(tuples []ns.Tuple, mask patternMask) edbIndex {
 	idx := edbIndex{}
-	vals := make([]Value, 0, 4)
+	vals := make([]ns.Value, 0, 4)
 	for pos, t := range tuples {
 		vals = vals[:0]
 		for i, v := range t.Vals {
@@ -229,7 +230,7 @@ const indexMinFacts = 16
 // edbCandidates narrows an atom's tuples to the positions that can match under the current binding.
 // all is true when the caller should scan the whole relation instead: nothing is bound (the driver
 // atom of a body, which has nothing to look up by) or the relation is too small to index.
-func (b *Base) edbCandidates(atom *Atom, tuples []Tuple, bnd *binding) (pos []int, all bool) {
+func (b *Base) edbCandidates(atom *Atom, tuples []ns.Tuple, bnd *binding) (pos []int, all bool) {
 	// No cache means no indexing: a Base built by struct literal rather than NewBase. Unindexed asks
 	// for the scan path on purpose, as the oracle an equivalence test compares against.
 	if b.edb == nil || b.noIndex || len(tuples) < indexMinFacts {
@@ -274,7 +275,7 @@ func (x *idbIndex) sync(tuples []idbTuple, mask patternMask) {
 	if x.buckets == nil {
 		x.buckets = map[string][]int{}
 	}
-	vals := make([]Value, 0, 4)
+	vals := make([]ns.Value, 0, 4)
 	for ; x.n < len(tuples); x.n++ {
 		vals = vals[:0]
 		for i, v := range tuples[x.n].vals {

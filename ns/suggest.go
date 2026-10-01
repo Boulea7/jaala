@@ -1,4 +1,4 @@
-package datalog
+package ns
 
 import (
 	"fmt"
@@ -6,7 +6,7 @@ import (
 	"strings"
 )
 
-// unknown describes a name the engine cannot resolve, for an error that follows "query: ". It names
+// Unknown describes a name the vocabulary does not hold, for an error that follows "query: ". It names
 // what is missing and adds a hint, so the most common newcomer error, a mistyped or half-remembered
 // name, is answered with the vocabulary at the moment it is needed:
 //
@@ -16,49 +16,47 @@ import (
 //
 // A missing module is named as such because "unknown relation" would send the reader hunting a typo
 // in the last segment when the first one is wrong.
-func (b *Base) unknown(name string) string { return b.reg.unknown(name) }
-
-func (r *Registry) unknown(name string) string {
-	if !r.hasBase() {
-		return fmt.Sprintf("unknown relation %q%s", name, r.hint(name))
+func (v *Vocabulary) Unknown(name string) string {
+	if !v.hasBase() {
+		return fmt.Sprintf("unknown relation %q%s", name, v.Hint(name))
 	}
-	if r.isModule(name) {
-		return fmt.Sprintf("%q is a module, not a relation; it holds %s", name, strings.Join(r.children(name), ", "))
+	if v.IsModule(name) {
+		return fmt.Sprintf("%q is a module, not a relation; it holds %s", name, strings.Join(v.children(name), ", "))
 	}
-	if mod, ok := r.missingModule(name); ok {
-		return fmt.Sprintf("unknown module %q in %q%s", mod, name, r.hint(name))
+	if mod, ok := v.missingModule(name); ok {
+		return fmt.Sprintf("unknown module %q in %q%s", mod, name, v.Hint(name))
 	}
-	return fmt.Sprintf("unknown relation %q%s", name, r.hint(name))
+	return fmt.Sprintf("unknown relation %q%s", name, v.Hint(name))
 }
 
-// hint is the text after the name in an unknown-name error: `; did you mean "X"?` when a registered
+// Hint is the text after the name in an unknown-name error: `; did you mean "X"?` when a registered
 // name is a plausible typo, an explanation when no relation is registered at all, and "" otherwise.
 //
 // When no base relation is registered it says that instead of guessing, because every name is
 // unknown in that state and a typo hint would send the reader hunting a spelling mistake they did not
 // make. A host that forgot to install its relations still runs; this is the one moment the omission
 // is visible.
-func (r *Registry) hint(name string) string {
-	if !r.hasBase() {
-		if h, ok := r.Source().(NoVocabularyHinter); ok {
-			return "; " + h.NoVocabularyHint()
+func (v *Vocabulary) Hint(name string) string {
+	if !v.hasBase() {
+		if v != nil && v.hinter != nil {
+			return "; " + v.hinter.NoVocabularyHint()
 		}
 		return "; no relations are installed"
 	}
-	if s := r.suggest(name); s != "" {
+	if s := v.suggest(name); s != "" {
 		return fmt.Sprintf(`; did you mean %q?`, s)
 	}
 	return ""
 }
 
 // missingModule reports the module part of a dotted name when no module of that path exists.
-func (r *Registry) missingModule(name string) (string, bool) {
+func (v *Vocabulary) missingModule(name string) (string, bool) {
 	i := strings.LastIndexByte(name, '.')
 	if i < 0 {
 		return "", false
 	}
 	mod := name[:i]
-	return mod, !r.isModule(mod)
+	return mod, !v.IsModule(mod)
 }
 
 // suggest returns the registered path a mistyped name most plausibly meant, or "".
@@ -69,30 +67,30 @@ func (r *Registry) missingModule(name string) (string, bool) {
 // module stands in for it, and the member is suggested if that module holds it, else the module is.
 // A bare name that matches nothing at the root, but is the last segment of a member elsewhere, is
 // suggested at that path, which is what a query written before a name moved into a module needs.
-func (r *Registry) suggest(name string) string {
+func (v *Vocabulary) suggest(name string) string {
 	mod, leaf := "", name
 	if i := strings.LastIndexByte(name, '.'); i >= 0 {
 		mod, leaf = name[:i], name[i+1:]
 	}
-	if mod != "" && !r.isModule(mod) {
-		near := closest(mod, r.modulePaths())
+	if mod != "" && !v.IsModule(mod) {
+		near := closest(mod, v.modulePaths())
 		if near == "" {
 			return ""
 		}
-		if _, ok := r.members[near+"."+leaf]; ok {
+		if _, ok := v.members[near+"."+leaf]; ok {
 			return near + "." + leaf
 		}
 		return near
 	}
 	var cands []string
-	for _, p := range r.candidates() {
+	for _, p := range v.candidates() {
 		if parent, _ := splitPath(p); parent == mod {
 			cands = append(cands, p)
 		}
 	}
 	best := closestBy(leaf, cands, func(p string) string { _, l := splitPath(p); return l })
 	if best == "" && mod == "" {
-		for _, p := range r.candidates() {
+		for _, p := range v.candidates() {
 			if _, l := splitPath(p); l == leaf && p != leaf {
 				return p
 			}
@@ -104,16 +102,16 @@ func (r *Registry) suggest(name string) string {
 // candidates is every member path a suggestion may name: base relations in the Source's order, then
 // predicates and derived relations, each sorted. On a tie the earlier candidate wins, which is why the
 // Source controls the order. A private member is never registered at a path, so it is never offered.
-func (r *Registry) candidates() []string {
-	out := append([]string(nil), r.baseOrder...)
-	out = append(out, r.namesOf(kindPredicate)...)
-	return append(out, r.namesOf(kindDerived)...)
+func (v *Vocabulary) candidates() []string {
+	out := append([]string(nil), v.baseOrder...)
+	out = append(out, v.namesOf(kindPredicate)...)
+	return append(out, v.namesOf(kindDerived)...)
 }
 
 // modulePaths is every module path, sorted.
-func (r *Registry) modulePaths() []string {
-	out := make([]string, 0, len(r.modules))
-	for m, n := range r.modules {
+func (v *Vocabulary) modulePaths() []string {
+	out := make([]string, 0, len(v.modules))
+	for m, n := range v.modules {
 		if n > 0 {
 			out = append(out, m)
 		}
@@ -179,10 +177,10 @@ func levenshtein(a, b string) int {
 	return prev[len(rb)]
 }
 
-// didYouMeanValue suggests the closest legal value for a rejected constant, the value-level twin of
-// suggestRelation. A typo is the common case this whole check exists for, so naming the intended
+// DidYouMeanValue suggests the closest legal value for a rejected constant, as `, did you mean "X"?`,
+// the value-level twin of Hint. A typo is the common case this whole check exists for, so naming the intended
 // value is most of its worth; returns "" when nothing is close enough to be worth guessing.
-func didYouMeanValue(allowed []string, got string) string {
+func DidYouMeanValue(allowed []string, got string) string {
 	best, bestDist := "", 0
 	for _, want := range allowed {
 		d := levenshtein(got, want)
@@ -203,8 +201,8 @@ func didYouMeanValue(allowed []string, got string) string {
 	return fmt.Sprintf(", did you mean %q?", best)
 }
 
-// DidYouMean returns the hint the engine appends to an unknown-name error: `; did you mean "X"?`
-// when a registered path is a plausible typo of name, an explanation when reg holds no base relation
-// at all, and "" otherwise. It is exported for a host that validates names itself, such as one
+// DidYouMean returns the hint an engine appends to an unknown-name error: `; did you mean "X"?`
+// when a registered path is a plausible typo of name, an explanation when v holds no base relation
+// at all, and "" otherwise. It is v.Hint, for a host that validates names itself, such as one
 // checking a rule that arrived over its own wire format, so its errors read the same as the engine's.
-func DidYouMean(reg *Registry, name string) string { return reg.hint(name) }
+func DidYouMean(v *Vocabulary, name string) string { return v.Hint(name) }

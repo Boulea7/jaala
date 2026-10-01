@@ -1,4 +1,4 @@
-package datalog
+package ns
 
 import "sort"
 
@@ -27,7 +27,7 @@ type Schema struct {
 	// a fact about the data. It is only enforced on a labelled argument, since the error has to name
 	// what the argument is.
 	Types []ArgType
-	// Doc is a one-line description a host shows when the relation is listed (see Registry.Lookup).
+	// Doc is a one-line description a host shows when the relation is listed (see Vocabulary.Lookup).
 	Doc string
 }
 

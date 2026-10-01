@@ -2,6 +2,7 @@ package datalog
 
 import (
 	"fmt"
+	"github.com/panyam/jaala/ns"
 	"slices"
 )
 
@@ -18,14 +19,14 @@ import (
 //   - A kind that varies per row stays per row through a head, when the head carries the argument
 //     that says the kind. agni collapsed this case to no type; a head declaring KindFrom can carry it.
 type typer struct {
-	reg   *Registry
+	reg   *ns.Vocabulary
 	rules map[string][]Rule // by head relation, names resolved to paths
 	// ignoreDecl is a relation whose declared head types are set aside, so its declarations can be
 	// compared with what its rules alone produce.
 	ignoreDecl string
 }
 
-func newTyper(reg *Registry, rules []Rule) *typer {
+func newTyper(reg *ns.Vocabulary, rules []Rule) *typer {
 	t := &typer{reg: reg, rules: map[string][]Rule{}}
 	for _, r := range rules {
 		t.rules[r.Head.Relation] = append(t.rules[r.Head.Relation], r)
@@ -36,9 +37,9 @@ func newTyper(reg *Registry, rules []Rule) *typer {
 // varType is what a variable of body denotes, in body's own terms: a fixed kind, the variable whose
 // per-row value is its kind, or a kind with the term that locates it.
 type varType struct {
-	ArgType // Kind, Type, Unit and Domain; KindFrom and Owner are carried by the fields below
-	kindVar Var
-	owner   Term
+	ns.ArgType // Kind, Type, Unit and Domain; KindFrom and Owner are carried by the fields below
+	kindVar    Var
+	owner      Term
 }
 
 // ofVar types a variable by the positive atoms that bind it. An entity binding wins over a scalar
@@ -77,12 +78,12 @@ func (t *typer) ofVar(v Var, body Body, seen map[string]bool) varType {
 					// no meaning for.
 					if kt.Const != nil {
 						if i := slices.Index(labels, at.KindFrom); i >= 0 && i < len(types) && slices.Contains(types[i].Domain, kt.Const.S) {
-							return varType{ArgType: ArgType{Kind: kt.Const.S}}
+							return varType{ArgType: ns.ArgType{Kind: kt.Const.S}}
 						}
 					}
 				case at.Owner != "":
 					if ref, ok := argAt(a, labels, at.Owner); ok {
-						return varType{ArgType: ArgType{Kind: at.Kind, Type: at.Type, Unit: at.Unit, Domain: at.Domain}, owner: ref}
+						return varType{ArgType: ns.ArgType{Kind: at.Kind, Type: at.Type, Unit: at.Unit, Domain: at.Domain}, owner: ref}
 					}
 				case at.Kind != "":
 					return varType{ArgType: at}
@@ -101,11 +102,11 @@ func (t *typer) isDerived(rel string) bool { _, ok := t.rules[rel]; return ok }
 // argTypes returns what a relation says about its arguments: a base relation's or predicate's
 // declaration, or a derived relation's declared or inferred head types. A derived relation already
 // being typed further up the walk answers nothing, which is what ends a cycle.
-func (t *typer) argTypes(rel string, seen map[string]bool) ([]string, []ArgType, bool) {
-	if s, ok := t.reg.schema(rel); ok {
+func (t *typer) argTypes(rel string, seen map[string]bool) ([]string, []ns.ArgType, bool) {
+	if s, ok := t.reg.Schema(rel); ok {
 		return s.Labels, s.Types, true
 	}
-	if b, ok := t.reg.predicate(rel); ok {
+	if b, ok := t.reg.Predicate(rel); ok {
 		return b.Labels, b.Types, true
 	}
 	if !t.isDerived(rel) || seen[rel] {
@@ -113,7 +114,7 @@ func (t *typer) argTypes(rel string, seen map[string]bool) ([]string, []ArgType,
 	}
 	labels := t.headLabels(rel)
 	declared, _ := t.declared(rel)
-	types := make([]ArgType, len(labels))
+	types := make([]ns.ArgType, len(labels))
 	for j := range labels {
 		if rel != t.ignoreDecl && j < len(declared) && !declared[j].IsZero() {
 			types[j] = declared[j]
@@ -127,7 +128,7 @@ func (t *typer) argTypes(rel string, seen map[string]bool) ([]string, []ArgType,
 // ofHead infers argument j of a derived relation from every rule defining it, in the relation's own
 // labels. It is agni's headKind, generalized to carry a per-row kind and an owner when the head
 // holds the argument they point at.
-func (t *typer) ofHead(rel string, j int, seen map[string]bool) ArgType {
+func (t *typer) ofHead(rel string, j int, seen map[string]bool) ns.ArgType {
 	next := make(map[string]bool, len(seen)+1)
 	for k := range seen {
 		next[k] = true
@@ -135,7 +136,7 @@ func (t *typer) ofHead(rel string, j int, seen map[string]bool) ArgType {
 	next[rel] = true
 	labels := t.headLabels(rel)
 
-	var got ArgType
+	var got ns.ArgType
 	found, untyped := false, false
 	var domain []string
 	closed := true
@@ -159,7 +160,7 @@ func (t *typer) ofHead(rel string, j int, seen map[string]bool) ArgType {
 		} else {
 			domain = unionSorted(domain, vt.Domain)
 		}
-		at := ArgType{Kind: vt.Kind, Type: vt.Type, Unit: vt.Unit}
+		at := ns.ArgType{Kind: vt.Kind, Type: vt.Type, Unit: vt.Unit}
 		if vt.kindVar != "" {
 			if m := headIndex(r.Head, vt.kindVar); m >= 0 {
 				at.KindFrom = labels[m]
@@ -169,16 +170,16 @@ func (t *typer) ofHead(rel string, j int, seen map[string]bool) ArgType {
 			if m := headIndex(r.Head, vt.owner.Var); vt.owner.Var != "" && m >= 0 {
 				at.Owner = labels[m]
 			} else {
-				at = ArgType{} // an entity the head cannot locate names nothing a reader can act on
+				at = ns.ArgType{} // an entity the head cannot locate names nothing a reader can act on
 			}
 		}
-		if found && !got.sameShape(at) {
+		if found && !sameShape(got, at) {
 			untyped = true
 		}
 		got, found = at, true
 	}
 	if untyped || !found {
-		got = ArgType{}
+		got = ns.ArgType{}
 	}
 	if closed && len(domain) > 0 {
 		got.Domain = domain
@@ -213,9 +214,9 @@ func (t *typer) headLabels(rel string) []string {
 
 // declared merges what a derived relation's rule heads declare, by position, in the relation's own
 // labels. Two rules declaring different types for one argument is an error.
-func (t *typer) declared(rel string) ([]ArgType, error) {
+func (t *typer) declared(rel string) ([]ns.ArgType, error) {
 	labels := t.headLabels(rel)
-	var out []ArgType
+	var out []ns.ArgType
 	for _, r := range t.rules[rel] {
 		for i, d := range r.HeadTypes {
 			if d.IsZero() || i >= len(labels) {
@@ -233,9 +234,9 @@ func (t *typer) declared(rel string) ([]ArgType, error) {
 				*ref = labels[m]
 			}
 			if out == nil {
-				out = make([]ArgType, len(labels))
+				out = make([]ns.ArgType, len(labels))
 			}
-			if !out[i].IsZero() && (!out[i].sameShape(d) || !slices.Equal(out[i].Domain, d.Domain)) {
+			if !out[i].IsZero() && (!sameShape(out[i], d) || !slices.Equal(out[i].Domain, d.Domain)) {
 				return nil, fmt.Errorf("query: %s declares its %q argument as both %q and %q", displayName(rel), labels[i], out[i], d)
 			}
 			out[i] = d
@@ -247,7 +248,7 @@ func (t *typer) declared(rel string) ([]ArgType, error) {
 // signature is a derived relation's full signature: each argument declared where a head declares it
 // and inferred elsewhere. It fails when two heads declare an argument differently, or when a
 // declaration says something the relation's rules cannot produce.
-func (t *typer) signature(rel string) ([]ArgSig, error) {
+func (t *typer) signature(rel string) ([]ns.ArgSig, error) {
 	labels := t.headLabels(rel)
 	declared, err := t.declared(rel)
 	if err != nil {
@@ -255,17 +256,17 @@ func (t *typer) signature(rel string) ([]ArgSig, error) {
 	}
 	t.ignoreDecl = rel
 	defer func() { t.ignoreDecl = "" }()
-	out := make([]ArgSig, len(labels))
+	out := make([]ns.ArgSig, len(labels))
 	for j, name := range labels {
 		inferred := t.ofHead(rel, j, nil)
 		if j < len(declared) && !declared[j].IsZero() {
 			if why := contradicts(declared[j], inferred); why != "" {
 				return nil, fmt.Errorf("query: %s declares ?%s: %s, but its rules make it %s", displayName(rel), name, declared[j], why)
 			}
-			out[j] = ArgSig{Name: name, ArgType: declared[j]}
+			out[j] = ns.ArgSig{Name: name, ArgType: declared[j]}
 			continue
 		}
-		out[j] = ArgSig{Name: name, ArgType: inferred, Inferred: true}
+		out[j] = ns.ArgSig{Name: name, ArgType: inferred, Inferred: true}
 	}
 	return out, nil
 }
@@ -273,7 +274,7 @@ func (t *typer) signature(rel string) ([]ArgSig, error) {
 // contradicts reports how an inferred type rules out a declared one, or "". Only what inference
 // determined can contradict: a declaration may say more than the rules show, such as a kind for an
 // argument read from an untyped column, but not something else.
-func contradicts(d, i ArgType) string {
+func contradicts(d, i ns.ArgType) string {
 	switch {
 	case (i.Kind != "" || i.KindFrom != "") && (i.Kind != d.Kind || i.KindFrom != d.KindFrom || i.Owner != d.Owner):
 		return describe(i)
@@ -289,11 +290,17 @@ func contradicts(d, i ArgType) string {
 	return ""
 }
 
-func describe(t ArgType) string {
+func describe(t ns.ArgType) string {
 	if t.KindFrom != "" {
 		return "a kind per row, from ?" + t.KindFrom
 	}
 	return t.String()
+}
+
+// sameShape reports whether two types say the same thing, ignoring Domain, which inference merges
+// separately.
+func sameShape(t, o ns.ArgType) bool {
+	return t.Kind == o.Kind && t.KindFrom == o.KindFrom && t.Owner == o.Owner && t.Type == o.Type && t.Unit == o.Unit
 }
 
 // bodyTouches reports whether any positive literal names a relation being typed, which is how a
@@ -343,10 +350,10 @@ type ColumnKind struct {
 }
 
 // ColumnKinds reports what each answer column of q denotes, in Select order (or goal-variable order
-// when Select is empty), read from what the registry's relations declare and inferred through the
+// when Select is empty), read from what the vocabulary's relations declare and inferred through the
 // query's rules and the modules it links. An aggregate is a number whatever it reduces: count(?ref)
 // counts parts, it does not name one.
-func ColumnKinds(q Query, reg *Registry) ([]ColumnKind, error) {
+func ColumnKinds(q Query, reg *ns.Vocabulary) ([]ColumnKind, error) {
 	q, err := Link(q, reg)
 	if err != nil {
 		return nil, err
@@ -359,9 +366,9 @@ func ColumnKinds(q Query, reg *Registry) ([]ColumnKind, error) {
 	out := make([]ColumnKind, len(sel))
 	for i, s := range sel {
 		if s.Agg != nil {
-			out[i] = ColumnKind{Type: TypeNumber}
+			out[i] = ColumnKind{Type: ns.TypeNumber}
 			if s.Agg.Func == "list" {
-				out[i] = ColumnKind{Type: TypeString}
+				out[i] = ColumnKind{Type: ns.TypeString}
 			}
 			continue
 		}
