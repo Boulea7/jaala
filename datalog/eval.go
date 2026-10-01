@@ -11,6 +11,19 @@ import (
 
 // Base is the queryable fact base: a Vocabulary's names, with one Source's relations indexed by binding
 // pattern on first use. Built once per dataset; many queries reuse it, including concurrently.
+//
+// Concurrency. Any number of goroutines may Eval on one Base at once, with any evaluators, mixed:
+// Naive and SemiNaive in any mode share a Base safely. Each Eval derives its rules into its own copy,
+// so derived relations and their indexes never cross queries. What is shared is read-mostly and
+// guarded: each base relation is read from the Source once, however many Evals ask for it at the same
+// moment (the others wait for that read), and each of its indexes is built once. Work, Source,
+// Vocabulary and Unindexed are safe at any time; Work totals the comparisons of every Eval on the
+// Base. The vocabulary's resolved modules are shared through its memo.
+//
+// Not safe: registering into the Vocabulary while Evals run on a Base over it.
+//
+// Host code is called without any jaala lock held. A generator may run in several Evals at once and
+// must be safe for that, or serialize itself, as a host whose engine has one connection would.
 type Base struct {
 	src ns.Source
 	reg *ns.Vocabulary
