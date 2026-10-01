@@ -3,6 +3,7 @@ package datalog
 import (
 	"fmt"
 	"github.com/panyam/jaala/ns"
+	"github.com/panyam/jaala/stdlib"
 	"strings"
 	"testing"
 )
@@ -23,7 +24,7 @@ func vocabulary(t *testing.T) *ns.Vocabulary {
 			t.Fatal(err)
 		}
 	}
-	if err := ns.StandardPredicates(r); err != nil {
+	if err := stdlib.Register(r); err != nil {
 		t.Fatal(err)
 	}
 	if err := r.AddPredicate("succ", ns.Builtin{Arity: 2, Modes: [][]bool{{true, false}}, Gen: func(src ns.Source, args []ns.Arg, emit func([]ns.Value, []string) error) error {

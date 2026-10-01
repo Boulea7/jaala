@@ -9,8 +9,8 @@
 //   - a base relation, described by a Schema, whose tuples a Source serves;
 //   - a predicate, a Builtin the host computes: a filter or a generator. A generator declares the
 //     binding patterns it accepts (Modes), so an engine can schedule it and refuse a call that can
-//     never be made. StandardPredicates registers the string tests under str (str.contains,
-//     str.prefix, ...) and absent at the root;
+//     never be made. jaala/stdlib registers the standard ones: the string tests under str
+//     (str.contains, str.prefix, ...) and absent at the root;
 //   - a derived relation, defined by a module written in a Language an engine provides
 //     (jaala/datalog provides "datalog"). The vocabulary asks the language what a module defines
 //     and enters each member's path; it never parses the text itself.
