@@ -61,12 +61,18 @@ go list -deps ./... | grep '\.' | grep -v '^github.com/panyam/jaala' | grep -v '
 - Red-check each new test: break the behaviour it guards, keep the symbol, and confirm the test
   fails on its assertion. When scripting mutations, **treat a build failure as "not checked", not
   as red**. An unused variable left by a mutation fails the build, and a naive harness counts that
-  as a pass.
+  as a pass. Likewise a `-run '^Name$'` that matches no test passes; run by prefix and check the
+  test actually ran. Restore mutated files in a `finally` and give each run a timeout.
 - **Give a test a control that proves its fixture can tell the cases apart.** Most surviving
   mutations here were fixtures that could not: a recursion guard tested only with two-rule
   relations, a column-order test whose sort orders coincided, a "free" call the planner bound, a
   citation-leak fixture whose first derivation happened to follow the leaked path. A `control:`
   assertion (Naive walks n times; the plan does start with the reordered literal) catches that.
+  **Inlining hides rewrites**: a single-rule relation is folded into its caller, so a test of how
+  demand, planning or the fixpoint treat a derived relation gives it two rules or runs with
+  `Witnesses()` (which turns inlining off). A cost test needs a fixture where the old cost shows:
+  a chain stored in walk order closes in one pass (`reversedLine` doesn't), and a reader sees its
+  input in round zero only when its name sorts after it.
 - **`Naive` is the reference evaluator and stays unoptimized.** `SemiNaive` (semi-naive fixpoint,
   then the rewrites `unfold` → `magic` → `plan`, all off with `WrittenOrder`) must answer as it
   does. The test helpers
@@ -101,8 +107,8 @@ go list -deps ./... | grep '\.' | grep -v '^github.com/panyam/jaala' | grep -v '
   message, checked on the linked program before any rewrite. Planning lives in `plan.go`, called
   only by `SemiNaive`. A generator runs as soon as one of its modes is satisfied, after only the
   ready checks (comparisons, filters, and relations with every argument bound), so a host never
-  has to write a body generator-first (#36). A body the demand rewrite guarded (a magic relation or
-  a factored set, `isGuard`) keeps the guard first when `plan` runs over it (`planRule`); ranked
+  has to write a body generator-first (#36). A body the demand rewrite guarded (a magic,
+  supplementary or factored relation, `isGuard`) keeps the guard first when `plan` runs over it (`planRule`); ranked
   from nothing bound, the guard would fall behind any relation bound by constants.
 - **SemiNaive derives a stratum component by component** (`components`, Tarjan, in dependency
   order). A stratum is a level, so it mixes recursion with plain dependencies; a relation that
@@ -110,8 +116,11 @@ go list -deps ./... | grep '\.' | grep -v '^github.com/panyam/jaala' | grep -v '
   recursive component (#51). `stratify`'s strata, its errors, and `Naive` are unchanged.
 - Fixtures: `graph()` and the `eval`/`evalErr`/`col`/`std`/`baseFor` helpers in `helpers_test.go`;
   `withModules`/`evalReg` in `module_test.go`; the agni-shaped `circuit()` in `signature_test.go`;
-  `vocabulary()` (no Source) in `baseover_test.go`; the `stub` language in `ns/vocabulary_test.go`.
-  datalog's tests import `stdlib` for `std()`; production datalog code must not.
+  `vocabulary()` (no Source) in `baseover_test.go`; the `stub` language in `ns/vocabulary_test.go`;
+  `line`/`walker` (a two-mode generator recording what each call had bound) and `tested()` (line
+  with tests as attributes, Declaire's shape) in `plan_test.go`; `hopper` (a generator citing its
+  path in walk order) and `workOf` in `magic_test.go`; `reversedLine` and `counter` in
+  `seminaive_test.go`. datalog's tests import `stdlib` for `std()`; production datalog code must not.
 
 ## Releasing
 
