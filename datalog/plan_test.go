@@ -251,3 +251,96 @@ func TestPlanningKeepsTheWrittenColumnOrder(t *testing.T) {
 		t.Errorf("control: the plan starts with %v, so this goal is not reordered and the test proves nothing", p)
 	}
 }
+
+// tested is line(6) whose first three nodes are tests, stated as attributes, the way Declaire's
+// go.test is a rule over constants.
+func tested() *ns.MemSource {
+	src := line(6).Declare("attr", "n", "k", "v").Declare("blocked", "n")
+	for _, n := range []string{"v0", "v1", "v2"} {
+		src.Add("attr", ns.Tuple{Vals: []ns.Value{ns.S(n), ns.S("role"), ns.S("test")}})
+	}
+	return src.Add("blocked", ns.Tuple{Vals: []ns.Value{ns.S("v0")}})
+}
+
+// A generator whose mode is satisfied runs before a relation that only constants bind (#36): such a
+// relation is a scan, and a generator after it runs once per row. Declaire's go.covers walked once per
+// test when written test-first; go.test is a rule over constants, with a negation, inlined here.
+func TestASatisfiedGeneratorRunsBeforeAScan(t *testing.T) {
+	const test = `test(?f) :- attr(?f, "role", "test"), not attr(?f, "receiver", _); `
+	goals := []struct {
+		goal, col, want string
+		end             [2]bool
+	}{
+		{`covers(?t, "v5") => ?t`, "t", "v0,v1,v2", [2]bool{false, true}},
+		{`covers("v1", ?f) => ?f`, "f", "v2,v3,v4,v5", [2]bool{true, false}},
+	}
+	for _, body := range []string{`test(?t), walk(?t, ?f)`, `walk(?t, ?f), test(?t)`} {
+		for _, g := range goals {
+			v := std(tested())
+			calls := walker(t, v, [][]bool{{true, false}, {false, true}})
+			rows, err := SemiNaive{}.Eval(bg, mustParse(t, test+`covers(?t, ?f) :- `+body+`; `+g.goal), baseFor(v))
+			if err != nil || col(rows, g.col) != g.want {
+				t.Fatalf("%s, %s: %v, %v; want %s", body, g.goal, rows, err, g.want)
+			}
+			if len(*calls) != 1 || (*calls)[0] != g.end {
+				t.Errorf("%s, %s: walks %v, want one with %v bound", body, g.goal, *calls, g.end)
+			}
+		}
+	}
+	v := std(tested())
+	calls := walker(t, v, [][]bool{{true, false}, {false, true}})
+	written := test + `covers(?t, ?f) :- test(?t), walk(?t, ?f); covers(?t, "v5") => ?t`
+	if _, err := (SemiNaive{WrittenOrder: true}).Eval(bg, mustParse(t, written), baseFor(v)); err != nil || len(*calls) != 3 {
+		t.Errorf("control: written test-first, %d walks (%v), want one per test (3)", len(*calls), err)
+	}
+	v = std(tested())
+	calls = walker(t, v, [][]bool{{true, false}, {false, true}})
+	if rows, err := (SemiNaive{}).Eval(bg, mustParse(t, test+`covers(?t, ?f) :- walk(?t, ?f), test(?t); covers(?t, ?f) => ?t, ?f`), baseFor(v)); err != nil || len(rows) != 5+4+3 || len(*calls) != 3 {
+		t.Errorf("nothing bound, written walk-first: %d rows, %d walks, %v; want 12 rows and a walk per test", len(rows), len(*calls), err)
+	}
+}
+
+// A relation whose arguments are all bound only asks whether a tuple exists, so it runs before a
+// generator: a binding it rejects needs no walk at all.
+func TestAnExistenceProbeRunsBeforeAGenerator(t *testing.T) {
+	for _, c := range []struct {
+		start string
+		rows  int
+		walks int
+	}{{"v0", 5, 1}, {"v1", 0, 0}} {
+		v := std(tested())
+		calls := walker(t, v, [][]bool{{true, false}, {false, true}})
+		text := `stuck(?t, ?f) :- walk(?t, ?f), blocked(?t); stuck("` + c.start + `", ?f) => ?f`
+		rows, err := SemiNaive{}.Eval(bg, mustParse(t, text), baseFor(v))
+		if err != nil || len(rows) != c.rows {
+			t.Fatalf("from %s: %d rows, %v; want %d", c.start, len(rows), err, c.rows)
+		}
+		if len(*calls) != c.walks {
+			t.Errorf("from %s: %d walks, want %d (the probe decides first)", c.start, len(*calls), c.walks)
+		}
+	}
+}
+
+// The same ranking orders a body planned from what its head binds, as demand plans an adorned rule.
+func TestABodyPlannedFromItsHeadRanksTheSameWay(t *testing.T) {
+	v := std(tested())
+	walker(t, v, [][]bool{{true, false}, {false, true}})
+	b := baseFor(v)
+	first := func(body string, entry ...Var) string {
+		q := mustParse(t, body)
+		in := map[Var]bool{}
+		for _, e := range entry {
+			in[e] = true
+		}
+		return planBody(b, q.Goal, in).Literals[0].Pos.Relation
+	}
+	if got := first(`attr(?t, "role", "test"), walk(?t, ?f)`, "f"); got != "walk" {
+		t.Errorf("?f bound on entry: %s runs first, want walk", got)
+	}
+	if got := first(`attr(?t, "role", "test"), walk(?t, ?f)`); got != "attr" {
+		t.Errorf("control: nothing bound on entry, %s runs first, want attr (walk cannot run yet)", got)
+	}
+	if got := first(`walk(?t, ?f), blocked(?t)`, "t"); got != "blocked" {
+		t.Errorf("?t bound on entry: %s runs first, want the probe blocked", got)
+	}
+}
