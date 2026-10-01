@@ -1,6 +1,8 @@
 package datalog
 
 import (
+	"context"
+	"fmt"
 	"github.com/panyam/jaala/ns"
 	"strconv"
 	"sync"
@@ -143,18 +145,22 @@ type edbCache struct {
 
 // edbRead is one relation's read from the Source, made once however many Evals ask for it at the
 // same moment: the Source contract promises Tuples is called at most once per relation per Base, and
-// a host's read may be a whole-table query it should not run twice.
+// a host's read may be a whole-table query it should not run twice. Others needing it wait on mu. A
+// read that fails, such as one cancelled with the Eval that started it, is not kept, so the next
+// Eval to need the relation reads it again under its own context.
 type edbRead struct {
-	once   sync.Once
+	mu     sync.Mutex
+	done   bool
 	tuples []ns.Tuple
 }
 
 // countWork records one candidate comparison. See Base.work. Atomic because Evals sharing a Base
 // share the counter.
-func (b *Base) countWork() {
+func (b *Base) countWork() error {
 	if b.work != nil {
 		atomic.AddInt64(b.work, 1)
 	}
+	return b.run.step()
 }
 
 // newEDBCache builds an empty cache.
@@ -163,7 +169,7 @@ func newEDBCache() *edbCache {
 }
 
 // tuples returns rel's tuples, asking the Source the first time.
-func (c *edbCache) tuples(rel string, src ns.Source) []ns.Tuple {
+func (c *edbCache) tuples(ctx context.Context, rel string, src ns.Source) ([]ns.Tuple, error) {
 	c.mu.Lock()
 	r, ok := c.tup[rel]
 	if !ok {
@@ -171,12 +177,20 @@ func (c *edbCache) tuples(rel string, src ns.Source) []ns.Tuple {
 		c.tup[rel] = r
 	}
 	c.mu.Unlock()
-	r.once.Do(func() {
-		if src != nil {
-			r.tuples = src.Tuples(rel)
-		}
-	})
-	return r.tuples
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.done {
+		return r.tuples, nil
+	}
+	if err := ctx.Err(); err != nil {
+		return nil, fmt.Errorf("query: evaluation stopped: %w", err)
+	}
+	t, err := readTuples(ctx, src, rel)
+	if err != nil {
+		return nil, err
+	}
+	r.tuples, r.done = t, true
+	return t, nil
 }
 
 // get returns the index for a relation at a pattern, building it once on first use. Lazy because a

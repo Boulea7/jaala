@@ -1,6 +1,7 @@
 package datalog
 
 import (
+	"context"
 	"fmt"
 	"math/rand"
 	"reflect"
@@ -28,7 +29,7 @@ func line(n int) *ns.MemSource {
 func walker(t *testing.T, v *ns.Vocabulary, modes [][]bool) *[][2]bool {
 	t.Helper()
 	var calls [][2]bool
-	err := v.AddPredicate("walk", ns.Builtin{Arity: 2, Modes: modes, Gen: func(src ns.Source, args []ns.Arg, emit func([]ns.Value, []string) error) error {
+	err := v.AddPredicate("walk", ns.Builtin{Arity: 2, Modes: modes, Gen: func(_ context.Context, src ns.Source, args []ns.Arg, emit func([]ns.Value, []string) error) error {
 		calls = append(calls, [2]bool{args[0].Bound, args[1].Bound})
 		next, prev := map[string]string{}, map[string]string{}
 		for _, e := range src.Tuples("edge") {
@@ -70,7 +71,7 @@ func TestPlanningRemovesTheCrossProduct(t *testing.T) {
 	q := mustParse(t, `node(?a), node(?b), edge(?a, ?b), ?a = "v7" => ?b`)
 	work := func(ev Evaluator) int64 {
 		b := baseFor(std(line(400)))
-		rows, err := ev.Eval(q, b)
+		rows, err := ev.Eval(bg, q, b)
 		if err != nil || col(rows, "b") != "v8" {
 			t.Fatalf("%T: %v, %v", ev, rows, err)
 		}
@@ -88,7 +89,7 @@ func TestPlanningRemovesTheCrossProduct(t *testing.T) {
 func TestAGeneratorWaitsForItsInput(t *testing.T) {
 	v := std(line(50))
 	calls := walker(t, v, [][]bool{{true, false}})
-	rows, err := SemiNaive{}.Eval(mustParse(t, `near(?m) :- walk(?n, ?m), node(?n), ?n = "v45"; near(?m) => ?m`), baseFor(v))
+	rows, err := SemiNaive{}.Eval(bg, mustParse(t, `near(?m) :- walk(?n, ?m), node(?n), ?n = "v45"; near(?m) => ?m`), baseFor(v))
 	if err != nil || col(rows, "m") != "v46,v47,v48,v49" {
 		t.Fatalf("near = %v, %v", rows, err)
 	}
@@ -108,7 +109,7 @@ func TestATwoModeGeneratorRunsFromTheBoundEnd(t *testing.T) {
 	} {
 		v := std(line(6))
 		calls := walker(t, v, [][]bool{{true, false}, {false, true}})
-		rows, err := SemiNaive{}.Eval(mustParse(t, c.query), baseFor(v))
+		rows, err := SemiNaive{}.Eval(bg, mustParse(t, c.query), baseFor(v))
 		if err != nil || col(rows, "z") != c.want {
 			t.Errorf("%s = %v, %v; want %s", c.query, rows, err, c.want)
 		}
@@ -138,8 +139,8 @@ func TestABodyThatNeverSatisfiesAGeneratorIsRefused(t *testing.T) {
 		q := mustParse(t, c.query)
 		for name, err := range map[string]error{
 			"Validate":  Validate(q, v),
-			"Naive":     second(Naive{}.Eval(q, baseFor(v))),
-			"SemiNaive": second(SemiNaive{}.Eval(q, baseFor(v))),
+			"Naive":     second(Naive{}.Eval(bg, q, baseFor(v))),
+			"SemiNaive": second(SemiNaive{}.Eval(bg, q, baseFor(v))),
 		} {
 			if err == nil || err.Error() != c.want {
 				t.Errorf("%s(%s): err = %v\n want %s", name, c.query, err, c.want)
@@ -163,12 +164,12 @@ func TestPlannedAnswersDoNotDependOnClauseOrder(t *testing.T) {
 		b := baseFor(std(src))
 		for _, text := range programs {
 			q := mustParse(t, text)
-			want, err := Naive{}.Eval(q, b)
+			want, err := Naive{}.Eval(bg, q, b)
 			if err != nil {
 				t.Fatalf("%s: %v", text, err)
 			}
 			shuffled := shuffle(q, rand.New(rand.NewSource(seed)))
-			got, err := SemiNaive{}.Eval(shuffled, b)
+			got, err := SemiNaive{}.Eval(bg, shuffled, b)
 			if err != nil {
 				t.Fatalf("seed %d, shuffled %s: %v", seed, text, err)
 			}
@@ -219,8 +220,8 @@ func rowSet(rows []Row) []string {
 // query allows; it still fails as it does unplanned.
 func TestAnUnbindableCheckStillFailsWhenPlanned(t *testing.T) {
 	for _, q := range []string{`str.contains(?n, "x") => ?n`, `node(?n), ?m > 3 => ?n`, `node(?n), str.prefix(?m, "v") => ?n`} {
-		_, want := Naive{}.Eval(mustParse(t, q), baseFor(std(graph())))
-		_, got := SemiNaive{}.Eval(mustParse(t, q), baseFor(std(graph())))
+		_, want := Naive{}.Eval(bg, mustParse(t, q), baseFor(std(graph())))
+		_, got := SemiNaive{}.Eval(bg, mustParse(t, q), baseFor(std(graph())))
 		if want == nil || fmt.Sprint(got) != fmt.Sprint(want) {
 			t.Errorf("%s: planned err = %v, want Naive's %v", q, got, want)
 		}
@@ -238,11 +239,11 @@ func TestPlanningKeepsTheWrittenColumnOrder(t *testing.T) {
 		src.Add("pair", ns.Tuple{Vals: []ns.Value{ns.S("k"), ns.S(v)}})
 	}
 	q := mustParse(t, `node(?x), pair("k", ?y)`)
-	want, err := Naive{}.Eval(q, baseFor(std(src)))
+	want, err := Naive{}.Eval(bg, q, baseFor(std(src)))
 	if err != nil {
 		t.Fatal(err)
 	}
-	got, err := SemiNaive{}.Eval(q, baseFor(std(src)))
+	got, err := SemiNaive{}.Eval(bg, q, baseFor(std(src)))
 	if err != nil || !reflect.DeepEqual(binds(got), binds(want)) {
 		t.Errorf("planned rows = %v, %v\n want, in Naive's order, %v", binds(got), err, binds(want))
 	}

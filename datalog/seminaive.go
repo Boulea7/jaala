@@ -1,5 +1,7 @@
 package datalog
 
+import "context"
+
 // SemiNaive is the evaluator a host should run. It answers exactly as Naive does, deriving rules by
 // a semi-naive fixpoint instead of a naive one.
 //
@@ -25,12 +27,12 @@ type SemiNaive struct {
 }
 
 // Eval answers the query as Naive.Eval does.
-func (s SemiNaive) Eval(q Query, b *Base) ([]Row, error) {
+func (s SemiNaive) Eval(ctx context.Context, q Query, b *Base, opts ...Option) ([]Row, error) {
 	var rewrite func(*Base, Query) Query
 	if !s.WrittenOrder {
 		rewrite = func(b *Base, q Query) Query { return plan(b, magic(b, unfold(b, q))) }
 	}
-	return evaluate(q, b, rewrite, s.materialize)
+	return evaluate(ctx, q, b, opts, rewrite, s.materialize)
 }
 
 // deltaSep marks the relation holding a stratum relation's delta: the tuples it gained in the last
@@ -70,6 +72,9 @@ func (SemiNaive) materialize(b *Base, rules []Rule) error {
 		}
 		delta := since(b, stratum, mark)
 		for len(delta) > 0 {
+			if err := b.run.done(); err != nil {
+				return err
+			}
 			installDeltas(b, stratum, delta)
 			mark = marks(b, stratum)
 			for _, rel := range stratum {

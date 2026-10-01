@@ -1,6 +1,7 @@
 package datalog
 
 import (
+	"context"
 	"fmt"
 	"reflect"
 	"sync"
@@ -31,7 +32,7 @@ func (s *slowSource) Tuples(rel string) []ns.Tuple {
 func lockingWalk(t *testing.T, v *ns.Vocabulary, edges []ns.Tuple) {
 	t.Helper()
 	var mu sync.Mutex
-	err := v.AddPredicate("walk", ns.Builtin{Arity: 2, Modes: [][]bool{{true, false}, {false, true}}, Gen: func(src ns.Source, args []ns.Arg, emit func([]ns.Value, []string) error) error {
+	err := v.AddPredicate("walk", ns.Builtin{Arity: 2, Modes: [][]bool{{true, false}, {false, true}}, Gen: func(_ context.Context, src ns.Source, args []ns.Arg, emit func([]ns.Value, []string) error) error {
 		mu.Lock()
 		defer mu.Unlock()
 		for _, e := range edges {
@@ -78,7 +79,7 @@ func TestConcurrentEvalsOnOneBase(t *testing.T) {
 	for _, text := range programs {
 		for _, ev := range evaluators {
 			j := job{mustParse(t, text), ev}
-			rows, err := ev.Eval(j.q, MustBase(v, src.MemSource))
+			rows, err := ev.Eval(bg, j.q, MustBase(v, src.MemSource))
 			if err != nil {
 				t.Fatalf("serial %T %s: %v", ev, text, err)
 			}
@@ -96,7 +97,7 @@ func TestConcurrentEvalsOnOneBase(t *testing.T) {
 			go func(i int) {
 				defer wg.Done()
 				<-start
-				got, err := jobs[i].ev.Eval(jobs[i].q, shared)
+				got, err := jobs[i].ev.Eval(bg, jobs[i].q, shared)
 				if err != nil || !reflect.DeepEqual(got, want[i]) {
 					errs <- fmt.Errorf("%T %v: got %v, %v; want %v", jobs[i].ev, jobs[i].q, got, err, want[i])
 				}

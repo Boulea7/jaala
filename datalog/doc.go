@@ -27,7 +27,9 @@
 // that can use it, derives a relation called with bound arguments only for the values demanded
 // (magic sets), and plans each body, so a literal runs once as much as possible is bound and a
 // generator once one of its Modes is satisfied. Naive is the reference: written order, naive
-// fixpoint, kept simple so every faster strategy can be tested against it.
+// fixpoint, kept simple so every faster strategy can be tested against it. Every Eval takes a
+// context, which reaches the host's generators and cancellable Sources, and options: Bind gives goal
+// variables values from the host, and Budget limits the work one Eval may do.
 //
 // Evaluation is guaranteed to terminate because no rule can invent a value: every answer is built
 // from constants in the facts and values a host's generators draw from finite data. That guarantee

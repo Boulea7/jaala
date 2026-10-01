@@ -1,6 +1,7 @@
 package datalog
 
 import (
+	"context"
 	"fmt"
 	"github.com/panyam/jaala/ns"
 	"strings"
@@ -145,7 +146,7 @@ func TestFilterNeedsBoundArguments(t *testing.T) {
 // (or out of every node when ?a is unbound). It exercises the path a host's own graph walk takes.
 func succRegistry() *ns.Vocabulary {
 	r := std(graph())
-	err := r.AddPredicate("succ", ns.Builtin{Arity: 2, Modes: [][]bool{{true, false}, {false, false}}, Gen: func(src ns.Source, args []ns.Arg, emit func([]ns.Value, []string) error) error {
+	err := r.AddPredicate("succ", ns.Builtin{Arity: 2, Modes: [][]bool{{true, false}, {false, false}}, Gen: func(_ context.Context, src ns.Source, args []ns.Arg, emit func([]ns.Value, []string) error) error {
 		for _, t := range src.Tuples("edge") {
 			if args[0].Bound && t.Vals[0].S != args[0].Value.S {
 				continue
@@ -164,16 +165,16 @@ func succRegistry() *ns.Vocabulary {
 
 func TestGeneratorBindsNegatesAndCites(t *testing.T) {
 	b := baseFor(succRegistry())
-	rows, err := Naive{}.Eval(mustParse(t, `succ("b", ?x) => ?x`), b)
+	rows, err := Naive{}.Eval(bg, mustParse(t, `succ("b", ?x) => ?x`), b)
 	if err != nil || col(rows, "x") != "c" || len(rows[0].Cites) != 1 {
 		t.Fatalf("succ(b) = %v, %v; want c with one citation", rows, err)
 	}
-	rows, err = Naive{}.Eval(mustParse(t, `node(?n), not succ(?n, ?_) => ?n`), b)
+	rows, err = Naive{}.Eval(bg, mustParse(t, `node(?n), not succ(?n, ?_) => ?n`), b)
 	if err != nil || col(rows, "n") != "d,x" {
 		t.Errorf("not succ = %v, %v; want d,x", rows, err)
 	}
 	// A bound second argument the generator disagrees with is dropped by unification.
-	rows, err = Naive{}.Eval(mustParse(t, `succ("a", "c")`), b)
+	rows, err = Naive{}.Eval(bg, mustParse(t, `succ("a", "c")`), b)
 	if err != nil || len(rows) != 0 {
 		t.Errorf("succ(a, c) = %v, %v; want nothing", rows, err)
 	}
@@ -193,8 +194,8 @@ func TestIndexedAndUnindexedAgree(t *testing.T) {
 	b := baseFor(std(big()))
 	for _, q := range []string{`v(?k, 20) => ?k`, `v(?k, 20.0) => ?k`, `v("k3", ?n) => ?n`, `v(?k, ?n), v(?k2, ?n) => ?k, ?k2`} {
 		qq := mustParse(t, q)
-		indexed, err1 := Naive{}.Eval(qq, b)
-		plain, err2 := Naive{}.Eval(qq, b.Unindexed())
+		indexed, err1 := Naive{}.Eval(bg, qq, b)
+		plain, err2 := Naive{}.Eval(bg, qq, b.Unindexed())
 		if err1 != nil || err2 != nil {
 			t.Fatalf("%s: %v / %v", q, err1, err2)
 		}
@@ -202,17 +203,17 @@ func TestIndexedAndUnindexedAgree(t *testing.T) {
 			t.Errorf("%s: indexed %v, unindexed %v", q, indexed, plain)
 		}
 	}
-	if rows, _ := (Naive{}).Eval(mustParse(t, `v(?k, 20.0) => ?k`), b); col(rows, "k") != "k20" {
+	if rows, _ := (Naive{}).Eval(bg, mustParse(t, `v(?k, 20.0) => ?k`), b); col(rows, "k") != "k20" {
 		t.Errorf("20.0 found %v, want k20", rows)
 	}
 }
 
 func TestRulesDoNotLeakBetweenQueriesOnOneBase(t *testing.T) {
 	b := baseFor(std(graph()))
-	if _, err := (Naive{}).Eval(mustParse(t, `src(?n) :- edge(?n, ?_); src(?n)`), b); err != nil {
+	if _, err := (Naive{}).Eval(bg, mustParse(t, `src(?n) :- edge(?n, ?_); src(?n)`), b); err != nil {
 		t.Fatal(err)
 	}
-	_, err := Naive{}.Eval(mustParse(t, `src(?n)`), b)
+	_, err := Naive{}.Eval(bg, mustParse(t, `src(?n)`), b)
 	if err == nil || !strings.Contains(err.Error(), "unknown relation") {
 		t.Errorf("err = %v, want src to be unknown to the second query", err)
 	}

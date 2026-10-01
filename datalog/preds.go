@@ -41,7 +41,10 @@ func extendBuiltin(bi ns.Builtin, atom *Atom, bnd *binding, b *Base, yield func(
 		v, ok := resolve(a, bnd)
 		args[i] = ns.Arg{Value: v, Bound: ok}
 	}
-	return bi.Gen(b.src, args, func(vals []ns.Value, cites []string) error {
+	return bi.Gen(b.run.context(), b.src, args, func(vals []ns.Value, cites []string) error {
+		if err := b.countWork(); err != nil {
+			return err
+		}
 		if len(vals) != len(atom.Args) {
 			return fmt.Errorf("query: internal: %s emitted %d values for %d arguments", atom.Relation, len(vals), len(atom.Args))
 		}
@@ -143,7 +146,10 @@ func (b *Base) checkAtom(atom *Atom) error {
 // exactly those positions instead of from the whole relation. unify still decides every candidate,
 // so the index only ever has to avoid MISSING a match; see index.go.
 func (b *Base) extendEDB(atom *Atom, bnd *binding, yield func(*binding) error) error {
-	rows := b.edbTuples(atom.Relation)
+	rows, err := b.edbTuples(atom.Relation)
+	if err != nil {
+		return err
+	}
 	pos, all := b.edbCandidates(atom, rows, bnd)
 	for i := 0; ; i++ {
 		var t ns.Tuple
@@ -158,7 +164,9 @@ func (b *Base) extendEDB(atom *Atom, bnd *binding, yield func(*binding) error) e
 			}
 			t = rows[pos[i]]
 		}
-		b.countWork()
+		if err := b.countWork(); err != nil {
+			return err
+		}
 		if next, ok := unify(atom.Args, t, bnd); ok {
 			if err := yield(next); err != nil {
 				return err
@@ -172,7 +180,9 @@ func (b *Base) extendEDB(atom *Atom, bnd *binding, yield func(*binding) error) e
 // provenance forward — the same shape as extendEDB, over the materialized IDB store.
 func (b *Base) extendIDB(atom *Atom, bnd *binding, yield func(*binding) error) error {
 	for _, t := range b.idbCandidates(atom, bnd) {
-		b.countWork()
+		if err := b.countWork(); err != nil {
+			return err
+		}
 		out := bnd.clone()
 		ok := true
 		for j, arg := range atom.Args {
