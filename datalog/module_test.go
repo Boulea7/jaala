@@ -28,7 +28,7 @@ func withModules(t *testing.T, mods ...string) *ns.Vocabulary {
 
 func evalReg(t *testing.T, r *ns.Vocabulary, text string) []Row {
 	t.Helper()
-	rows, err := Naive{}.Eval(mustParse(t, text), baseFor(r))
+	rows, err := both(mustParse(t, text), baseFor(r))
 	if err != nil {
 		t.Fatalf("Eval(%q): %v", text, err)
 	}
@@ -40,7 +40,7 @@ func evalRegErr(r *ns.Vocabulary, text string) error {
 	if err != nil {
 		return err
 	}
-	_, err = Naive{}.Eval(q, baseFor(r))
+	_, err = both(q, baseFor(r))
 	return err
 }
 

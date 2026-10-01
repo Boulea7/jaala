@@ -28,7 +28,7 @@ has_test_point(?n: net) :- component.net(?tp, ?n), component.class(?tp, "test_po
 if err := v.Check(); err != nil { ... }           // once, at load
 
 base, err := datalog.NewBase(v, designSource)     // per dataset
-rows, err := datalog.Naive{}.Eval(datalog.MustParse(`net.has_test_point(?n) => ?n`), base)
+rows, err := datalog.SemiNaive{}.Eval(datalog.MustParse(`net.has_test_point(?n) => ?n`), base)
 ```
 
 A query naming `net.has_test_point` pulls in the module that defines it. Each member carries a

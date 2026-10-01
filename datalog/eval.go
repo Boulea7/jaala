@@ -131,26 +131,33 @@ func (b *Base) edbTuples(rel string) []ns.Tuple {
 }
 
 // Evaluator answers a Query over a Base, each answer Row carrying the provenance of the facts that
-// derived it. The IR is declarative, so backends swap behind this interface (the naïve interpreter
-// here; a SQL or external-engine backend later if scale ever demands).
+// derived it. The IR is declarative, so strategies swap behind this interface: Naive is the
+// reference, SemiNaive the one a host should run.
 type Evaluator interface {
 	Eval(q Query, b *Base) ([]Row, error)
 }
 
-// Naive is the default backtracking-join interpreter over the in-memory fact base. Correct and
-// dependency-free; naïve join is sufficient because one design's fact base is small (no optimizer). It serves the full bounded fragment: conjunction, comparison, the built-in reaches
-// and string filters, stratified negation, aggregation, user-defined (recursive, stratified) rules,
-// and overlay-registered relations and predicates. Every callable — EDB, IDB, or a computed built-in
-// — is one positive primitive (extendAtom), and negation reuses it (atomHolds), so a single dispatch
-// covers all of them.
+// Naive is the reference interpreter: a backtracking join in written order, with rules derived by a
+// naive fixpoint that re-runs every rule over everything derived so far until a round adds nothing.
+// It serves the full fragment (conjunction, comparison, stratified negation, aggregation, recursive
+// rules, host predicates) through one positive primitive, extendAtom, which negation reuses
+// (atomHolds), so a single dispatch covers every kind of relation.
+//
+// It is kept deliberately simple and is not the fast path. Its job is to be obviously right, so the
+// optimized evaluators can be tested against it: every optimization must answer exactly as Naive
+// does. A host should use SemiNaive.
 type Naive struct{}
 
-// Eval answers the query. It links the query first (see Link), then solves the positive body (atoms + comparisons) by backtracking,
-// filters each binding through the negated literals (stratified negation), then projects — a plain
-// select-project, or a group-and-reduce when the projection contains an aggregate. Results are
-// deduplicated and sorted, so a query is a deterministic, regenerable view; each row carries the
-// provenance of the facts that produced it.
-func (Naive) Eval(q Query, b *Base) ([]Row, error) {
+// Eval answers the query. It links the query first (see Link), derives its rules, then solves the
+// positive body (atoms + comparisons) by backtracking, filters each binding through the negated
+// literals (stratified negation), then projects: a plain select-project, or a group-and-reduce when
+// the projection contains an aggregate. Results are deduplicated and sorted, so a query is a
+// deterministic, regenerable view; each row carries the provenance of the facts that produced it.
+func (Naive) Eval(q Query, b *Base) ([]Row, error) { return evaluate(q, b, (*Base).materialize) }
+
+// evaluate answers q over b, deriving its rules with the given fixpoint. Everything but the fixpoint
+// is shared, so evaluators differ only in how they derive.
+func evaluate(q Query, b *Base, materialize func(*Base, []Rule) error) ([]Row, error) {
 	q, err := Link(q, b.reg)
 	if err != nil {
 		return nil, err
@@ -164,7 +171,7 @@ func (Naive) Eval(q Query, b *Base) ([]Row, error) {
 		// carried the map header across, so leaving this out would have one query probing an index
 		// whose positions point into another query's idb slice.
 		nb.idbIdx = map[idxKey]*idbIndex{}
-		if err := nb.materialize(q.Rules); err != nil {
+		if err := materialize(&nb, q.Rules); err != nil {
 			return nil, err
 		}
 		b = &nb

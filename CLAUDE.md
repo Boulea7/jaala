@@ -44,6 +44,11 @@ go list -deps ./... | grep '\.' | grep -v '^github.com/panyam/jaala' | grep -v '
   fails on its assertion. When scripting mutations, **treat a build failure as "not checked", not
   as red**. An unused variable left by a mutation fails the build, and a naive harness counts that
   as a pass.
+- **`Naive` is the reference evaluator and stays unoptimized.** Every faster strategy (`SemiNaive`
+  now; join planning and magic sets, #7) must answer exactly as it does. The test helpers
+  (`eval`, `evalErr`, `evalReg`, `evalRegErr`) route through `both()`, which runs Naive and
+  SemiNaive and panics on any difference in rows, citations or errors, so a new evaluator or option
+  belongs in `both()` too. `seminaive_test.go` adds a seeded random-graph corpus.
 - Fixtures: `graph()` and the `eval`/`evalErr`/`col`/`std`/`baseFor` helpers in `helpers_test.go`;
   `withModules`/`evalReg` in `module_test.go`; the agni-shaped `circuit()` in `signature_test.go`;
   `vocabulary()` (no Source) in `baseover_test.go`; the `stub` language in `ns/vocabulary_test.go`.
