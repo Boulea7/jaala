@@ -41,7 +41,9 @@ rows, err := datalog.SemiNaive{}.Eval(ctx, datalog.MustParse(`net.has_test_point
 
 A query naming `net.has_test_point` pulls in the module that defines it. Each member carries a
 signature (argument names, entity kinds, scalar types and units), declared or inferred through its
-rules, which `v.Lookup(path)` returns for a host that lists and drills into what is available.
+rules, which `v.Lookup(path)` returns for a host that lists and drills into what is available. A
+query constant, or a value bound with `datalog.Bind`, is read as its argument's type: `"3"` in a
+number argument is 3, and `"abc"` there is an error rather than an empty answer.
 
 It started as the query engine inside [agni](https://github.com/panyam/agni), an EDA tooling
 engine, and was extracted so other graph tools could share it.

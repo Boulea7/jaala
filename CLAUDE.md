@@ -48,6 +48,13 @@ go list -deps ./... | grep '\.' | grep -v '^github.com/panyam/jaala' | grep -v '
   `text`.** They carry the written position and form a witness follows (`witness.go`); dropping
   either makes that literal vanish from explanations or shows a rule in its rewritten form, with no
   error. `magic.go` and `readingDelta` both rebuild literals.
+- **A constant is read as its argument's type (#65).** `coerceConstants` (`coerce.go`) runs on the
+  linked program after `bindGoal`, in `evaluate` and `Validate`, so a bound value is checked as a
+  constant: text parses into a number argument or is refused, a number in a text or entity argument
+  drops its `Num`. It rewrites `Num` only, never `S`, because the Domain check, the index and answer
+  keys read the text. Only a number type pulls a compared constant, which keeps #8's "a number and
+  a word have no order". `ValidateBound` binds `ns.Absent()`, which coercion leaves alone, so a
+  variable the host will bind is never refused for its type.
 - **Nothing inside a module resolution may call `Vocabulary.Signature` or `Check`.** They run
   through the memo entry that is mid-computation, and `sync.Once` deadlocks on re-entry. That is
   why the validation base carries `sigs` while it checks module rules.
@@ -128,7 +135,9 @@ go list -deps ./... | grep '\.' | grep -v '^github.com/panyam/jaala' | grep -v '
   with tests as attributes, Declaire's shape) in `plan_test.go`; `hopper` (a generator citing its
   path in walk order) and `workOf` in `magic_test.go`; `reversedLine` and `counter` in
   `seminaive_test.go`; `parts()` (counts and numbers whose text and value orders differ) in
-  `order_test.go`. `both()` compares rows in order, so every test checks the answer order too. Don't
+  `order_test.go`; `typedNets()` (number counts, a numeric-looking ref, a pin stored as `ns.N`, an
+  untyped relation) and `answersAs` in `coerce_test.go`. `both()` takes Eval options, so a `Bind`
+  case runs through all three evaluators. `both()` compares rows in order, so every test checks the answer order too. Don't
   compare rows by `fmt.Sprint`: `ns.Value.Num` is a pointer, so the text carries an address. datalog's
   tests import `stdlib` for `std()`; production datalog code must not.
 
