@@ -24,7 +24,8 @@
 // A Base caches and indexes what it reads, so one Base serves many queries, concurrently, and an
 // Evaluator answers a Query over it. SemiNaive is the one to run: it derives recursive rules
 // semi-naively, inlines single-rule non-recursive relations so a bound argument reaches the literals
-// that can use it, and plans each body, so a literal runs once as much as possible is bound and a
+// that can use it, derives a relation called with bound arguments only for the values demanded
+// (magic sets), and plans each body, so a literal runs once as much as possible is bound and a
 // generator once one of its Modes is satisfied. Naive is the reference: written order, naive
 // fixpoint, kept simple so every faster strategy can be tested against it.
 //

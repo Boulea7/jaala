@@ -103,10 +103,10 @@ func plan(b *Base, q Query) Query {
 	}
 	out.Rules = make([]Rule, len(q.Rules))
 	for i, r := range q.Rules {
-		r.Body = planBody(b, r.Body)
+		r.Body = planBody(b, r.Body, nil)
 		out.Rules[i] = r
 	}
-	out.Goal = planBody(b, q.Goal)
+	out.Goal = planBody(b, q.Goal, nil)
 	return out
 }
 
@@ -114,10 +114,14 @@ func plan(b *Base, q Query) Query {
 // arguments are all bound, since checking early only discards; failing that, the relation or
 // callable generator with the most bound arguments, earliest written on a tie, since it fans out
 // least and binds the most for what follows. A literal nothing can make runnable keeps its written
-// place at the end, where solving reports it as it always has.
-func planBody(b *Base, body Body) Body {
+// place at the end, where solving reports it as it always has. bound is what is bound on entry, such
+// as a rule head's demanded arguments (see magic); it is not changed.
+func planBody(b *Base, body Body, entry map[Var]bool) Body {
 	pos, negs := splitNegations(body.Literals)
 	bound := map[Var]bool{}
+	for v := range entry {
+		bound[v] = true
+	}
 	var out []Literal
 	for len(pos) > 0 {
 		pick := -1

@@ -47,10 +47,14 @@ go list -deps ./... | grep '\.' | grep -v '^github.com/panyam/jaala' | grep -v '
 - **`Naive` is the reference evaluator and stays unoptimized.** Every faster strategy (`SemiNaive`
   now; join planning and magic sets, #7) must answer exactly as it does. The test helpers
   (`eval`, `evalErr`, `evalReg`, `evalRegErr`) route through `both()`, which runs Naive,
-  `SemiNaive{WrittenOrder: true}` (must match exactly: rows, citations, errors) and the planned
-  `SemiNaive{}` (same rows, and Naive's error whenever it errors; its citations may come from
-  another derivation). A new evaluator or option belongs in `both()` too. `seminaive_test.go` adds a
+  `SemiNaive{WrittenOrder: true}` (same rows and errors; same citations too unless the program is
+  recursive, where rounds run in another order and a tuple reachable two ways may cite the other
+  path; #22 would make citations canonical) and the planned `SemiNaive{}` (same rows, and Naive's
+  error whenever it errors). A new evaluator or option belongs in `both()` too. `seminaive_test.go` adds a
   seeded random-graph corpus, and `plan_test.go` a clause-order shuffle property.
+- **Magic tuples carry no citations.** `magic.go` adds relations recording what a query demanded;
+  `SemiNaive`'s `derive` clears their citations, or an answer would cite the facts that worked out
+  someone else's demand. A relation that reads a negation, transitively, is not rewritten (#34).
 - **Inlining must not change multiplicity.** `unfold.go` inlines single-rule, non-recursive derived
   relations, but never into a goal whose aggregate counts bindings (`count`, `sum`, `list` without
   `distinct`): a derived relation is a set, its inlined body is not. Modes are checked on the linked

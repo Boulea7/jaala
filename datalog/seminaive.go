@@ -11,15 +11,16 @@ package datalog
 // same closure grows with about n².
 //
 // It also inlines single-rule, non-recursive derived relations into their callers (see unfold), so a
-// bound argument reaches the literals that can use it, and then plans each rule body and the goal
-// before evaluating (see plan): a literal runs once as much
+// bound argument reaches the literals that can use it; rewrites the derived relations still called
+// with bound arguments so only what the query demands is derived (see magic); and then plans each
+// rule body and the goal before evaluating (see plan): a literal runs once as much
 // as possible is bound, a comparison or filter as soon as its variables are, and a generator once one
 // of its Modes is satisfied. That makes cost independent of how a body is written, at the price of
 // citations: a different join order can make a different derivation of a tuple the first, so a planned
 // answer's rows match Naive's while a row's citations may come from another valid derivation.
 type SemiNaive struct {
-	// WrittenOrder runs bodies as written, neither inlining nor planning them. Its answers then match
-	// Naive's citations too, which is what the tests compare it on.
+	// WrittenOrder runs bodies as written, with none of the rewrites (inlining, demand, planning).
+	// Its answers then match Naive's citations too, which is what the tests compare it on.
 	WrittenOrder bool
 }
 
@@ -27,7 +28,7 @@ type SemiNaive struct {
 func (s SemiNaive) Eval(q Query, b *Base) ([]Row, error) {
 	var rewrite func(*Base, Query) Query
 	if !s.WrittenOrder {
-		rewrite = func(b *Base, q Query) Query { return plan(b, unfold(b, q)) }
+		rewrite = func(b *Base, q Query) Query { return plan(b, magic(b, unfold(b, q))) }
 	}
 	return evaluate(q, b, rewrite, s.materialize)
 }
@@ -62,7 +63,7 @@ func (SemiNaive) materialize(b *Base, rules []Rule) error {
 		mark := marks(b, stratum)
 		for _, rel := range stratum {
 			for _, r := range byHead[rel] {
-				if _, err := b.applyRule(r); err != nil {
+				if err := derive(b, r); err != nil {
 					return err
 				}
 			}
@@ -77,7 +78,7 @@ func (SemiNaive) materialize(b *Base, rules []Rule) error {
 						if lit.Pos == nil || !in[lit.Pos.Relation] || len(delta[lit.Pos.Relation]) == 0 {
 							continue
 						}
-						if _, err := b.applyRule(readingDelta(r, i)); err != nil {
+						if err := derive(b, readingDelta(r, i)); err != nil {
 							return err
 						}
 					}
@@ -86,6 +87,21 @@ func (SemiNaive) materialize(b *Base, rules []Rule) error {
 			delta = since(b, stratum, mark)
 		}
 		dropDeltas(b, stratum)
+	}
+	return nil
+}
+
+// derive applies one rule. A magic relation's tuples (see magic) record what a query asked for, not
+// what produced an answer, so they are kept without citations: an adorned rule reading its magic guard
+// must not pass the facts that worked out the demand on to the answer.
+func derive(b *Base, r Rule) error {
+	if _, err := b.applyRule(r); err != nil {
+		return err
+	}
+	if isMagic(r.Head.Relation) {
+		for i := range b.idb[r.Head.Relation] {
+			b.idb[r.Head.Relation][i].cites = nil
+		}
 	}
 	return nil
 }
