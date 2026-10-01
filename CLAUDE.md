@@ -137,9 +137,9 @@ go list -deps ./... | grep '\.' | grep -v '^github.com/panyam/jaala' | grep -v '
   `seminaive_test.go`; `parts()` (counts and numbers whose text and value orders differ) in
   `order_test.go`; `typedNets()` (number counts, a numeric-looking ref, a pin stored as `ns.N`, an
   untyped relation) and `answersAs` in `coerce_test.go`. `both()` takes Eval options, so a `Bind`
-  case runs through all three evaluators. `both()` compares rows in order, so every test checks the answer order too. Don't
-  compare rows by `fmt.Sprint`: `ns.Value.Num` is a pointer, so the text carries an address. datalog's
-  tests import `stdlib` for `std()`; production datalog code must not.
+  case runs through all three evaluators. `both()` compares rows in order, so every test checks the
+  answer order too. Don't compare rows by `fmt.Sprint`: `ns.Value.Num` is a pointer, so the text
+  carries an address. datalog's tests import `stdlib` for `std()`; production datalog code must not.
 
 ## Releasing
 
