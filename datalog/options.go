@@ -22,7 +22,8 @@ type evalOptions struct {
 // per request: Eval(ctx, q, b, Bind(map[Var]ns.Value{"target": ns.S(id)})). A bound variable is exactly
 // a constant written in the goal, so inlining, demand (magic sets) and planning all start from it,
 // and it stays an answer column, holding its value in every row. Rules are not affected: their
-// variables are their own. Binding a variable the goal does not use is an error.
+// variables are their own. Binding a variable the goal does not use is an error. ValidateBound checks
+// a goal ahead of time knowing which variables the host will bind.
 func Bind(values map[Var]ns.Value) Option {
 	return func(o *evalOptions) {
 		if o.bind == nil {

@@ -17,7 +17,31 @@ import "github.com/panyam/jaala/ns"
 // Solving stops at the first atom that yields nothing, so on an empty base every atom after the first
 // goes unexamined and a wrong-arity relation in position two passes validation.
 func Validate(q Query, reg *ns.Vocabulary) error {
-	q, err := Link(q, reg)
+	return ValidateBound(q, reg)
+}
+
+// ValidateBound is Validate for a query whose host will Bind the given goal variables when it runs it.
+// A bound variable counts as a constant written in the goal, as it does in Eval, so a variable that
+// appears only inside a `not`, or one a generator's mode needs bound, is accepted when the host binds
+// it and still refused when it doesn't (#61). Only the names matter: validation never reads a value.
+// Naming a variable the goal does not use is the error Eval gives for binding one.
+func ValidateBound(q Query, reg *ns.Vocabulary, vars ...Var) error {
+	bind := make(map[Var]ns.Value, len(vars))
+	for _, v := range vars {
+		bind[v] = ns.Absent()
+	}
+	written := q
+	q, cols, err := bindGoal(q, bind)
+	if err != nil {
+		return err
+	}
+	// As in evaluate: a bound variable leaves the projection while the goal is checked, and order by
+	// is checked against the columns as written.
+	sel := cols
+	if len(bind) > 0 {
+		sel = q.Select
+	}
+	q, err = Link(q, reg)
 	if err != nil {
 		return err
 	}
@@ -30,7 +54,7 @@ func Validate(q Query, reg *ns.Vocabulary) error {
 	// Everything else still runs: negation safety, projection safety, rule-head collisions, arity of a
 	// derived relation, stratification. Only the checks that need a vocabulary stand down.
 	if len(reg.BaseRelations()) == 0 {
-		return validateWithoutVocabulary(q, reg)
+		return validateWithoutVocabulary(q, reg, written, sel, cols)
 	}
 	b := newValidationBase(reg)
 	if _, _, err := b.checkRules(q.Rules); err != nil {
@@ -53,14 +77,10 @@ func Validate(q Query, reg *ns.Vocabulary) error {
 	if err := b.validateNegations(q.Goal, negs); err != nil {
 		return err
 	}
-	sel := q.Select
-	if len(sel) == 0 {
-		sel = defaultSelect(q.Goal)
-	}
 	if err := validateSelect(sel, q.Having, q.Goal); err != nil {
 		return err
 	}
-	return validateOrder(sel, q)
+	return validateOrder(cols, written)
 }
 
 // validateWithoutVocabulary is Validate minus the checks that need a relation catalog installed.
@@ -68,7 +88,7 @@ func Validate(q Query, reg *ns.Vocabulary) error {
 // A rule built here is not left unvalidated forever: the query still has to run, and the evaluator
 // checks every atom it reaches against the real vocabulary. What is lost is only the EARLY report,
 // for a caller that built its rule before any relation was installed.
-func validateWithoutVocabulary(q Query, reg *ns.Vocabulary) error {
+func validateWithoutVocabulary(q Query, reg *ns.Vocabulary, written Query, sel, cols []Term) error {
 	b := newValidationBase(reg)
 	if _, _, err := b.checkRules(q.Rules); err != nil {
 		return err
@@ -77,14 +97,10 @@ func validateWithoutVocabulary(q Query, reg *ns.Vocabulary) error {
 	if err := b.validateNegations(q.Goal, negs); err != nil {
 		return err
 	}
-	sel := q.Select
-	if len(sel) == 0 {
-		sel = defaultSelect(q.Goal)
-	}
 	if err := validateSelect(sel, q.Having, q.Goal); err != nil {
 		return err
 	}
-	return validateOrder(sel, q)
+	return validateOrder(cols, written)
 }
 
 // checkLiterals applies checkAtom to every relation-bearing literal, positive or negated. A

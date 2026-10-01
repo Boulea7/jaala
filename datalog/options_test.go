@@ -3,6 +3,7 @@ package datalog
 import (
 	"context"
 	"errors"
+	"fmt"
 	"reflect"
 	"strings"
 	"sync"
@@ -208,5 +209,57 @@ func TestBindingsAtTheEdges(t *testing.T) {
 	rows, err = SemiNaive{}.Eval(bg, mustParse(t, `edge(?a, ?b) => ?a, count(?b)`), b, Bind(map[Var]ns.Value{"a": ns.S("b")}))
 	if err != nil || len(rows) != 1 || rows[0].Bind["a"].S != "b" || rows[0].Bind["count(b)"].S != "1" {
 		t.Errorf("a bound group key: %v, %v; want a=b, count 1", rows, err)
+	}
+}
+
+// A variable the host binds is a constant to Validate as it is to Eval, so a goal that uses it only
+// inside a `not`, or as the input a generator's mode needs, validates when it is bound and is refused
+// when it isn't (#61).
+func TestValidatingAGoalTheHostBinds(t *testing.T) {
+	v := std(graph())
+	b := baseFor(v)
+	q := mustParse(t, `not node(?n) => ?n order by ?n`)
+	const unanchored = `negated relation "node" shares no variable with the rest of the query`
+	if err := Validate(q, v); err == nil || !strings.Contains(err.Error(), unanchored) {
+		t.Errorf("unbound: Validate = %v, want the unanchored-negation refusal", err)
+	}
+	if err := ValidateBound(q, v, "n"); err != nil {
+		t.Errorf("bound: ValidateBound = %v, want nil", err)
+	}
+	for _, ev := range evaluators {
+		for _, c := range []struct {
+			val  string
+			want int
+		}{{"a", 0}, {"zzz", 1}} {
+			rows, err := ev.Eval(bg, q, b, Bind(map[Var]ns.Value{"n": ns.S(c.val)}))
+			lit, lerr := ev.Eval(bg, mustParse(t, `not node("`+c.val+`")`), b)
+			if err != nil || lerr != nil || len(rows) != c.want || len(lit) != c.want {
+				t.Errorf("%T, ?n = %q: %d rows (%v), the constant written in %d (%v); want %d", ev, c.val, len(rows), err, len(lit), lerr, c.want)
+			}
+		}
+	}
+
+	_, eerr := SemiNaive{}.Eval(bg, q, b, Bind(map[Var]ns.Value{"z": ns.S("a"), "y": ns.S("b")}))
+	if err := ValidateBound(q, v, "z", "y"); eerr == nil || fmt.Sprint(err) != fmt.Sprint(eerr) {
+		t.Errorf("unused variables: ValidateBound = %v, Eval = %v; want Eval's refusal from both", err, eerr)
+	}
+
+	empty := ns.MustVocabulary(ns.NewMemSource())
+	if err := ValidateBound(mustParse(t, `nope(?x, ?y) => ?x, ?y order by ?x`), empty, "x"); err != nil {
+		t.Errorf("no relations installed, ordered by a bound column: %v, want nil", err)
+	}
+
+	gv := std(line(4))
+	walker(t, gv, [][]bool{{true, false}})
+	walk := mustParse(t, `walk(?s, ?e) => ?e`)
+	if err := Validate(walk, gv); err == nil {
+		t.Errorf("control: walk with nothing bound validated, want the mode refusal")
+	}
+	if err := ValidateBound(walk, gv, "s"); err != nil {
+		t.Errorf("walk with ?s bound: ValidateBound = %v, want nil", err)
+	}
+	rows, err := SemiNaive{}.Eval(bg, walk, baseFor(gv), Bind(map[Var]ns.Value{"s": ns.S("v1")}))
+	if err != nil || col(rows, "e") != "v2,v3" {
+		t.Errorf("walk with ?s bound: %v, %v; want v2,v3", col(rows, "e"), err)
 	}
 }
