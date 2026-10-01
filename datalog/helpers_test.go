@@ -58,15 +58,22 @@ var sources = map[*ns.Vocabulary]ns.Source{}
 func baseFor(v *ns.Vocabulary) *Base { return MustBase(v, sources[v]) }
 
 // both answers q with the reference evaluator and with SemiNaive, and panics when they disagree, so
-// every test that evaluates through these helpers is also a differential test. SemiNaive in written
-// order must match Naive exactly: rows, citations and errors. Planned, it must give the same rows,
-// and Naive's error whenever it errors itself; its citations may come from another derivation, and it
-// may succeed where Naive's written order stops on an unbound check, which is what planning is for.
-// It returns Naive's answer.
+// every test that evaluates through these helpers is also a differential test.
+//
+// SemiNaive in written order must match Naive's rows and errors exactly, and its citations too when
+// the program has no recursion. With recursion its rounds run in another order than Naive's, so a
+// tuple reachable two ways can keep the other derivation's citations: equally valid, and #22
+// (canonical citations) is what would make them equal again. Planned, it must give the same rows, and
+// Naive's error whenever it errors itself; it may succeed where Naive's written order stops on an
+// unbound check, which is what planning is for. It returns Naive's answer.
 func both(q Query, b *Base) ([]Row, error) {
 	want, werr := Naive{}.Eval(q, b)
 	got, gerr := SemiNaive{WrittenOrder: true}.Eval(q, b)
-	if fmt.Sprint(werr) != fmt.Sprint(gerr) || !reflect.DeepEqual(want, got) {
+	same := reflect.DeepEqual(binds(want), binds(got))
+	if linked, err := Link(q, b.reg); err == nil && len(recursiveRelations(linked.Rules)) == 0 {
+		same = reflect.DeepEqual(want, got)
+	}
+	if fmt.Sprint(werr) != fmt.Sprint(gerr) || !same {
 		panic(fmt.Sprintf("SemiNaive disagrees with Naive on %v\n naive:     %v %v\n seminaive: %v %v", q, want, werr, got, gerr))
 	}
 	planned, perr := SemiNaive{}.Eval(q, b)
