@@ -74,6 +74,32 @@ func TestTheDefaultOrderRanksAbsentThenNumbersThenText(t *testing.T) {
 	}
 }
 
+// An absent value and the empty string are two values to valueEq, so they are two rows and two groups;
+// a number and its text are one value to a join, and stay one row (#62).
+func TestAnAbsentValueIsNotTheEmptyString(t *testing.T) {
+	src := ns.NewMemSource().Declare("v", "x").Declare("u", "x")
+	src.Add("v", ns.Tuple{Vals: []ns.Value{ns.S("")}})
+	src.Add("v", ns.Tuple{Vals: []ns.Value{ns.Absent()}})
+	src.Add("u", ns.Tuple{Vals: []ns.Value{ns.S("")}})
+	src.Add("u", ns.Tuple{Vals: []ns.Value{ns.Absent()}})
+	for _, q := range []string{`v(?x) => ?x`, `w(?x) :- v(?x); w(?x) :- u(?x); w(?x) => ?x`} {
+		rows := eval(t, src, q)
+		if len(rows) != 2 || !rows[0].Bind["x"].Absent || rows[1].Bind["x"].Absent || rows[1].Bind["x"].S != "" {
+			t.Errorf("%s: %v, want two rows, the absent value then the empty string", q, binds(rows))
+		}
+	}
+	rows := eval(t, src, `v(?x) => ?x, count(?x)`)
+	if got := cols(rows, "count(x)"); len(rows) != 2 || !rows[0].Bind["x"].Absent || !reflect.DeepEqual(got, []string{"1", "1"}) {
+		t.Errorf("grouped: %v, want two groups of one, the absent value first", binds(rows))
+	}
+	same := ns.NewMemSource().Declare("v", "x")
+	same.Add("v", ns.Tuple{Vals: []ns.Value{ns.N(1)}})
+	same.Add("v", ns.Tuple{Vals: []ns.Value{ns.S("1")}})
+	if rows := eval(t, same, `v(?x) => ?x`); len(rows) != 1 {
+		t.Errorf("control: N(1) and S(\"1\") answer %v, want one row", binds(rows))
+	}
+}
+
 // orderValues has to be an order (antisymmetric and transitive) for sorting by it to mean anything.
 // The values mix numbers, numeric-looking text and units; the control shows that comparing numbers
 // by value only when both are numbers, as the issue first sketched, makes a cycle on this set.
