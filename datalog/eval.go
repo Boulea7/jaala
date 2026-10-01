@@ -1,6 +1,7 @@
 package datalog
 
 import (
+	"cmp"
 	"context"
 	"fmt"
 	"github.com/panyam/jaala/ns"
@@ -213,6 +214,7 @@ func evaluate(ctx context.Context, q Query, b *Base, opts []Option, rewrite func
 	if err := b.run.done(); err != nil {
 		return nil, err
 	}
+	written := q
 	q, cols, err := bindGoal(q, o.bind)
 	if err != nil {
 		return nil, err
@@ -268,6 +270,9 @@ func evaluate(ctx context.Context, q Query, b *Base, opts []Option, rewrite func
 	if err := validateSelect(sel, q.Having, q.Goal); err != nil {
 		return nil, err
 	}
+	if err := validateOrder(cols, written); err != nil {
+		return nil, err
+	}
 
 	var raw []*binding
 	err = solve(pos, 0, newBinding(), b, func(bnd *binding) error {
@@ -300,7 +305,8 @@ func evaluate(ctx context.Context, q Query, b *Base, opts []Option, rewrite func
 			}
 		}
 	}
-	return rows, nil
+	orderRows(rows, written.OrderBy)
+	return page(rows, written.Limit, written.Offset), nil
 }
 
 // splitNegations separates the body into the positive part (atoms + comparisons, solved by
@@ -753,6 +759,24 @@ func validateSelect(sel []Term, having []Compare, goal Body) error {
 	return nil
 }
 
+// validateOrder checks the order by columns against the answer's columns as written, so a variable
+// the host bound is still one to sort on, and checks the row counts a Query built in Go might carry.
+func validateOrder(cols []Term, q Query) error {
+	selected := map[Var]bool{}
+	for _, c := range cols {
+		selected[colLabel(c)] = true
+	}
+	for _, o := range q.OrderBy {
+		if o.Term.Var == "_" || !selected[colLabel(o.Term)] {
+			return fmt.Errorf("query: order by %s, which is not an answer column (sort on a column the projection selects)", o.Term)
+		}
+	}
+	if q.Limit < 0 || q.Offset < 0 {
+		return fmt.Errorf("query: limit %d offset %d: a row count can't be negative", q.Limit, q.Offset)
+	}
+	return nil
+}
+
 func validateAggOrVar(t Term, pv map[Var]bool) error {
 	switch {
 	case t.Agg != nil:
@@ -935,14 +959,14 @@ func groupKeyOf(keyVars []Var, bnd *binding) string {
 const listSep = " "
 
 // groupValues is a group's values of Var: one per binding, or the distinct set when the aggregate
-// says so. Sorted either way, so a saved view regenerates identically rather than inheriting the
-// solver's join order.
+// says so. Sorted in the default order (orderValues) either way, so a saved view regenerates
+// identically rather than inheriting the solver's join order.
 //
 // A binding that does not bind Var contributes nothing, matching min/max/sum, which skip a row whose
 // value is not numeric.
 func groupValues(a Aggregate, rows []*binding) []string {
 	seen := map[string]bool{}
-	out := make([]string, 0, len(rows))
+	vals := make([]ns.Value, 0, len(rows))
 	for _, bnd := range rows {
 		val, ok := bnd.vals[a.Var]
 		if !ok || val.Absent || val.S == "" {
@@ -954,9 +978,13 @@ func groupValues(a Aggregate, rows []*binding) []string {
 			}
 			seen[val.S] = true
 		}
-		out = append(out, val.S)
+		vals = append(vals, val)
 	}
-	sort.Strings(out)
+	sort.SliceStable(vals, func(i, j int) bool { return orderValues(vals[i], vals[j]) < 0 })
+	out := make([]string, len(vals))
+	for i, val := range vals {
+		out[i] = val.S
+	}
 	return out
 }
 
@@ -1028,19 +1056,84 @@ func reduce(a Aggregate, rows []*binding) ns.Value {
 	return ns.Value{S: ftoa(r), Num: &r}
 }
 
-// dedupSort removes duplicate answer rows (same projected values) and sorts them, so a query is a
-// deterministic view.
+// dedupSort sorts the answer rows in the default order, column by column, and removes duplicates
+// (same projected text), so a query is a deterministic view. Sorting comes first and the first row of
+// each key in sorted order is kept: N(1) and S("1") are one value to a join, and keeping whichever
+// arrived first would put the survivor among the numbers or among the text by insertion order.
 func dedupSort(rows []Row, sel []Var) []Row {
-	sort.SliceStable(rows, func(i, j int) bool { return rowKey(rows[i], sel) < rowKey(rows[j], sel) })
+	sort.SliceStable(rows, func(i, j int) bool {
+		for _, v := range sel {
+			if c := orderValues(rows[i].Bind[v], rows[j].Bind[v]); c != 0 {
+				return c < 0
+			}
+		}
+		return false
+	})
+	seen := map[string]bool{}
 	out := rows[:0]
-	var last string
-	for i, r := range rows {
-		if k := rowKey(r, sel); i == 0 || k != last {
+	for _, r := range rows {
+		if k := rowKey(r, sel); !seen[k] {
+			seen[k] = true
 			out = append(out, r)
-			last = k
 		}
 	}
 	return out
+}
+
+// orderValues is the default order on one column: absent values first, then numbers by value, then
+// everything else by its text, with equal numbers ordered by their text. Comparing as numbers only
+// when both values are numbers would not be an order on a mixed column (2 < 10 by value, "10" < "1a"
+// and "1a" < "2" by text), so numbers and text are ranked apart instead, as SQLite ranks them. A
+// number's unit doesn't take part: this orders a column, it doesn't compare quantities.
+func orderValues(a, b ns.Value) int {
+	rank := func(v ns.Value) int {
+		switch {
+		case v.Absent:
+			return 0
+		case v.Num != nil:
+			return 1
+		}
+		return 2
+	}
+	if c := cmp.Compare(rank(a), rank(b)); c != 0 {
+		return c
+	}
+	if a.Num != nil && b.Num != nil {
+		if c := cmp.Compare(*a.Num, *b.Num); c != 0 {
+			return c
+		}
+	}
+	return strings.Compare(a.S, b.S)
+}
+
+// orderRows sorts the answer by the query's order by columns. The sort is stable and the rows arrive
+// in the default order, so that order breaks every tie.
+func orderRows(rows []Row, order []Order) {
+	if len(order) == 0 {
+		return
+	}
+	sort.SliceStable(rows, func(i, j int) bool {
+		for _, o := range order {
+			lbl := colLabel(o.Term)
+			c := orderValues(rows[i].Bind[lbl], rows[j].Bind[lbl])
+			if o.Desc {
+				c = -c
+			}
+			if c != 0 {
+				return c < 0
+			}
+		}
+		return false
+	})
+}
+
+// page is the rows limit and offset keep: skip offset, then keep at most limit (zero is no limit).
+func page(rows []Row, limit, offset int) []Row {
+	rows = rows[min(offset, len(rows)):]
+	if limit > 0 && limit < len(rows) {
+		rows = rows[:limit]
+	}
+	return rows
 }
 
 func rowKey(r Row, sel []Var) string {

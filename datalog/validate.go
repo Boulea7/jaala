@@ -57,7 +57,10 @@ func Validate(q Query, reg *ns.Vocabulary) error {
 	if len(sel) == 0 {
 		sel = defaultSelect(q.Goal)
 	}
-	return validateSelect(sel, q.Having, q.Goal)
+	if err := validateSelect(sel, q.Having, q.Goal); err != nil {
+		return err
+	}
+	return validateOrder(sel, q)
 }
 
 // validateWithoutVocabulary is Validate minus the checks that need a relation catalog installed.
@@ -78,7 +81,10 @@ func validateWithoutVocabulary(q Query, reg *ns.Vocabulary) error {
 	if len(sel) == 0 {
 		sel = defaultSelect(q.Goal)
 	}
-	return validateSelect(sel, q.Having, q.Goal)
+	if err := validateSelect(sel, q.Having, q.Goal); err != nil {
+		return err
+	}
+	return validateOrder(sel, q)
 }
 
 // checkLiterals applies checkAtom to every relation-bearing literal, positive or negated. A
