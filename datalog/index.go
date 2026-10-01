@@ -137,8 +137,16 @@ type edbIndex map[string][]int
 // so a second query over the same data reuses what the first one built.
 type edbCache struct {
 	mu  sync.RWMutex
-	tup map[string][]ns.Tuple
+	tup map[string]*edbRead
 	idx map[idxKey]edbIndex
+}
+
+// edbRead is one relation's read from the Source, made once however many Evals ask for it at the
+// same moment: the Source contract promises Tuples is called at most once per relation per Base, and
+// a host's read may be a whole-table query it should not run twice.
+type edbRead struct {
+	once   sync.Once
+	tuples []ns.Tuple
 }
 
 // countWork records one candidate comparison. See Base.work. Atomic because Evals sharing a Base
@@ -151,28 +159,24 @@ func (b *Base) countWork() {
 
 // newEDBCache builds an empty cache.
 func newEDBCache() *edbCache {
-	return &edbCache{tup: map[string][]ns.Tuple{}, idx: map[idxKey]edbIndex{}}
+	return &edbCache{tup: map[string]*edbRead{}, idx: map[idxKey]edbIndex{}}
 }
 
 // tuples returns rel's tuples, asking the Source the first time.
 func (c *edbCache) tuples(rel string, src ns.Source) []ns.Tuple {
-	c.mu.RLock()
-	t, ok := c.tup[rel]
-	c.mu.RUnlock()
-	if ok {
-		return t
-	}
-	var fresh []ns.Tuple
-	if src != nil {
-		fresh = src.Tuples(rel)
-	}
 	c.mu.Lock()
-	defer c.mu.Unlock()
-	if t, ok := c.tup[rel]; ok {
-		return t
+	r, ok := c.tup[rel]
+	if !ok {
+		r = &edbRead{}
+		c.tup[rel] = r
 	}
-	c.tup[rel] = fresh
-	return fresh
+	c.mu.Unlock()
+	r.once.Do(func() {
+		if src != nil {
+			r.tuples = src.Tuples(rel)
+		}
+	})
+	return r.tuples
 }
 
 // get returns the index for a relation at a pattern, building it once on first use. Lazy because a

@@ -35,8 +35,9 @@ type Schema struct {
 // schema when it meets an atom, and for the relation's tuples the first time it needs them; it
 // indexes and caches from there, so a Source need not.
 //
-// Tuples are treated as immutable for the life of a Base. A Source is read from one goroutine at a
-// time per relation, but several Evals may share a Base concurrently.
+// Tuples are treated as immutable for the life of a Base. Each relation is read once per Base, by one
+// goroutine, even when several Evals on the Base first need it at the same moment; different
+// relations may be read concurrently.
 type Source interface {
 	// Schema reports whether the source serves rel, and its shape.
 	Schema(rel string) (Schema, bool)
