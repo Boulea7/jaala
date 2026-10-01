@@ -13,6 +13,7 @@ import (
 //	unknown relation "egde"; did you mean "edge"?
 //	unknown module "nett" in "nett.pin_count"; did you mean "net.pin_count"?
 //	"str" is a module, not a relation; it holds contains, glob, match, prefix, suffix
+//	"pin" is a module, not a relation; it holds name, net; did you mean "component.pin"?
 //
 // A missing module is named as such because "unknown relation" would send the reader hunting a typo
 // in the last segment when the first one is wrong.
@@ -21,7 +22,7 @@ func (v *Vocabulary) Unknown(name string) string {
 		return fmt.Sprintf("unknown relation %q%s", name, v.Hint(name))
 	}
 	if v.IsModule(name) {
-		return fmt.Sprintf("%q is a module, not a relation; it holds %s", name, strings.Join(v.children(name), ", "))
+		return fmt.Sprintf("%q is a module, not a relation; it holds %s%s", name, strings.Join(v.children(name), ", "), v.endingHint(name))
 	}
 	if mod, ok := v.missingModule(name); ok {
 		return fmt.Sprintf("unknown module %q in %q%s", mod, name, v.Hint(name))
@@ -31,6 +32,12 @@ func (v *Vocabulary) Unknown(name string) string {
 
 // Hint is the text after the name in an unknown-name error: `; did you mean "X"?` when a registered
 // name is a plausible typo, an explanation when no relation is registered at all, and "" otherwise.
+//
+// A bare name is most often a member typed without its module (`rail` for `net.rail`), so a member
+// elsewhere whose last segment IS the name comes first; when several do, they are all listed, since
+// picking one would be a guess. Only then does a typo of a root name count, and only then a module
+// path spelled with "_" or "-" for "." (`net_pin_count` for `net.pin_count`). Every case is a hint:
+// the name still does not resolve.
 //
 // When no base relation is registered it says that instead of guessing, because every name is
 // unknown in that state and a typo hint would send the reader hunting a spelling mistake they did not
@@ -43,10 +50,95 @@ func (v *Vocabulary) Hint(name string) string {
 		}
 		return "; no relations are installed"
 	}
+	if h := v.endingHint(name); h != "" {
+		return h
+	}
 	if s := v.suggest(name); s != "" {
 		return fmt.Sprintf(`; did you mean %q?`, s)
 	}
 	return ""
+}
+
+// endingHint names the members elsewhere whose last segment is a bare name, or "".
+func (v *Vocabulary) endingHint(name string) string {
+	ends := v.endingIn(name)
+	switch len(ends) {
+	case 0:
+		return ""
+	case 1:
+		return fmt.Sprintf(`; did you mean %q?`, ends[0])
+	}
+	q := make([]string, len(ends))
+	for i, e := range ends {
+		q[i] = fmt.Sprintf("%q", e)
+	}
+	list, both := strings.Join(q[:len(q)-1], ", ")+" and "+q[len(q)-1], "all"
+	if len(ends) == 2 {
+		both = "both"
+	}
+	return fmt.Sprintf("; %s %s end in %q", list, both, name)
+}
+
+// endingIn returns, for a bare name, the member paths in some module whose last segment is that name,
+// sorted. A private member has no path, so it is never among them.
+func (v *Vocabulary) endingIn(name string) []string {
+	if strings.Contains(name, ".") {
+		return nil
+	}
+	var out []string
+	for p := range v.members {
+		if mod, leaf := splitPath(p); mod != "" && leaf == name {
+			out = append(out, p)
+		}
+	}
+	sort.Strings(out)
+	return out
+}
+
+// bySeparator reads "_" and "-" in a bare name as ".", at each position alone and then all at once,
+// and returns the module path nearest any of those spellings, within a plausible-typo distance:
+// `net_pin_count` spells net.pin_count exactly, and `component_on_net` comes nearest to
+// component.net.
+func (v *Vocabulary) bySeparator(name string) string {
+	var spellings []string
+	for i, r := range name {
+		if r == '_' || r == '-' {
+			spellings = append(spellings, name[:i]+"."+name[i+1:])
+		}
+	}
+	if len(spellings) == 0 {
+		return ""
+	}
+	spellings = append(spellings, strings.Map(func(r rune) rune {
+		if r == '_' || r == '-' {
+			return '.'
+		}
+		return r
+	}, name))
+	var dotted []string
+	for _, p := range v.candidates() {
+		if strings.Contains(p, ".") {
+			dotted = append(dotted, p)
+		}
+	}
+	best, bestDist := "", 0
+	for _, sp := range spellings {
+		for _, p := range dotted {
+			if d := levenshtein(sp, p); best == "" || d < bestDist {
+				best, bestDist = p, d
+			}
+		}
+	}
+	if best != "" && bestDist <= typoThreshold(name) {
+		return best
+	}
+	return ""
+}
+
+// typoThreshold is the edit distance a name of this length tolerates: a longer name tolerates more
+// slips, with a floor of 2.
+func typoThreshold(name string) int {
+	return max(len(name)/4+1, 2)
 }
 
 // missingModule reports the module part of a dotted name when no module of that path exists.
@@ -65,8 +157,8 @@ func (v *Vocabulary) missingModule(name string) (string, bool) {
 // module's members only, so `net.pin_cout` finds `net.pin_count` and never a closer-spelled member
 // of another module. A name whose module is missing is repaired at the module: the nearest existing
 // module stands in for it, and the member is suggested if that module holds it, else the module is.
-// A bare name that matches nothing at the root, but is the last segment of a member elsewhere, is
-// suggested at that path, which is what a query written before a name moved into a module needs.
+// A bare name that is no typo of a root name is tried as a module path written with another
+// separator (see bySeparator). Hint has already looked for it as a member's last segment.
 func (v *Vocabulary) suggest(name string) string {
 	mod, leaf := "", name
 	if i := strings.LastIndexByte(name, '.'); i >= 0 {
@@ -90,11 +182,7 @@ func (v *Vocabulary) suggest(name string) string {
 	}
 	best := closestBy(leaf, cands, func(p string) string { _, l := splitPath(p); return l })
 	if best == "" && mod == "" {
-		for _, p := range v.candidates() {
-			if _, l := splitPath(p); l == leaf && p != leaf {
-				return p
-			}
-		}
+		return v.bySeparator(name)
 	}
 	return best
 }
@@ -133,9 +221,8 @@ func closest(name string, cands []string) string {
 	return closestBy(name, cands, func(s string) string { return s })
 }
 
-// closestBy is closest comparing name against key(candidate). The threshold scales with the name's
-// length (a longer name tolerates more slips) with a floor of 2, so an unrelated token gets no
-// misleading suggestion. On a tie the earlier candidate wins.
+// closestBy is closest comparing name against key(candidate), within typoThreshold, so an unrelated
+// token gets no misleading suggestion. On a tie the earlier candidate wins.
 func closestBy(name string, cands []string, key func(string) string) string {
 	best, bestDist := "", 0
 	for _, c := range cands {
@@ -144,10 +231,7 @@ func closestBy(name string, cands []string, key func(string) string) string {
 			best, bestDist = c, d
 		}
 	}
-	threshold := len(name)/4 + 1
-	if threshold < 2 {
-		threshold = 2
-	}
+	threshold := typoThreshold(name)
 	if best != "" && bestDist <= threshold {
 		return best
 	}
@@ -188,10 +272,7 @@ func DidYouMeanValue(allowed []string, got string) string {
 			best, bestDist = want, d
 		}
 	}
-	threshold := len(got)/4 + 1
-	if threshold < 2 {
-		threshold = 2
-	}
+	threshold := typoThreshold(got)
 	if bestDist > threshold {
 		best = ""
 	}

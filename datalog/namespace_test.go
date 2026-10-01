@@ -107,3 +107,13 @@ func TestDidYouMeanUsesTheTree(t *testing.T) {
 		t.Errorf("DidYouMean = %q", got)
 	}
 }
+
+// A hint is only a hint: a name typed without its module still does not resolve (#10).
+func TestAHintedNameStillFails(t *testing.T) {
+	src := ns.NewMemSource().Declare("component.pin", "ref", "pin").Declare("pin.net", "ref", "pin", "net")
+	src.Add("component.pin", ns.Tuple{Vals: []ns.Value{ns.S("R1"), ns.S("1")}})
+	rows, err := Naive{}.Eval(mustParse(t, `pin(?r, ?p) => ?r`), baseFor(std(src)))
+	if err == nil || rows != nil || !strings.Contains(err.Error(), `"pin" is a module, not a relation; it holds net; did you mean "component.pin"?`) {
+		t.Errorf("rows = %v, err = %v; want no rows and the module error with its hint", rows, err)
+	}
+}
