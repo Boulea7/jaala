@@ -86,7 +86,9 @@ go list -deps ./... | grep '\.' | grep -v '^github.com/panyam/jaala' | grep -v '
 - **Demand goes through negation and into it (#34).** If the rewritten program doesn't stratify
   (a recursive caller negating what it demands), `magic` redoes it with negated calls reading their
   relations in full, which always stratifies: demand and supplementary rules hold no negation, and
-  no original relation reads a rewritten one.
+  no original relation reads a rewritten one. A rule evaluated in full also has its constant calls
+  rewritten (`fromConstants`, #57), adorned by the constants alone, so their demand rules are facts
+  and add no dependency; that keeps the fallback's guarantee.
 - **Rules are checked as linked before any rewrite renames them** (`checkRules` in `evaluate`), so
   an error names `r`, never `r\x00/bf` or a factored relation. A new rewrite gets this for free;
   a new check that names a relation belongs there too.

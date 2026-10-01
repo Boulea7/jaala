@@ -174,6 +174,10 @@ func TestDemandAgreesWithNaiveOnRandomGraphs(t *testing.T) {
 		leftReach + `node(?s), weight(?s, ?w), ?w > 6, reach(?s, ?x) => ?s, ?x`,
 		leftReach + `two(?a, ?c) :- reach(?a, ?b), reach(?b, ?c); two("v0", ?c), weight(?c, ?w) => ?c, max(?w)`,
 		leftReach + `far(?a, ?b) :- reach(?a, ?b), not edge(?a, ?b); far("v0", ?x) => ?x`,
+		leftReach + `from0(?x) :- reach("v0", ?x); from0(?x) :- reach("v0", ?x), node(?x); from0(?x), weight(?x, ?w) => ?x, ?w`,
+		leftReach + `lone(?x) :- node(?x), not reach("v1", ?x); lone(?x) :- node(?x), weight(?x, ?w), not reach("v1", ?x); lone(?x) => ?x`,
+		leftReach + `two(?x, ?y) :- reach(?x, ?y); two(?x, ?y) :- reach(?x, ?y), node(?y); via(?y) :- two("v2", ?y); via(?y) => ?y`,
+		rightReach + `from1(?x) :- reach("v1", ?x); from1(?x) :- reach("v1", ?x), node(?x); from1(?x) => ?x`,
 		leftReach + `cov(?a) :- reach(?a, ?b), weight(?b, ?w), ?w > 6; nocov(?c) :- node(?c), not cov(?c); nocov("v1")`,
 		leftReach + `cov(?a) :- reach(?a, ?b), weight(?b, ?w), ?w > 6; node(?c), not cov(?c) => ?c`,
 		`q(?y) :- weight(?y, ?w), ?w > 5; p(?x, ?y) :- edge(?x, ?y), not q(?y); p(?x, ?z) :- p(?x, ?y), edge(?y, ?z), not q(?z); p("v0", ?z) => ?z`,
@@ -278,32 +282,12 @@ func TestAWitnessedBoundCallKeepsItsDemand(t *testing.T) {
 		`covers(?t, ?f) :- test(?t), hop(?t, ?f); covers(?t, "v5") => ?t`
 	run := func(opts ...Option) ([]Row, int) {
 		v := std(tested())
-		walks := 0
-		if err := v.AddPredicate("hop", ns.Builtin{Arity: 2, Modes: [][]bool{{true, false}, {false, true}}, Gen: func(_ context.Context, _ ns.Source, args []ns.Arg, emit func([]ns.Value, []string) error) error {
-			walks++
-			var end int
-			if !args[1].Bound {
-				return nil // this test only binds the far end
-			}
-			fmt.Sscanf(args[1].Value.S, "v%d", &end)
-			for start := end - 1; start >= 0; start-- {
-				var path []string
-				for i := start; i < end; i++ {
-					path = append(path, fmt.Sprintf("e%d-%d", i, i+1))
-				}
-				if err := emit([]ns.Value{ns.S(fmt.Sprintf("v%d", start)), args[1].Value}, path); err != nil {
-					return err
-				}
-			}
-			return nil
-		}}); err != nil {
-			t.Fatal(err)
-		}
+		walks := hopper(t, v)
 		rows, err := SemiNaive{}.Eval(bg, mustParse(t, text), baseFor(v), opts...)
 		if err != nil {
 			t.Fatal(err)
 		}
-		return rows, walks
+		return rows, *walks
 	}
 	plain, _ := run()
 	rows, walks := run(Witnesses())
@@ -330,5 +314,114 @@ func TestAWitnessedBoundCallKeepsItsDemand(t *testing.T) {
 		if !reflect.DeepEqual(kids[1].Cites, want) {
 			t.Errorf("row %s: hop cites %v, want %v in walk order", r.Bind["t"].S, kids[1].Cites, want)
 		}
+	}
+}
+
+// hopper registers hop(?from, ?to), which walks back from a bound ?to along line()'s edges, citing each
+// answer's path in walk order, and counts its walks. A bound ?from alone yields nothing.
+func hopper(t *testing.T, v *ns.Vocabulary) *int {
+	t.Helper()
+	walks := 0
+	if err := v.AddPredicate("hop", ns.Builtin{Arity: 2, Modes: [][]bool{{true, false}, {false, true}}, Gen: func(_ context.Context, _ ns.Source, args []ns.Arg, emit func([]ns.Value, []string) error) error {
+		walks++
+		if !args[1].Bound {
+			return nil
+		}
+		var end int
+		fmt.Sscanf(args[1].Value.S, "v%d", &end)
+		for start := end - 1; start >= 0; start-- {
+			var path []string
+			for i := start; i < end; i++ {
+				path = append(path, fmt.Sprintf("e%d-%d", i, i+1))
+			}
+			if err := emit([]ns.Value{ns.S(fmt.Sprintf("v%d", start)), args[1].Value}, path); err != nil {
+				return err
+			}
+		}
+		return nil
+	}}); err != nil {
+		t.Fatal(err)
+	}
+	return &walks
+}
+
+// A constant in a rule the query defines is demand too (#57): the goal asks uses(?t) with nothing
+// bound, so no demand starts there, but covers is still walked once, directly or through mid, with
+// or without witnesses. The witness keeps a node for each derived relation on the way.
+func TestAConstantInARuleCarriesDemand(t *testing.T) {
+	const test = `test(?f) :- attr(?f, "role", "test"), not attr(?f, "receiver", _); covers(?t, ?f) :- test(?t), hop(?t, ?f); `
+	for _, c := range []struct {
+		name, rules string
+		chain       []string
+	}{
+		{"direct", `uses(?t) :- covers(?t, "v5"); `, []string{"uses", "covers"}},
+		{"through mid", `mid(?t, ?f) :- covers(?t, ?f); uses(?t) :- mid(?t, "v5"); `, []string{"uses", "mid", "covers"}},
+	} {
+		text := test + c.rules + `uses(?t) => ?t`
+		run := func(ev Evaluator, opts ...Option) ([]Row, int) {
+			v := std(tested())
+			walks := hopper(t, v)
+			rows, err := ev.Eval(bg, mustParse(t, text), baseFor(v), opts...)
+			if err != nil {
+				t.Fatalf("%s: %v", c.name, err)
+			}
+			return rows, *walks
+		}
+		plain, plainWalks := run(SemiNaive{})
+		rows, walks := run(SemiNaive{}, Witnesses())
+		if walks != 1 || plainWalks != 1 {
+			t.Errorf("%s: %d walks witnessed, %d not; want 1 each", c.name, walks, plainWalks)
+		}
+		if _, written := run(SemiNaive{WrittenOrder: true}); written != 3 {
+			t.Errorf("%s: control: as written, %d walks, want one per test (3)", c.name, written)
+		}
+		if !reflect.DeepEqual(rowSet(rows), rowSet(plain)) || col(rows, "t") != "v0,v1,v2" {
+			t.Errorf("%s: witnessed rows %v, unwitnessed %v; want the same, v0..v2", c.name, rowSet(rows), rowSet(plain))
+		}
+		for _, r := range rows {
+			w := r.Witness[0]
+			for i, rel := range c.chain {
+				if w == nil || w.Relation != rel {
+					t.Fatalf("%s, row %s: witness level %d is %+v, want %s", c.name, r.Bind["t"].S, i, w, rel)
+				}
+				if i+1 < len(c.chain) {
+					w = w.Children[0]
+				}
+			}
+			if len(w.Children) != 2 || w.Children[0].Relation != "test" || w.Children[1].Relation != "hop" {
+				t.Errorf("%s, row %s: covers' children %+v, want test then hop", c.name, r.Bind["t"].S, w.Children)
+			}
+		}
+	}
+}
+
+// A rule evaluated in full that calls a relation with a constant, positively or under a negation,
+// derives only that constant's part, so its work grows with what the constant reaches. Each relation
+// has two rules so that it is not inlined.
+func TestARuleCallWithAConstantDerivesOnlyItsPart(t *testing.T) {
+	for _, text := range []string{
+		leftReach + `from0(?x) :- reach("v0", ?x); from0(?x) :- reach("v0", ?x), node(?x); from0(?x) => ?x`,
+		leftReach + `lone(?x) :- node(?x), not reach("v1", ?x); lone(?x) :- edge(?x, _), not reach("v1", ?x); lone(?x) => ?x`,
+	} {
+		if ratio := float64(workOf(t, SemiNaive{}, line(400), text)) / float64(workOf(t, SemiNaive{}, line(200), text)); ratio > 2.5 {
+			t.Errorf("%s: work grew %.1fx when the chain doubled, want about 2x", text[len(leftReach):], ratio)
+		}
+		if full := float64(workOf(t, SemiNaive{WrittenOrder: true}, line(400), text)) / float64(workOf(t, SemiNaive{WrittenOrder: true}, line(200), text)); full < 3.5 {
+			t.Errorf("%s: control: as written the work grew only %.1fx, so reach is not being built in full", text[len(leftReach):], full)
+		}
+	}
+}
+
+// A call into the rule's own recursion keeps reading the relation: it is evaluated in full already,
+// and an adorned copy would derive part of it twice.
+func TestACallIntoItsOwnRecursionIsLeftAlone(t *testing.T) {
+	text := `reach(?a, ?b) :- edge(?a, ?b); reach(?a, ?c) :- reach(?a, ?b), edge(?b, ?c), reach(?c, "v5"); reach(?a, ?b) => ?a, ?b`
+	for _, r := range magic(baseFor(std(line(6))), mustParse(t, text)).Rules {
+		if strings.HasPrefix(r.Head.Relation, adornedName("reach", "")) {
+			t.Errorf("the rewrite made %s", displayName(r.Head.Relation))
+		}
+	}
+	if got := rowSet(eval(t, line(6), text)); len(got) != 6 {
+		t.Errorf("rows %v, want the 5 edges and v2-v4 (only v4 reaches v5 in one step)", got)
 	}
 }
