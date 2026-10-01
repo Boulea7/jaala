@@ -2,6 +2,11 @@
 // its own set. Strings registers the string tests under str (str.contains, str.prefix, str.suffix,
 // str.glob, str.match), Absent registers absent at the root, and Register registers both.
 //
+// Reach builds a transitive-closure predicate from a host's own walk: it runs from whichever end a
+// query binds, refuses a call that binds neither (through its Modes), and cites each answer's path in
+// order, which a Witness keeps. The host keeps its edge semantics; every host gets the same binding,
+// refusal and path behaviour.
+//
 // CompileGlob and CompilePattern are the compilers behind str.glob and str.match, exported so Go code
 // that must match the same patterns (agni's profiles match nets to signals both in queries and in Go)
 // shares one translation rather than keeping a twin that could drift.
