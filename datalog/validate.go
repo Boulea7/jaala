@@ -45,6 +45,9 @@ func ValidateBound(q Query, reg *ns.Vocabulary, vars ...Var) error {
 	if err != nil {
 		return err
 	}
+	if q, err = coerceConstants(q, reg); err != nil {
+		return err
+	}
 	// A vocabulary holding NO base relation cannot say a relation is unknown, and refusing every query on that
 	// basis would be a confident wrong answer about the query rather than about the vocabulary. This
 	// is not a corner case: a host that builds rules at package init may do so before its relations

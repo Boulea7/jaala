@@ -21,7 +21,9 @@
 //
 // A derived relation may declare its arguments' types in a rule head, `has_test_point(?n: net) :- ...`,
 // and what it leaves undeclared is inferred through its rules, following agni's column typing.
-// ColumnKinds carries the kinds through to a query's answer columns.
+// ColumnKinds carries the kinds through to a query's answer columns. A constant, or a bound value, is
+// read as the type of the argument it stands in, or of the number it is compared with, and refused
+// when it cannot be, so a question asked with the wrong type fails rather than answering empty.
 //
 // A Base caches and indexes what it reads, so one Base serves many queries, concurrently, and an
 // Evaluator answers a Query over it. SemiNaive is the one to run: it derives recursive rules

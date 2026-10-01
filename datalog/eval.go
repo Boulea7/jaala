@@ -229,6 +229,9 @@ func evaluate(ctx context.Context, q Query, b *Base, opts []Option, rewrite func
 	if err != nil {
 		return nil, err
 	}
+	if q, err = coerceConstants(q, b.reg); err != nil {
+		return nil, err
+	}
 	if o.witness {
 		q = tagWritten(q)
 	}

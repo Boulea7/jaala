@@ -28,7 +28,8 @@ type Schema struct {
 	// A Domain here is enforced: a CONSTANT outside it is rejected before evaluation rather than
 	// silently matching nothing, because an empty answer to a question that was never valid reads as
 	// a fact about the data. It is only enforced on a labelled argument, since the error has to name
-	// what the argument is.
+	// what the argument is. A Type is enforced too: a constant is read as the argument's type, or
+	// refused when it cannot be (see ArgType.Type).
 	Types []ArgType
 	// Doc is a one-line description a host shows when the relation is listed (see Vocabulary.Lookup).
 	Doc string
