@@ -36,7 +36,9 @@
 // drill-down discovery, and ColumnKinds carries the kinds through to a query's answer columns.
 //
 // NewBase builds a fact base over a Registry, and an Evaluator (Naive) answers a Query over the
-// Base. A Base caches and indexes what it reads, so one Base serves many queries, concurrently.
+// Base. A Base caches and indexes what it reads, so one Base serves many queries, concurrently. A host
+// with one vocabulary and many datasets builds and checks the Registry once and binds each dataset
+// with NewBaseOver.
 //
 // Evaluation is guaranteed to terminate because no rule can invent a value: every answer is built
 // from constants in the facts and values a host's generators draw from finite data. That guarantee

@@ -40,10 +40,52 @@ type Base struct {
 }
 
 // NewBase builds a fact base over a registry: its base relations read from the registry's Source,
-// and its predicates. The registry is read, never changed, so a host should finish registering
+// and its predicates. NewBaseOver binds the registry to a different Source instead. The registry is read, never changed, so a host should finish registering
 // before building a Base over it. A nil reg is a base that knows no names at all.
 func NewBase(reg *Registry) *Base {
 	return &Base{src: reg.Source(), reg: reg, edb: newEDBCache(), work: new(int64)}
+}
+
+// NewBaseOver builds a fact base that answers with reg's vocabulary over src's facts, so one
+// registry, composed and checked once, can serve many Sources: one per design read, say. The Bases
+// share the registry and its Check result; each reads tuples, and hands generators, only its own
+// Source. The registry's Source, if it has one, is not read.
+//
+// The registry stays the authority on what each relation is. src must serve every base relation the
+// registry holds, at the same arity, and NewBaseOver refuses it otherwise, naming each relation that
+// is missing or disagrees: a relation silently reading as empty would answer as if the design had
+// none of it. Relations src serves beyond the registry's are ignored, since no query can name them.
+//
+// The registry is read, never changed, by any number of Bases at once; registering into it while
+// they evaluate is not supported.
+func NewBaseOver(reg *Registry, src Source) (*Base, error) {
+	var missing, mismatched []string
+	if reg != nil {
+		for _, rel := range reg.baseOrder {
+			want, _ := reg.schema(rel)
+			var got Schema
+			ok := false
+			if src != nil {
+				got, ok = src.Schema(rel)
+			}
+			switch {
+			case !ok:
+				missing = append(missing, rel)
+			case got.Arity != want.Arity:
+				mismatched = append(mismatched, fmt.Sprintf("%s takes %d args in the registry and %d in the source", rel, want.Arity, got.Arity))
+			}
+		}
+	}
+	var problems []string
+	if len(missing) > 0 {
+		sort.Strings(missing)
+		problems = append(problems, "the source does not serve "+strings.Join(missing, ", "))
+	}
+	problems = append(problems, mismatched...)
+	if len(problems) > 0 {
+		return nil, fmt.Errorf("query: %s", strings.Join(problems, "; "))
+	}
+	return &Base{src: src, reg: reg, edb: newEDBCache(), work: new(int64)}, nil
 }
 
 // Unindexed returns a Base over the same registry that scans every base relation

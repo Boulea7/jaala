@@ -22,7 +22,10 @@ import (
 //
 // A Registry is a value a host composes and hands to NewBase, not ambient state, so two hosts in one
 // process can offer different vocabularies. It is not safe for concurrent registration, but once
-// built it may be read by any number of Bases and Evals at once.
+// built it may be read by any number of Bases and Evals at once, including Bases over different
+// Sources (see NewBaseOver). A host whose data changes per design but whose vocabulary does not
+// builds the registry once, with no Source (NewRegistry(nil), then AddRelation), and checks it at
+// load.
 type Registry struct {
 	src     Source
 	members map[string]member
