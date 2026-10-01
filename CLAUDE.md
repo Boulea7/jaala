@@ -1,0 +1,55 @@
+# jaala
+
+A Datalog engine for graph-shaped data, extracted from agni. One package, `datalog/`. Its model
+(the namespace tree, derived modules, linking, signatures) is described in `datalog/doc.go`, and
+that's the page to read first.
+
+## Commands
+
+CI (`.github/workflows/ci.yml`) runs exactly these, and all must pass:
+
+```sh
+gofmt -l .                      # must print nothing
+go vet ./...
+go test -race -count=1 ./...
+GOOS=js GOARCH=wasm go build ./...
+go list -deps ./... | grep '\.' | grep -v '^github.com/panyam/jaala' | grep -v '^vendor/'   # must print nothing
+```
+
+## Constraints
+
+- **Standard library only, and it must build for wasm.** agni runs the engine in the browser, and
+  any dependency here becomes every host's dependency.
+- **Error text keeps its `query:` prefix, and existing fragments stay stable** (`unknown relation
+  "x"`, `takes N args`, `not stratifiable`). agni prints these messages and its tests match on
+  fragments of them. New cases get new wording; existing wording doesn't move.
+- **`Base` is shared across concurrent `Eval`s.** Anything mutable reachable from it must be
+  per-query (the `idb*` fields on Eval's shallow copy), atomic (`work`), or locked (`edbCache`,
+  the registry's `checkState`). `TestConcurrentEvalsShareOneCheck` catches a regression under
+  `-race`.
+- **Comments use agni's circuit vocabulary on purpose** (`doc.go` says so). Host-specific test
+  data doesn't belong here, though: checks against agni's real catalog, such as its
+  `columnkinds.golden`, live in agni. Copying another repo's catalog in creates a fixture that goes
+  stale without failing.
+
+## Testing discipline
+
+- Red-check each new test: break the behaviour it guards, keep the symbol, and confirm the test
+  fails on its assertion. When scripting mutations, **treat a build failure as "not checked", not
+  as red**. An unused variable left by a mutation fails the build, and a naive harness counts that
+  as a pass.
+- Fixtures: `graph()` and the `eval`/`evalErr`/`col`/`std` helpers in `helpers_test.go`;
+  `withModules`/`evalReg` in `module_test.go`; the agni-shaped `circuit()` in `signature_test.go`.
+
+## Releasing
+
+Merge the PR, then put an annotated tag on the merge commit and push it
+(`git tag -a v0.1.N <merge-sha>`, `git push origin v0.1.N`). The owner picks the version. So far
+releases are patch bumps on v0.1.x, breaking changes included, pre-1.0. agni consumes tags only
+(`go get github.com/panyam/jaala@vX`), never a `replace`.
+
+## Working with agni
+
+agni (github.com/panyam/agni) is the first host. Cross-repo work is split by repo: jaala issues are
+worked from jaala sessions, agni issues from agni sessions. If agni needs something jaala lacks, it
+files a jaala issue rather than working around it.
