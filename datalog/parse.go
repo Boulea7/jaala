@@ -14,7 +14,8 @@ import (
 //	rule        = head ":-" literals ;                (* head :- body; defines a derived relation *)
 //	head        = relation "(" [ harg { "," harg } ] ")" ;
 //	harg        = term [ ":" decl ] ;                 (* a declared type: ?n: net, see parseArgType *)
-//	goal        = literals [ "=>" projection [ "having" havings ] ] ;
+//	goal        = literals [ "=>" projection [ "having" havings ] [ "order" "by" orders ]
+//	              [ "limit" count ] [ "offset" count ] ] ;
 //	literals    = literal { "," literal } ;
 //	literal     = atom | "not" atom | comparison ;    (* "not atom" = stratified negation *)
 //	atom        = relation "(" [ term { "," term } ] ")" ;
@@ -26,6 +27,9 @@ import (
 //	aggfunc     = "count" | "min" | "max" | "sum" | "list" ;
 //	havings     = having { "," having } ;
 //	having      = aggregate op term ;                 (* filters GROUPS, after the reduce *)
+//	orders      = order { "," order } ;
+//	order       = column [ "asc" | "desc" ] ;         (* a selected column; ties keep the default order *)
+//	count       = digit { digit } ;
 //	term        = variable | string | number ;
 //	variable    = "?" ident | "_" ;
 //	string      = '"' { char } '"' ;
@@ -48,6 +52,10 @@ import (
 // a having filters GROUPS, after the reduce. So `?c < 2` in the body narrows the facts that reach the
 // group, and `having count(?n) < 2` narrows the groups the reduce produced. Only the second can ask
 // about a count, because before grouping there is nothing to count.
+//
+// The answer is ordered and cut last: `order by` sorts the rows the having kept, and `limit` and
+// `offset` take a page of them. Without `order by` the answer is in the default order (absent values,
+// then numbers by value, then strings by text), which is also what breaks a tie under `order by`.
 //
 // This covers the whole bounded fragment the evaluator serves: user-defined (recursive, stratified)
 // rules, conjunction, comparison, the built-in reaches and string predicates, stratified negation,
@@ -81,22 +89,52 @@ func Parse(s string) (Query, error) {
 	if err != nil {
 		return Query{}, err
 	}
-	projText, havingText := splitHaving(proj)
-	sel, err := parseSelect(projText)
+	tail, err := splitTail(proj)
 	if err != nil {
 		return Query{}, err
 	}
-	having, err := parseHaving(havingText)
+	sel, err := parseSelect(tail[""])
 	if err != nil {
 		return Query{}, err
 	}
-	return Query{Rules: rules, Goal: Body{Literals: lits}, Select: sel, Having: having}, nil
+	having, err := parseHaving(tail["having"])
+	if err != nil {
+		return Query{}, err
+	}
+	q := Query{Rules: rules, Goal: Body{Literals: lits}, Select: sel, Having: having}
+	if text, ok := tail["order"]; ok {
+		if q.OrderBy, err = parseOrderBy(text); err != nil {
+			return Query{}, err
+		}
+	}
+	if text, ok := tail["limit"]; ok {
+		if q.Limit, err = parseCount("limit", text, 1); err != nil {
+			return Query{}, err
+		}
+	}
+	if text, ok := tail["offset"]; ok {
+		if q.Offset, err = parseCount("offset", text, 0); err != nil {
+			return Query{}, err
+		}
+	}
+	return q, nil
 }
 
-// splitHaving cuts the projection at the `having` keyword. It matches the bare word only — at paren
-// depth zero, outside quotes, and bounded on both sides — so a relation or variable whose name merely
-// contains those letters is left alone.
-func splitHaving(proj string) (sel, having string) {
+// tailWords are the clauses that may follow the projection, in the order they must be written.
+var tailWords = []string{"having", "order", "limit", "offset"}
+
+// splitTail cuts the projection at the clauses that follow it, keyed by keyword, with the columns
+// themselves under "". A keyword matches as a bare word only, at paren depth zero, outside quotes and
+// bounded on both sides, so a variable whose name merely contains one (?shaving, ?limit) is left
+// alone. Each clause may appear once, in tailWords' order, and `order` must be followed by `by`,
+// which the "order" entry leaves out.
+func splitTail(proj string) (map[string]string, error) {
+	type cut struct {
+		word  string
+		start int // where the keyword starts
+		body  int // where its text starts
+	}
+	var cuts []cut
 	depth, inQuote := 0, false
 	for i := 0; i < len(proj); i++ {
 		switch c := proj[i]; {
@@ -107,11 +145,89 @@ func splitHaving(proj string) (sel, having string) {
 			depth++
 		case c == ')' || c == '}':
 			depth--
-		case depth == 0 && isWordAt(proj, i, "having"):
-			return proj[:i], proj[i+len("having"):]
+		case depth == 0:
+			for _, w := range tailWords {
+				if isWordAt(proj, i, w) {
+					cuts = append(cuts, cut{w, i, i + len(w)})
+					break
+				}
+			}
 		}
 	}
-	return proj, ""
+	out := map[string]string{}
+	for n, c := range cuts {
+		if _, dup := out[c.word]; dup {
+			return nil, fmt.Errorf("query: %s appears twice after %q", clauseName(c.word), "=>")
+		}
+		if n > 0 && slices.Index(tailWords, c.word) < slices.Index(tailWords, cuts[n-1].word) {
+			return nil, fmt.Errorf("query: %s comes after %s, not before it (the order is having, order by, limit, offset)", clauseName(cuts[n-1].word), clauseName(c.word))
+		}
+		end := len(proj)
+		if n+1 < len(cuts) {
+			end = cuts[n+1].start
+		}
+		text := proj[c.body:end]
+		if c.word == "order" {
+			rest, ok := cutWord(strings.TrimSpace(text)+" ", "by")
+			if !ok {
+				return nil, fmt.Errorf("query: order needs by, as in %q", "order by ?n desc")
+			}
+			text = rest
+		}
+		out[c.word] = text
+	}
+	out[""] = proj
+	if len(cuts) > 0 {
+		out[""] = proj[:cuts[0].start]
+	}
+	return out, nil
+}
+
+// clauseName is a tail keyword as written: "order" is "order by".
+func clauseName(word string) string {
+	if word == "order" {
+		return "order by"
+	}
+	return word
+}
+
+// parseOrderBy reads the comma-separated sort columns, each a projection column optionally followed
+// by asc or desc. Whether it names a selected column is checked with the projection (validateOrder).
+func parseOrderBy(s string) ([]Order, error) {
+	var out []Order
+	for _, piece := range splitTop(s, ",") {
+		piece = strings.TrimSpace(piece)
+		desc := false
+		for _, dir := range []string{"asc", "desc"} {
+			if i := len(piece) - len(dir); i > 0 && isWordAt(piece, i, dir) {
+				piece, desc = strings.TrimSpace(piece[:i]), dir == "desc"
+				break
+			}
+		}
+		if piece == "" {
+			return nil, fmt.Errorf("query: order by needs a column, as in %q", "order by ?n desc")
+		}
+		t, err := parseSelItem(piece)
+		if err != nil {
+			return nil, fmt.Errorf("query: order by: %w", err)
+		}
+		out = append(out, Order{Term: t, Desc: desc})
+	}
+	return out, nil
+}
+
+// parseCount reads limit's or offset's row count, a whole number no smaller than min.
+func parseCount(word, s string, min int) (int, error) {
+	s = strings.TrimSpace(s)
+	n, err := strconv.Atoi(s)
+	if err != nil || n < min || strings.HasPrefix(s, "+") {
+		want := "a whole number"
+		if min > 0 {
+			want = "a positive whole number"
+		}
+		return 0, fmt.Errorf("query: %s %q is not %s", word, s, want)
+	}
+	return n, nil
 }
 
 // isWordAt reports whether word sits at s[i:] with a non-identifier character (or the string edge) on

@@ -30,6 +30,23 @@ type Query struct {
 	// exactly as a Select one does, and its column is computed, filtered on, and then not printed
 	// (Columns is keyed off Select alone).
 	Having []Compare
+	// OrderBy sorts the answer by answer columns, after the reduce and the having filter. Each item
+	// names a Select column (a variable or an aggregate, as written there). Rows that tie on every
+	// item keep the default order, so the answer stays deterministic. Empty keeps the default order
+	// alone: absent values first, then numbers by value, then other strings by their text.
+	OrderBy []Order
+	// Limit keeps at most this many rows of the ordered answer, after skipping Offset of them. Zero
+	// means no limit. Neither saves evaluation work: the whole answer is computed and ordered first,
+	// so a page is a slice of the same ordered answer whatever its size.
+	Limit  int
+	Offset int
+}
+
+// An Order is one `order by` item: an answer column, ascending unless Desc. Descending reverses the
+// whole order, so absent values come last.
+type Order struct {
+	Term Term
+	Desc bool
 }
 
 // A Rule derives its Head for every binding satisfying Body. A rule is recursive when its Head
