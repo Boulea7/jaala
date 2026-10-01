@@ -32,7 +32,8 @@ v.AddModulesFS(libFS, "lib", datalog.LanguageName, ns.ByDirectory(".dl"))   // o
 if err := v.Check(); err != nil { ... }           // once, at load; *ns.ModuleError names the file
 
 base, err := datalog.NewBase(v, designSource)     // per dataset
-rows, err := datalog.SemiNaive{}.Eval(datalog.MustParse(`net.has_test_point(?n) => ?n`), base)
+rows, err := datalog.SemiNaive{}.Eval(ctx, datalog.MustParse(`net.has_test_point(?n) => ?n`), base,
+    datalog.Budget(10_000_000))                   // optional: Bind goal variables, limit work
 ```
 
 A query naming `net.has_test_point` pulls in the module that defines it. Each member carries a

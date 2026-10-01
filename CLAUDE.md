@@ -39,6 +39,11 @@ go list -deps ./... | grep '\.' | grep -v '^github.com/panyam/jaala' | grep -v '
   primitives every evaluator shares (`checkRules`, `applyRule`, `solve`); each evaluator owns its
   fixpoint (`Naive.materialize`, `SemiNaive.materialize`), and SemiNaive's rewrites live in their own
   files. Same-package access to `Base`'s fields is not a reason to add a method to it.
+- **Every Eval carries its own run state (`Base.run`: context, budget), on its own copy of the
+  Base.** Work is counted through `countWork`, which also checks the budget and, every 1024 units, the
+  context; a new loop over candidates must call it and return its error. Host code gets the context
+  (`Gen`'s first argument, `ns.ContextSource`), and every emitted generator row counts as work. A
+  Source read that fails is not cached.
 - **Nothing inside a module resolution may call `Vocabulary.Signature` or `Check`.** They run
   through the memo entry that is mid-computation, and `sync.Once` deadlocks on re-entry. That is
   why the validation base carries `sigs` while it checks module rules.

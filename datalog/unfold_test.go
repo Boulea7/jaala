@@ -38,7 +38,7 @@ func TestABoundArgumentReachesTheGeneratorInsideARelation(t *testing.T) {
 		{"a variable bound by the caller", `node(?f), ?f = "v5", go.covers(?t, ?f) => ?t`},
 	} {
 		v, src, calls := coversVocabulary(t, 40)
-		want, err := Naive{}.Eval(mustParse(t, c.query), MustBase(v, src))
+		want, err := Naive{}.Eval(bg, mustParse(t, c.query), MustBase(v, src))
 		if err != nil || col(want, "t") != "v0,v1,v2,v3,v4" {
 			t.Fatalf("%s: Naive = %v, %v", c.name, want, err)
 		}
@@ -46,7 +46,7 @@ func TestABoundArgumentReachesTheGeneratorInsideARelation(t *testing.T) {
 			t.Errorf("%s: control: Naive walked %d times, want at least once per test (40)", c.name, len(*calls))
 		}
 		*calls = nil
-		got, err := SemiNaive{}.Eval(mustParse(t, c.query), MustBase(v, src))
+		got, err := SemiNaive{}.Eval(bg, mustParse(t, c.query), MustBase(v, src))
 		if err != nil || !reflect.DeepEqual(binds(got), binds(want)) {
 			t.Errorf("%s: SemiNaive = %v, %v; want %v", c.name, got, err, want)
 		}
@@ -129,7 +129,7 @@ func TestUnfoldDropsWhatTheGoalNoLongerReaches(t *testing.T) {
 // The answer's columns are the written goal's, not the inlined one's: the variable an inlined body
 // adds (has's ?x) is not one of them.
 func TestUnfoldKeepsTheWrittenColumns(t *testing.T) {
-	rows, err := SemiNaive{}.Eval(mustParse(t, `has(?n) :- edge(?x, ?n); has(?n)`), baseFor(std(graph())))
+	rows, err := SemiNaive{}.Eval(bg, mustParse(t, `has(?n) :- edge(?x, ?n); has(?n)`), baseFor(std(graph())))
 	if err != nil || col(rows, "n") != "b,c,d" {
 		t.Fatalf("rows = %v, %v", rows, err)
 	}

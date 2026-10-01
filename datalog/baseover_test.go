@@ -1,6 +1,7 @@
 package datalog
 
 import (
+	"context"
 	"fmt"
 	"github.com/panyam/jaala/ns"
 	"github.com/panyam/jaala/stdlib"
@@ -27,7 +28,7 @@ func vocabulary(t *testing.T) *ns.Vocabulary {
 	if err := stdlib.Register(r); err != nil {
 		t.Fatal(err)
 	}
-	if err := r.AddPredicate("succ", ns.Builtin{Arity: 2, Modes: [][]bool{{true, false}}, Gen: func(src ns.Source, args []ns.Arg, emit func([]ns.Value, []string) error) error {
+	if err := r.AddPredicate("succ", ns.Builtin{Arity: 2, Modes: [][]bool{{true, false}}, Gen: func(_ context.Context, src ns.Source, args []ns.Arg, emit func([]ns.Value, []string) error) error {
 		for _, tu := range src.Tuples("edge") {
 			if args[0].Bound && tu.Vals[0].S != args[0].Value.S {
 				continue
@@ -75,7 +76,7 @@ func TestOneVocabularyAnswersOverManySourcesAndResolvesOnce(t *testing.T) {
 		b         *Base
 		from, got string
 	}{{first, "a", "b,c,d"}, {second, "x", "y,z"}, {second, "a", ""}} {
-		rows, err := Naive{}.Eval(mustParse(t, `path.reach("`+c.from+`", ?n) => ?n`), c.b)
+		rows, err := Naive{}.Eval(bg, mustParse(t, `path.reach("`+c.from+`", ?n) => ?n`), c.b)
 		if err != nil || col(rows, "n") != c.got {
 			t.Errorf("reach from %s = %v, %v; want %q", c.from, rows, err, c.got)
 		}
@@ -94,7 +95,7 @@ func TestAGeneratorReadsItsBasesSource(t *testing.T) {
 		src  ns.Source
 		want string
 	}{{graph(), ""}, {another(), "y"}} {
-		rows, err := Naive{}.Eval(mustParse(t, `succ("x", ?n) => ?n`), over(t, r, c.src))
+		rows, err := Naive{}.Eval(bg, mustParse(t, `succ("x", ?n) => ?n`), over(t, r, c.src))
 		if err != nil || col(rows, "n") != c.want {
 			t.Errorf("succ from x = %v, %v; want %q", rows, err, c.want)
 		}
@@ -128,7 +129,7 @@ func TestBasesOverDifferentSourcesEvaluateConcurrently(t *testing.T) {
 	errs := make(chan error, 8)
 	for i := 0; i < 8; i++ {
 		go func(i int) {
-			rows, err := Naive{}.Eval(q, bases[i%2])
+			rows, err := Naive{}.Eval(bg, q, bases[i%2])
 			if err == nil && col(rows, "n") != want[i%2] {
 				err = fmt.Errorf("base %d answered %v", i%2, rows)
 			}

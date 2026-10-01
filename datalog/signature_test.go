@@ -200,7 +200,7 @@ func TestADerivedVocabularyIsEnforcedInQueries(t *testing.T) {
 	if err := r.AddModule("net", LanguageName, power, ""); err != nil {
 		t.Fatal(err)
 	}
-	_, err := Naive{}.Eval(mustParse(t, `net.role(?n, "sorce")`), baseFor(r))
+	_, err := Naive{}.Eval(bg, mustParse(t, `net.role(?n, "sorce")`), baseFor(r))
 	if err == nil || !strings.Contains(err.Error(), `net.role's "arg1" argument cannot be "sorce", did you mean "source"?`) {
 		t.Errorf("err = %v, want the vocabulary enforced with a suggestion", err)
 	}

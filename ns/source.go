@@ -1,6 +1,9 @@
 package ns
 
-import "sort"
+import (
+	"context"
+	"sort"
+)
 
 // A Tuple is one fact of a relation: its values in argument order, plus the citations that justify
 // it. Base facts and derived facts share this shape, so a derived answer stays as verifiable as a
@@ -48,6 +51,15 @@ type Source interface {
 	// treats differently from a vocabulary that lacks a name: it cannot call a relation unknown when
 	// it knows of none, so it says so instead of guessing at a typo.
 	Relations() []string
+}
+
+// ContextSource is optionally implemented by a Source whose reads take long enough to cancel, such as
+// one that runs a query against a database. When a Source implements it, the engine reads a relation
+// through TuplesContext with the query's context instead of through Tuples, and a cancelled or
+// failed read is not cached: the next query needing the relation reads it again under its own
+// context. A read error stops the query that asked, wrapped with the relation's name.
+type ContextSource interface {
+	TuplesContext(ctx context.Context, rel string) ([]Tuple, error)
 }
 
 // NoVocabularyHinter is optionally implemented by a Source to explain an empty vocabulary in the

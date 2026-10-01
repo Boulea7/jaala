@@ -1,6 +1,7 @@
 package ns
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"reflect"
@@ -169,7 +170,7 @@ func (failingLanguage) Members(text string) ([]MemberDecl, error) {
 func (failingLanguage) Check(*Vocabulary) (map[string][]ArgSig, error) { return nil, errBroken }
 
 func TestAGeneratorMustDeclareItsModes(t *testing.T) {
-	gen := func(src Source, args []Arg, emit func([]Value, []string) error) error { return nil }
+	gen := func(_ context.Context, src Source, args []Arg, emit func([]Value, []string) error) error { return nil }
 	v := MustVocabulary(nil)
 	wantErr(t, v.AddPredicate("walk", Builtin{Arity: 2, Gen: gen}), `generator "walk" declares no Modes`)
 	wantErr(t, v.AddPredicate("walk", Builtin{Arity: 2, Modes: [][]bool{{true}}, Gen: gen}), `generator "walk" has a mode of 1 positions, want 2`)
@@ -183,7 +184,7 @@ func TestAGeneratorMustDeclareItsModes(t *testing.T) {
 }
 
 func TestSatisfiedReadsEachMode(t *testing.T) {
-	gen := Builtin{Arity: 2, MaxArity: 3, Modes: [][]bool{{true, false, false}, {false, true, true}}, Gen: func(Source, []Arg, func([]Value, []string) error) error { return nil }}
+	gen := Builtin{Arity: 2, MaxArity: 3, Modes: [][]bool{{true, false, false}, {false, true, true}}, Gen: func(context.Context, Source, []Arg, func([]Value, []string) error) error { return nil }}
 	for _, c := range []struct {
 		bound []bool
 		want  bool

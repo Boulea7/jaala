@@ -19,7 +19,7 @@ const (
 func workOf(t *testing.T, ev Evaluator, src ns.Source, q string) int64 {
 	t.Helper()
 	b := baseFor(std(src))
-	if _, err := ev.Eval(mustParse(t, q), b); err != nil {
+	if _, err := ev.Eval(bg, mustParse(t, q), b); err != nil {
 		t.Fatalf("%s: %v", q, err)
 	}
 	return b.Work()
@@ -76,7 +76,7 @@ func TestDemandLeavesNoCitationsOnTheAnswer(t *testing.T) {
 	if !strings.Contains(fmt.Sprint(magic(baseFor(std(src)), unfold(baseFor(std(src)), mustParse(t, text))).Rules), magicPrefix) {
 		t.Fatal("control: r is not called for demand, so this test proves nothing")
 	}
-	rows, err := SemiNaive{}.Eval(mustParse(t, text), baseFor(std(src)))
+	rows, err := SemiNaive{}.Eval(bg, mustParse(t, text), baseFor(std(src)))
 	if err != nil || len(rows) != 2 {
 		t.Fatalf("rows = %v, %v", rows, err)
 	}
@@ -146,7 +146,7 @@ func TestDemandAgreesWithNaiveOnRandomGraphs(t *testing.T) {
 			if err != nil {
 				t.Fatalf("seed %d: %s: %v", seed, text, err)
 			}
-			got, err := SemiNaive{}.Eval(shuffle(mustParse(t, text), rnd), b)
+			got, err := SemiNaive{}.Eval(bg, shuffle(mustParse(t, text), rnd), b)
 			if err != nil || !reflect.DeepEqual(rowSet(got), rowSet(want)) {
 				t.Errorf("seed %d, shuffled %s:\n got  %v %v\n want %v", seed, text, rowSet(got), err, rowSet(want))
 			}

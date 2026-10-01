@@ -46,6 +46,9 @@ func (Naive) materialize(b *Base, rules []Rule) error {
 	}
 	for _, stratum := range strata {
 		for { // naive fixpoint: re-derive every rule in the stratum until nothing new appears
+			if err := b.run.done(); err != nil {
+				return err
+			}
 			changed := false
 			for _, rel := range stratum {
 				for _, r := range byHead[rel] {
@@ -182,9 +185,11 @@ func (b *Base) applyRule(r Rule) (bool, error) {
 			}
 			vals[j] = val
 		}
-		if b.addTuple(r.Head.Relation, idbTuple{vals: vals, cites: dedupStrings(bnd.cites)}) {
-			added = true
+		fresh, err := b.addTuple(r.Head.Relation, idbTuple{vals: vals, cites: dedupStrings(bnd.cites)})
+		if err != nil {
+			return err
 		}
+		added = added || fresh
 		return nil
 	})
 	return added, err
@@ -198,20 +203,22 @@ func (b *Base) applyRule(r Rule) (bool, error) {
 // be linear, so deriving n tuples cost O(n^2) before any join work: a transitive closure over a
 // 4,000-component design spent 28 seconds here. valsEqual still decides within the bucket, so set
 // semantics and the first-wins provenance rule are unchanged — only the number of comparisons is.
-func (b *Base) addTuple(rel string, t idbTuple) bool {
+func (b *Base) addTuple(rel string, t idbTuple) (bool, error) {
 	tuples := b.idb[rel]
 	x := b.idbIndexFor(rel, fullMask(len(t.vals)))
 	x.sync(tuples, fullMask(len(t.vals)))
 	for _, k := range tupleKeys(t.vals) {
 		for _, i := range x.buckets[k] {
-			b.countWork()
+			if err := b.countWork(); err != nil {
+				return false, err
+			}
 			if valsEqual(tuples[i].vals, t.vals) {
-				return false
+				return false, nil
 			}
 		}
 	}
 	b.idb[rel] = append(tuples, t)
-	return true
+	return true, nil
 }
 
 // idbIndexFor returns this query's index of a derived relation at one binding pattern, creating it

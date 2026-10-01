@@ -1,6 +1,7 @@
 package datalog
 
 import (
+	"context"
 	"fmt"
 	"github.com/panyam/jaala/ns"
 	"sort"
@@ -17,8 +18,8 @@ import (
 // so derived relations and their indexes never cross queries. What is shared is read-mostly and
 // guarded: each base relation is read from the Source once, however many Evals ask for it at the same
 // moment (the others wait for that read), and each of its indexes is built once. Work, Source,
-// Vocabulary and Unindexed are safe at any time; Work totals the comparisons of every Eval on the
-// Base. The vocabulary's resolved modules are shared through its memo.
+// Vocabulary and Unindexed are safe at any time; Work totals the work of every Eval on the Base, while
+// each Eval's context and Budget are its own. The vocabulary's resolved modules are shared through its memo.
 //
 // Not safe: registering into the Vocabulary while Evals run on a Base over it.
 //
@@ -51,6 +52,9 @@ type Base struct {
 	work *int64
 	// noIndex sends every base-relation probe down the full scan. See Unindexed.
 	noIndex bool
+	// run is one Eval's own state (its context and budget), set on that Eval's copy of the Base and
+	// nil on a Base no Eval is running on.
+	run *evalRun
 	// sigs, when set, are the derived members' signatures to check constants against. Only a
 	// validation base inside module resolution sets it, since the memoized signatures are not
 	// available until that resolution finishes.
@@ -133,21 +137,43 @@ func (b *Base) Work() int64 {
 }
 
 // edbTuples returns a base relation's tuples, reading them from the Source once per Base.
-func (b *Base) edbTuples(rel string) []ns.Tuple {
+func (b *Base) edbTuples(rel string) ([]ns.Tuple, error) {
 	if b.edb == nil {
-		if b.src == nil {
-			return nil
-		}
-		return b.src.Tuples(rel)
+		return readTuples(b.run.context(), b.src, rel)
 	}
-	return b.edb.tuples(rel, b.src)
+	return b.edb.tuples(b.run.context(), rel, b.src)
+}
+
+// readTuples reads one relation from the Source, through TuplesContext when the Source can be
+// cancelled, wrapping a failure with the relation's name.
+func readTuples(ctx context.Context, src ns.Source, rel string) ([]ns.Tuple, error) {
+	if src == nil {
+		return nil, nil
+	}
+	cs, ok := src.(ns.ContextSource)
+	if !ok {
+		return src.Tuples(rel), nil
+	}
+	t, err := cs.TuplesContext(ctx, rel)
+	if err != nil {
+		if ctx.Err() != nil {
+			return nil, fmt.Errorf("query: evaluation stopped reading %s: %w", rel, ctx.Err())
+		}
+		return nil, fmt.Errorf("query: reading %s: %w", rel, err)
+	}
+	return t, nil
 }
 
 // Evaluator answers a Query over a Base, each answer Row carrying the provenance of the facts that
 // derived it. The IR is declarative, so strategies swap behind this interface: Naive is the
 // reference, SemiNaive the one a host should run.
+//
+// ctx bounds the evaluation: when it is cancelled or its deadline passes, Eval stops within a short
+// stretch of work and returns an error wrapping ctx.Err(), and the context reaches the host's
+// generators and ContextSource reads, so a walk or a read in progress can stop too. Options bind goal
+// variables (Bind) and limit work (Budget).
 type Evaluator interface {
-	Eval(q Query, b *Base) ([]Row, error)
+	Eval(ctx context.Context, q Query, b *Base, opts ...Option) ([]Row, error)
 }
 
 // Naive is the reference interpreter: a backtracking join in written order, with rules derived by a
@@ -166,14 +192,38 @@ type Naive struct{}
 // literals (stratified negation), then projects: a plain select-project, or a group-and-reduce when
 // the projection contains an aggregate. Results are deduplicated and sorted, so a query is a
 // deterministic, regenerable view; each row carries the provenance of the facts that produced it.
-func (n Naive) Eval(q Query, b *Base) ([]Row, error) { return evaluate(q, b, nil, n.materialize) }
+func (n Naive) Eval(ctx context.Context, q Query, b *Base, opts ...Option) ([]Row, error) {
+	return evaluate(ctx, q, b, opts, nil, n.materialize)
+}
 
 // evaluate answers q over b, deriving its rules with the evaluator's fixpoint. Everything else is
 // shared: Base holds the derived relations and the primitives that read and extend them (checkRules,
 // applyRule, solve), and an evaluator decides only how to iterate them to a fixpoint and, through
 // rewrite (nil for none), how to rewrite the linked query first.
-func evaluate(q Query, b *Base, rewrite func(*Base, Query) Query, fixpoint func(*Base, []Rule) error) ([]Row, error) {
-	q, err := Link(q, b.reg)
+func evaluate(ctx context.Context, q Query, b *Base, opts []Option, rewrite func(*Base, Query) Query, fixpoint func(*Base, []Rule) error) ([]Row, error) {
+	var o evalOptions
+	for _, opt := range opts {
+		opt(&o)
+	}
+	// The query runs on its own copy of the Base: its context, its budget and its derived relations
+	// are its own, while the Source's tuples and their indexes stay shared (see Base).
+	nb := *b
+	nb.run = &evalRun{ctx: ctx, budget: o.budget}
+	b = &nb
+	if err := b.run.done(); err != nil {
+		return nil, err
+	}
+	q, cols, err := bindGoal(q, o.bind)
+	if err != nil {
+		return nil, err
+	}
+	// The answer's columns are fixed here, before any rewrite reorders or inlines the goal; a variable
+	// the host bound is dropped from them while evaluating and filled back into every row after.
+	sel := cols
+	if len(o.bind) > 0 {
+		sel = q.Select
+	}
+	q, err = Link(q, b.reg)
 	if err != nil {
 		return nil, err
 	}
@@ -191,26 +241,20 @@ func evaluate(q Query, b *Base, rewrite func(*Base, Query) Query, fixpoint func(
 		q = rewrite(b, q)
 	}
 	if len(q.Rules) > 0 {
-		nb := *b // shallow copy: src, reg and the edb cache are shared; idb is fresh per query
-		nb.idb = map[string][]idbTuple{}
-		nb.idbArity = map[string]int{}
+		b.idb = map[string][]idbTuple{}
+		b.idbArity = map[string]int{}
 		// Fresh alongside idb, and for the same reason: an index of derived tuples describes THIS
 		// query's derivations and must not be reachable from the next one. Copying the struct
 		// carried the map header across, so leaving this out would have one query probing an index
 		// whose positions point into another query's idb slice.
-		nb.idbIdx = map[idxKey]*idbIndex{}
-		if err := fixpoint(&nb, q.Rules); err != nil {
+		b.idbIdx = map[idxKey]*idbIndex{}
+		if err := fixpoint(b, q.Rules); err != nil {
 			return nil, err
 		}
-		b = &nb
 	}
 	pos, negs := splitNegations(q.Goal.Literals)
 	if err := b.validateNegations(q.Goal, negs); err != nil {
 		return nil, err
-	}
-	sel := q.Select
-	if len(sel) == 0 {
-		sel = defaultSelect(q.Goal)
 	}
 	if err := validateSelect(sel, q.Having, q.Goal); err != nil {
 		return nil, err
@@ -230,10 +274,22 @@ func evaluate(q Query, b *Base, rewrite func(*Base, Query) Query, fixpoint func(
 	if err != nil {
 		return nil, err
 	}
+	var rows []Row
 	if hasAggregate(sel) || len(q.Having) > 0 {
-		return aggregate(sel, q.Having, raw)
+		if rows, err = aggregate(sel, q.Having, raw); err != nil {
+			return nil, err
+		}
+	} else {
+		rows = projectRows(sel, raw)
 	}
-	return projectRows(sel, raw), nil
+	for _, c := range cols {
+		if val, ok := o.bind[c.Var]; ok && c.Var != "" && c.Agg == nil {
+			for _, r := range rows {
+				r.Bind[c.Var] = val
+			}
+		}
+	}
+	return rows, nil
 }
 
 // splitNegations separates the body into the positive part (atoms + comparisons, solved by

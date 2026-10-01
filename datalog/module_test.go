@@ -1,6 +1,7 @@
 package datalog
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"github.com/panyam/jaala/ns"
@@ -252,7 +253,7 @@ func TestConcurrentEvalsShareOneCheck(t *testing.T) {
 	errs := make(chan error, 8)
 	for i := 0; i < 8; i++ {
 		go func() {
-			rows, err := Naive{}.Eval(q, b)
+			rows, err := Naive{}.Eval(bg, q, b)
 			if err == nil && col(rows, "x") != "b,c,d" {
 				err = fmt.Errorf("rows = %v", rows)
 			}
@@ -271,7 +272,7 @@ func TestConcurrentEvalsShareOneCheck(t *testing.T) {
 func countingWalk(t *testing.T, v *ns.Vocabulary) *int {
 	t.Helper()
 	calls := new(int)
-	if err := v.AddPredicate("walk", ns.Builtin{Arity: 2, Modes: [][]bool{{false, false}}, Gen: func(src ns.Source, args []ns.Arg, emit func([]ns.Value, []string) error) error {
+	if err := v.AddPredicate("walk", ns.Builtin{Arity: 2, Modes: [][]bool{{false, false}}, Gen: func(_ context.Context, src ns.Source, args []ns.Arg, emit func([]ns.Value, []string) error) error {
 		*calls++
 		return nil
 	}}); err != nil {

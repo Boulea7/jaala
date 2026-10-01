@@ -1,6 +1,9 @@
 package ns
 
-import "fmt"
+import (
+	"context"
+	"fmt"
+)
 
 // A Builtin is a predicate the engine computes rather than looks up. It is exactly one of two kinds.
 //
@@ -48,7 +51,12 @@ type Builtin struct {
 	//
 	// The engine copies what it needs out of vals and cites before emit returns and never keeps
 	// either slice, so a generator may reuse one buffer for every solution it emits.
-	Gen func(src Source, args []Arg, emit func(vals []Value, cites []string) error) error
+	//
+	// ctx is the query's: when it is cancelled or its deadline passes, Gen should stop and return
+	// ctx.Err(), so a long walk does not outlive the request that asked for it. emit also returns an
+	// error when the query stops (cancelled, or over its work budget, which counts every emitted
+	// solution), and Gen should return it as is.
+	Gen func(ctx context.Context, src Source, args []Arg, emit func(vals []Value, cites []string) error) error
 }
 
 // An Arg is one argument as a generator sees it: its value when the binding fixes it.

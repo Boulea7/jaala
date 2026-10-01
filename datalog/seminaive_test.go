@@ -82,7 +82,7 @@ func TestSemiNaiveClosureGrowsQuadratically(t *testing.T) {
 	q := mustParse(t, `reach(?a, ?b) :- edge(?a, ?b); reach(?a, ?c) :- reach(?a, ?b), edge(?b, ?c); reach(?a, ?b) => ?a, ?b`)
 	work := func(ev Evaluator, n int) int64 {
 		b := baseFor(std(chainOf(n)))
-		rows, err := ev.Eval(q, b)
+		rows, err := ev.Eval(bg, q, b)
 		if err != nil || len(rows) != n*(n-1)/2 {
 			t.Fatalf("n=%d: %d rows, %v", n, len(rows), err)
 		}
