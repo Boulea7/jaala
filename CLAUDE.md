@@ -51,6 +51,10 @@ go list -deps ./... | grep '\.' | grep -v '^github.com/panyam/jaala' | grep -v '
   `SemiNaive{}` (same rows, and Naive's error whenever it errors; its citations may come from
   another derivation). A new evaluator or option belongs in `both()` too. `seminaive_test.go` adds a
   seeded random-graph corpus, and `plan_test.go` a clause-order shuffle property.
+- **Inlining must not change multiplicity.** `unfold.go` inlines single-rule, non-recursive derived
+  relations, but never into a goal whose aggregate counts bindings (`count`, `sum`, `list` without
+  `distinct`): a derived relation is a set, its inlined body is not. Modes are checked on the linked
+  program before any rewrite, so inlining a rule away can't hide an unrunnable body.
 - **Generators declare `Modes`; `checkModes` is shared validation, the planner is SemiNaive's.** A
   body that can never satisfy a generator is refused by every evaluator and by `Validate` with one
   message. Planning lives in `plan.go`, called only by `SemiNaive` (see the strategy-on-its-type
