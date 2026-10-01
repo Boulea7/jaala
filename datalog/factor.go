@@ -33,7 +33,7 @@ import (
 // away the levels of the recursion they would show. The set is an ordinary derived relation, so an
 // answer's citations are the facts of one path from the start.
 func (m *magician) factor(a Atom, bound map[Var]bool) (Atom, bool) {
-	if m.b.witnessing() || !m.eligible[a.Relation] {
+	if _, derived := m.byHead[a.Relation]; !derived || m.b.witnessing() {
 		return a, false
 	}
 	adorn, demanded := adornment(a, bound)
@@ -150,28 +150,12 @@ func (m *magician) rightLinear(r Rule, adorn string) (int, bool) {
 	return call, true
 }
 
-// guarded is a factored rule's body: the set's guard, then lits ordered from what it binds, with their
-// calls to derived relations rewritten for demand as an adorned rule's are.
+// guarded is a factored rule's body: the set's guard, then lits ordered from what it binds, rewritten
+// for demand as an adorned rule's are.
 func (m *magician) guarded(guard *Atom, lits []Literal) Body {
 	entry := map[Var]bool{}
 	bindAll(guard, entry)
-	bound := map[Var]bool{}
-	for v := range entry {
-		bound[v] = true
-	}
-	out := []Literal{{Pos: guard}}
-	var prefix []Literal
-	for _, lit := range planBody(m.b, Body{Literals: lits}, entry).Literals {
-		if lit.Pos != nil {
-			if call, ok := m.call(*lit.Pos, bound, prefix, guard); ok {
-				lit = Literal{Pos: &call, at: lit.at}
-			}
-			bindAll(lit.Pos, bound)
-		}
-		out = append(out, lit)
-		prefix = append(prefix, lit)
-	}
-	return Body{Literals: out}
+	return Body{Literals: m.body(guard, planBody(m.b, Body{Literals: lits}, entry).Literals, entry, true)}
 }
 
 // reaches reports whether rel's rules read target, directly or through other rules.

@@ -78,10 +78,15 @@ go list -deps ./... | grep '\.' | grep -v '^github.com/panyam/jaala' | grep -v '
   seeded random-graph corpus, and `plan_test.go` a clause-order shuffle property.
 - **Magic tuples carry no citations.** `magic.go` adds relations recording what a query demanded;
   `SemiNaive`'s `derive` clears their citations, or an answer would cite the facts that worked out
-  someone else's demand. A relation that reads a negation, transitively, is not rewritten (#34).
-  Factored right-linear recursion (`factor.go`) is the exception on purpose: its reachable set is
-  an ordinary derived relation, so an answer cites one whole path. Factoring is off for a witnessed
-  Eval.
+  someone else's demand. Two relations the rewrite adds are not demand and keep theirs on purpose:
+  a factored reachable set (`factor.go`), so an answer cites one whole path, and a supplementary
+  relation (`\x00s:`, #54), a stored body prefix. Under Witnesses a supplementary tuple carries its
+  literals' witnesses as `idbTuple.parts`, which `solve` splices back in at their written positions.
+  Factoring is off for a witnessed Eval.
+- **Demand goes through negation and into it (#34).** If the rewritten program doesn't stratify
+  (a recursive caller negating what it demands), `magic` redoes it with negated calls reading their
+  relations in full, which always stratifies: demand and supplementary rules hold no negation, and
+  no original relation reads a rewritten one.
 - **Rules are checked as linked before any rewrite renames them** (`checkRules` in `evaluate`), so
   an error names `r`, never `r\x00/bf` or a factored relation. A new rewrite gets this for free;
   a new check that names a relation belongs there too.

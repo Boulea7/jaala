@@ -14,6 +14,9 @@ type idbTuple struct {
 	vals  []ns.Value
 	cites []string
 	wit   *Witness // its first derivation, when the Eval records witnesses
+	// parts are a supplementary tuple's witnesses instead (see magic): the nodes of the literals it
+	// stands for, at their written positions, which a body reading it takes as its own.
+	parts []placed
 }
 
 // materialize is Naive's fixpoint: it evaluates the query's user-defined rules into b.idb by stratified
@@ -187,7 +190,9 @@ func (b *Base) applyRule(r Rule) (bool, error) {
 			vals[j] = val
 		}
 		t := idbTuple{vals: vals, cites: dedupStrings(bnd.cites)}
-		if b.witnessing() && !isMagic(r.Head.Relation) {
+		if b.witnessing() && isSupplementary(r.Head.Relation) {
+			t.parts = append([]placed(nil), bnd.wit...)
+		} else if b.witnessing() && !isMagic(r.Head.Relation) {
 			text := r.text
 			if text == "" {
 				text = r.String()

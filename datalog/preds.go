@@ -206,7 +206,7 @@ func (b *Base) extendIDB(atom *Atom, bnd *binding, yield func(*binding) error) e
 			continue
 		}
 		out.cites = append(out.cites, t.cites...)
-		out.last = t.wit
+		out.last, out.parts = t.wit, t.parts
 		if err := yield(out); err != nil {
 			return err
 		}

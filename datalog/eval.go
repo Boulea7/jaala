@@ -417,8 +417,9 @@ type binding struct {
 	cites []string
 	// For a witnessed Eval: the witness of each literal solved so far, and of the one just extended
 	// by (set by extendAtom, placed by solve, which knows the literal's written position).
-	wit  []placed
-	last *Witness
+	wit   []placed
+	last  *Witness
+	parts []placed // set instead of last by a supplementary tuple (see idbTuple.parts)
 }
 
 func newBinding() *binding { return &binding{vals: map[Var]ns.Value{}} }
@@ -464,8 +465,12 @@ func solve(lits []Literal, i int, bnd *binding, b *Base, emit func(*binding) err
 	case lit.Pos != nil:
 		return b.extendAtom(lit.Pos, bnd, func(ext *binding) error {
 			if b.witnessing() {
-				ext.wit = append(ext.wit[:len(ext.wit):len(ext.wit)], placed{at: lit.at, node: ext.last})
-				ext.last = nil
+				if ext.parts != nil {
+					ext.wit = append(ext.wit[:len(ext.wit):len(ext.wit)], ext.parts...)
+				} else {
+					ext.wit = append(ext.wit[:len(ext.wit):len(ext.wit)], placed{at: lit.at, node: ext.last})
+				}
+				ext.last, ext.parts = nil, nil
 			}
 			return solve(lits, i+1, ext, b, emit)
 		})
