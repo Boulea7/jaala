@@ -70,10 +70,10 @@ func baseFor(v *ns.Vocabulary) *Base { return MustBase(v, sources[v]) }
 // tuple reachable two ways can keep the other derivation's citations: equally valid, and #22
 // (canonical citations) is what would make them equal again. Planned, it must give the same rows, and
 // Naive's error whenever it errors itself; it may succeed where Naive's written order stops on an
-// unbound check, which is what planning is for. It returns Naive's answer.
-func both(q Query, b *Base) ([]Row, error) {
-	want, werr := Naive{}.Eval(bg, q, b)
-	got, gerr := SemiNaive{WrittenOrder: true}.Eval(bg, q, b)
+// unbound check, which is what planning is for. It returns Naive's answer. opts go to every Eval.
+func both(q Query, b *Base, opts ...Option) ([]Row, error) {
+	want, werr := Naive{}.Eval(bg, q, b, opts...)
+	got, gerr := SemiNaive{WrittenOrder: true}.Eval(bg, q, b, opts...)
 	same := reflect.DeepEqual(binds(want), binds(got))
 	if linked, err := Link(q, b.reg); err == nil && len(recursiveRelations(linked.Rules)) == 0 {
 		same = reflect.DeepEqual(want, got)
@@ -81,7 +81,7 @@ func both(q Query, b *Base) ([]Row, error) {
 	if fmt.Sprint(werr) != fmt.Sprint(gerr) || !same {
 		panic(fmt.Sprintf("SemiNaive disagrees with Naive on %v\n naive:     %v %v\n seminaive: %v %v", q, want, werr, got, gerr))
 	}
-	planned, perr := SemiNaive{}.Eval(bg, q, b)
+	planned, perr := SemiNaive{}.Eval(bg, q, b, opts...)
 	switch {
 	case perr != nil && fmt.Sprint(perr) != fmt.Sprint(werr):
 		panic(fmt.Sprintf("planned SemiNaive fails where Naive does not on %v\n naive:   %v\n planned: %v", q, werr, perr))

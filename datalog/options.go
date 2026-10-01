@@ -22,7 +22,10 @@ type evalOptions struct {
 // per request: Eval(ctx, q, b, Bind(map[Var]ns.Value{"target": ns.S(id)})). A bound variable is exactly
 // a constant written in the goal, so inlining, demand (magic sets) and planning all start from it,
 // and it stays an answer column, holding its value in every row. Rules are not affected: their
-// variables are their own. Binding a variable the goal does not use is an error.
+// variables are their own. Binding a variable the goal does not use is an error. Like a constant, a
+// bound value is read as the type of the argument it stands in (see ns.ArgType.Type), so a host
+// holding only text, such as an input box's, can bind ns.S("3") to a number argument; text that
+// argument cannot read is refused. The answer column still holds the value as bound.
 func Bind(values map[Var]ns.Value) Option {
 	return func(o *evalOptions) {
 		if o.bind == nil {
