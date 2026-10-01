@@ -12,16 +12,14 @@ package datalog
 type SemiNaive struct{}
 
 // Eval answers the query as Naive.Eval does.
-func (SemiNaive) Eval(q Query, b *Base) ([]Row, error) {
-	return evaluate(q, b, (*Base).materializeSemiNaive)
-}
+func (s SemiNaive) Eval(q Query, b *Base) ([]Row, error) { return evaluate(q, b, s.materialize) }
 
 // deltaSep marks the relation holding a stratum relation's delta: the tuples it gained in the last
 // round. The parser never accepts it in a relation name, so no query can read a delta.
 const deltaSep = "\x00delta"
 
-// materializeSemiNaive derives the rules stratum by stratum, as materialize does, with a semi-naive
-// fixpoint in each.
+// materialize is SemiNaive's fixpoint: it derives the rules stratum by stratum, as Naive's does, with
+// a semi-naive fixpoint in each.
 //
 // In a stratum, round zero runs every rule in full. After that a rule matters only if its body reads
 // a relation of the same stratum (a rule reading only lower strata has seen all its inputs already),
@@ -33,7 +31,7 @@ const deltaSep = "\x00delta"
 // The delta is installed as an ordinary derived relation under a name no query can spell, so solving,
 // indexing and negation are untouched: a variant is the rule with one atom renamed. Negation never
 // reads the stratum's own relations (stratification forbids it), so only positive atoms vary.
-func (b *Base) materializeSemiNaive(rules []Rule) error {
+func (SemiNaive) materialize(b *Base, rules []Rule) error {
 	byHead, strata, err := b.checkRules(rules)
 	if err != nil {
 		return err
@@ -43,7 +41,7 @@ func (b *Base) materializeSemiNaive(rules []Rule) error {
 		for _, rel := range stratum {
 			in[rel] = true
 		}
-		mark := b.marks(stratum)
+		mark := marks(b, stratum)
 		for _, rel := range stratum {
 			for _, r := range byHead[rel] {
 				if _, err := b.applyRule(r); err != nil {
@@ -51,10 +49,10 @@ func (b *Base) materializeSemiNaive(rules []Rule) error {
 				}
 			}
 		}
-		delta := b.since(stratum, mark)
+		delta := since(b, stratum, mark)
 		for len(delta) > 0 {
-			b.installDeltas(stratum, delta)
-			mark = b.marks(stratum)
+			installDeltas(b, stratum, delta)
+			mark = marks(b, stratum)
 			for _, rel := range stratum {
 				for _, r := range byHead[rel] {
 					for i, lit := range r.Body.Literals {
@@ -67,15 +65,15 @@ func (b *Base) materializeSemiNaive(rules []Rule) error {
 					}
 				}
 			}
-			delta = b.since(stratum, mark)
+			delta = since(b, stratum, mark)
 		}
-		b.dropDeltas(stratum)
+		dropDeltas(b, stratum)
 	}
 	return nil
 }
 
 // marks records how many tuples each relation of a stratum holds, so since can tell what a round added.
-func (b *Base) marks(stratum []string) map[string]int {
+func marks(b *Base, stratum []string) map[string]int {
 	m := make(map[string]int, len(stratum))
 	for _, rel := range stratum {
 		m[rel] = len(b.idb[rel])
@@ -85,7 +83,7 @@ func (b *Base) marks(stratum []string) map[string]int {
 
 // since returns, per relation, the tuples added after mark, leaving out relations that gained none.
 // A derived relation only ever grows by appending, so they are the tail of its slice.
-func (b *Base) since(stratum []string, mark map[string]int) map[string][]idbTuple {
+func since(b *Base, stratum []string, mark map[string]int) map[string][]idbTuple {
 	out := map[string][]idbTuple{}
 	for _, rel := range stratum {
 		if tuples := b.idb[rel]; len(tuples) > mark[rel] {
@@ -98,8 +96,8 @@ func (b *Base) since(stratum []string, mark map[string]int) map[string][]idbTupl
 // installDeltas makes each relation's delta readable under its delta name for the coming round. A
 // delta is replaced wholesale each round rather than appended to, so any index built over the last
 // one is dropped with it.
-func (b *Base) installDeltas(stratum []string, delta map[string][]idbTuple) {
-	b.dropDeltas(stratum)
+func installDeltas(b *Base, stratum []string, delta map[string][]idbTuple) {
+	dropDeltas(b, stratum)
 	for _, rel := range stratum {
 		d := rel + deltaSep
 		b.idb[d] = append([]idbTuple(nil), delta[rel]...)
@@ -108,7 +106,7 @@ func (b *Base) installDeltas(stratum []string, delta map[string][]idbTuple) {
 }
 
 // dropDeltas removes a stratum's delta relations and their indexes.
-func (b *Base) dropDeltas(stratum []string) {
+func dropDeltas(b *Base, stratum []string) {
 	for _, rel := range stratum {
 		d := rel + deltaSep
 		delete(b.idb, d)

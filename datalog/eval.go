@@ -153,11 +153,12 @@ type Naive struct{}
 // literals (stratified negation), then projects: a plain select-project, or a group-and-reduce when
 // the projection contains an aggregate. Results are deduplicated and sorted, so a query is a
 // deterministic, regenerable view; each row carries the provenance of the facts that produced it.
-func (Naive) Eval(q Query, b *Base) ([]Row, error) { return evaluate(q, b, (*Base).materialize) }
+func (n Naive) Eval(q Query, b *Base) ([]Row, error) { return evaluate(q, b, n.materialize) }
 
-// evaluate answers q over b, deriving its rules with the given fixpoint. Everything but the fixpoint
-// is shared, so evaluators differ only in how they derive.
-func evaluate(q Query, b *Base, materialize func(*Base, []Rule) error) ([]Row, error) {
+// evaluate answers q over b, deriving its rules with the evaluator's fixpoint. Everything else is
+// shared: Base holds the derived relations and the primitives that read and extend them (checkRules,
+// applyRule, solve), and an evaluator decides only how to iterate them to a fixpoint.
+func evaluate(q Query, b *Base, fixpoint func(*Base, []Rule) error) ([]Row, error) {
 	q, err := Link(q, b.reg)
 	if err != nil {
 		return nil, err
@@ -171,7 +172,7 @@ func evaluate(q Query, b *Base, materialize func(*Base, []Rule) error) ([]Row, e
 		// carried the map header across, so leaving this out would have one query probing an index
 		// whose positions point into another query's idb slice.
 		nb.idbIdx = map[idxKey]*idbIndex{}
-		if err := materialize(&nb, q.Rules); err != nil {
+		if err := fixpoint(&nb, q.Rules); err != nil {
 			return nil, err
 		}
 		b = &nb
@@ -227,7 +228,7 @@ func splitNegations(lits []Literal) (pos, negs []Literal) {
 // caught here so a bad `not` fails clearly instead of silently never matching. Negation ranges over
 // every callable relation uniformly: EDB, IDB, string filters, overlay predicates, AND reaches
 // (negation as failure — atomHolds runs the same extendAtom the positive solve uses). Stratification
-// (materialize) already guarantees a negated IDB relation is fully derived before the rule or goal
+// (each evaluator's fixpoint) already guarantees a negated IDB relation is fully derived before the rule or goal
 // that negates it runs, so the filter is safe.
 func (b *Base) validateNegations(goal Body, negs []Literal) error {
 	bound := map[Var]bool{}

@@ -35,7 +35,7 @@ type Query struct {
 // A Rule derives its Head for every binding satisfying Body. A rule is recursive when its Head
 // relation is reachable from a Body atom in the rule dependency graph; recursion terminates by
 // finiteness of the fact base (no function symbols). Rules materialize by stratified fixpoint
-// (query.materialize): a program that reads a relation under negation from inside that relation's own
+// (see Naive and SemiNaive): a program that reads a relation under negation from inside that relation's own
 // recursive cycle is rejected, which is what keeps `not` well-defined.
 //
 // Example (transitive closure over a derived edge): connected(?a,?c) :- connected(?a,?b), link(?b,?c)
