@@ -1,6 +1,9 @@
 package datalog
 
-import "context"
+import (
+	"context"
+	"math"
+)
 
 // SemiNaive is the evaluator a host should run. It answers exactly as Naive does, deriving rules by
 // a semi-naive fixpoint instead of a naive one.
@@ -14,10 +17,10 @@ import "context"
 //
 // It also inlines single-rule, non-recursive derived relations into their callers (see unfold), so a
 // bound argument reaches the literals that can use it; rewrites the derived relations still called
-// with bound arguments so only what the query demands is derived (see magic); and then plans each
-// rule body and the goal before evaluating (see plan): a literal runs once as much
-// as possible is bound, a comparison or filter as soon as its variables are, and a generator once one
-// of its Modes is satisfied. That makes cost independent of how a body is written, at the price of
+// with bound arguments so only what the query demands is derived (see magic, and factor for
+// right-linear recursion); and then plans each rule body and the goal before evaluating (see plan): a
+// literal runs once as much as possible is bound, a comparison or filter as soon as its variables
+// are, and a generator once one of its Modes is satisfied. That makes cost independent of how a body is written, at the price of
 // citations: a different join order can make a different derivation of a tuple the first, so a planned
 // answer's rows match Naive's while a row's citations may come from another valid derivation.
 type SemiNaive struct {
@@ -52,12 +55,13 @@ const deltaSep = "\x00delta"
 // and for such a rule each round runs one variant per same-stratum atom, with that atom reading the
 // delta and every other atom reading the whole relation. A new tuple's derivation uses some
 // same-stratum fact that was new last round, at the latest, so one of the variants finds it; the
-// fixpoint is reached when a round adds nothing.
+// fixpoint is reached when a round adds nothing. Unless WrittenOrder is set, a variant starts from its
+// delta when the delta is the smaller side (see variant.pick).
 //
 // The delta is installed as an ordinary derived relation under a name no query can spell, so solving,
 // indexing and negation are untouched: a variant is the rule with one atom renamed. Negation never
 // reads the stratum's own relations (stratification forbids it), so only positive atoms vary.
-func (SemiNaive) materialize(b *Base, rules []Rule) error {
+func (s SemiNaive) materialize(b *Base, rules []Rule) error {
 	byHead, strata, err := b.checkRules(rules)
 	if err != nil {
 		return err
@@ -66,6 +70,25 @@ func (SemiNaive) materialize(b *Base, rules []Rule) error {
 		in := make(map[string]bool, len(stratum))
 		for _, rel := range stratum {
 			in[rel] = true
+		}
+		// The delta variants are made once per stratum: one per rule and recursive atom, in the
+		// planned order and, unless that already starts at the delta, a second one that does (see
+		// deltaFirst). Each round runs whichever starts from fewer tuples.
+		var variants []variant
+		for _, rel := range stratum {
+			for _, r := range byHead[rel] {
+				for i, lit := range r.Body.Literals {
+					if lit.Pos == nil || !in[lit.Pos.Relation] {
+						continue
+					}
+					v := variant{reads: lit.Pos.Relation, rule: readingDelta(r, i)}
+					if !s.WrittenOrder && i > 0 {
+						first := deltaFirst(b, v.rule, i)
+						v.first = &first
+					}
+					variants = append(variants, v)
+				}
+			}
 		}
 		mark := marks(b, stratum)
 		for _, rel := range stratum {
@@ -82,16 +105,16 @@ func (SemiNaive) materialize(b *Base, rules []Rule) error {
 			}
 			installDeltas(b, stratum, delta)
 			mark = marks(b, stratum)
-			for _, rel := range stratum {
-				for _, r := range byHead[rel] {
-					for i, lit := range r.Body.Literals {
-						if lit.Pos == nil || !in[lit.Pos.Relation] || len(delta[lit.Pos.Relation]) == 0 {
-							continue
-						}
-						if err := derive(b, readingDelta(r, i)); err != nil {
-							return err
-						}
-					}
+			for _, v := range variants {
+				if len(delta[v.reads]) == 0 {
+					continue
+				}
+				r, err := v.pick(b, len(delta[v.reads]))
+				if err != nil {
+					return err
+				}
+				if err := derive(b, r); err != nil {
+					return err
 				}
 			}
 			delta = since(b, stratum, mark)
@@ -99,6 +122,73 @@ func (SemiNaive) materialize(b *Base, rules []Rule) error {
 		dropDeltas(b, stratum)
 	}
 	return nil
+}
+
+// A variant is a recursive rule with one same-stratum atom reading its relation's delta.
+type variant struct {
+	reads string // the relation whose delta it reads
+	rule  Rule   // in the planned order
+	first *Rule  // starting from the delta, when the planned order does not; nil under WrittenOrder
+}
+
+// pick is the order to run a variant in this round, given its delta's size: starting from the delta
+// when that is fewer tuples than the planned order's first literal would scan, else the planned order.
+// A delta is usually a handful of tuples, but not always: when the first round derives almost
+// everything (a chain whose edges happen to be stored in walk order closes in one pass), the next
+// round's delta is the whole relation, and probing it from a small base relation is the cheaper way
+// round.
+func (v variant) pick(b *Base, delta int) (Rule, error) {
+	if v.first == nil {
+		return v.rule, nil
+	}
+	n, err := scanSize(b, v.rule.Body.Literals[0])
+	if err != nil {
+		return Rule{}, err
+	}
+	if delta < n {
+		return *v.first, nil
+	}
+	return v.rule, nil
+}
+
+// scanSize is how many tuples a body's first literal yields candidates from, with nothing bound yet
+// but its constants. A comparison or a host predicate has no size to compare a delta with, so it
+// counts as unbounded and the delta goes first.
+func scanSize(b *Base, lit Literal) (int, error) {
+	if lit.Pos == nil {
+		return math.MaxInt, nil
+	}
+	if _, ok := b.reg.Predicate(lit.Pos.Relation); ok {
+		return math.MaxInt, nil
+	}
+	if _, ok := b.schemaOf(lit.Pos.Relation); ok {
+		rows, err := b.edbTuples(lit.Pos.Relation)
+		if err != nil {
+			return 0, err
+		}
+		if pos, all := b.edbCandidates(lit.Pos, rows, newBinding()); !all {
+			return len(pos), nil
+		}
+		return len(rows), nil
+	}
+	return len(b.idbCandidates(lit.Pos, newBinding())), nil
+}
+
+// deltaFirst orders a delta variant to start from its delta atom (at body position i), then plans the
+// rest from what that binds. The delta is what is new since the last round, usually a handful of
+// tuples, so starting there makes a round's work follow the delta rather than the largest relation in
+// the body: a rule written edge(?x, ?y), r(?x) otherwise scans every edge each round to find the few
+// whose ?x is new.
+func deltaFirst(b *Base, r Rule, i int) Rule {
+	lits := r.Body.Literals
+	d := lits[i]
+	rest := make([]Literal, 0, len(lits)-1)
+	rest = append(rest, lits[:i]...)
+	rest = append(rest, lits[i+1:]...)
+	entry := map[Var]bool{}
+	bindAll(d.Pos, entry)
+	r.Body = Body{Literals: append([]Literal{d}, planBody(b, Body{Literals: rest}, entry).Literals...)}
+	return r
 }
 
 // derive applies one rule. A magic relation's tuples (see magic) record what a query asked for, not

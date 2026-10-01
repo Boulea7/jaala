@@ -44,9 +44,7 @@ func TestDemandMakesABoundClosureLinear(t *testing.T) {
 	}
 }
 
-// Right-linear recursion keeps deriving pairs for every start the bound one reaches (#35), so it wins
-// only when that is part of the graph: one chain of twenty here. The win is halved by each round
-// scanning the demand before the delta (#27).
+// Asked about one chain of twenty, right-linear recursion does the work of that chain alone.
 func TestDemandHelpsRightLinearRecursionOnAPartOfTheGraph(t *testing.T) {
 	src := ns.NewMemSource().Declare("edge", "from", "to").Declare("node", "name")
 	for c := 0; c < 20; c++ {
@@ -58,8 +56,8 @@ func TestDemandHelpsRightLinearRecursionOnAPartOfTheGraph(t *testing.T) {
 		}
 	}
 	q := rightReach + `reach("c0_0", ?x) => ?x`
-	if with, without := workOf(t, SemiNaive{}, src, q), workOf(t, SemiNaive{WrittenOrder: true}, src, q); with*3 > without*2 {
-		t.Errorf("work with demand %d, without %d; want under two thirds, since only one chain of twenty is asked about", with, without)
+	if with, without := workOf(t, SemiNaive{}, src, q), workOf(t, SemiNaive{WrittenOrder: true}, src, q); with*20 > without {
+		t.Errorf("work with demand %d, without %d; want under a twentieth, since only one chain of twenty is asked about", with, without)
 	}
 }
 
@@ -131,6 +129,10 @@ func TestDemandAgreesWithNaiveOnRandomGraphs(t *testing.T) {
 	programs := []string{
 		leftReach + `reach("v0", ?x) => ?x`,
 		rightReach + `reach("v1", ?x) => ?x`,
+		rightReach + `reach("v0", ?x), reach("v2", ?x) => ?x`,
+		`p(?a, ?k, ?b) :- edge(?a, ?b), weight(?a, ?k); p(?a, ?k, ?c) :- edge(?a, ?b), p(?b, ?k, ?c); p("v1", ?k, ?x) => ?k, ?x`,
+		`r(?a, ?b) :- edge(?a, ?b); r(?a, ?a) :- node(?a); r(?a, ?c) :- edge(?a, ?b), weight(?b, ?w), ?w > 3, r(?b, ?c); r("v0", ?x) => ?x`,
+		`r(?a) :- node(?a), ?a = "v3"; r(?a) :- edge(?a, ?b), r(?b); r("v0")`,
 		leftReach + `reach(?x, "v2") => ?x`,
 		`reach(?a, ?b) :- edge(?a, ?b); reach(?a, ?c) :- reach(?a, ?b), reach(?b, ?c); reach("v0", ?x) => ?x`,
 		`sg(?x, ?y) :- edge(?p, ?x), edge(?p, ?y); sg(?x, ?y) :- edge(?p, ?x), sg(?p, ?q), edge(?q, ?y); sg("v1", ?y) => ?y`,
@@ -149,6 +151,20 @@ func TestDemandAgreesWithNaiveOnRandomGraphs(t *testing.T) {
 			got, err := SemiNaive{}.Eval(bg, shuffle(mustParse(t, text), rnd), b)
 			if err != nil || !reflect.DeepEqual(rowSet(got), rowSet(want)) {
 				t.Errorf("seed %d, shuffled %s:\n got  %v %v\n want %v", seed, text, rowSet(got), err, rowSet(want))
+			}
+		}
+	}
+}
+
+// An error in a rule names the rule as written, not the relation a rewrite renamed it to: adorned for
+// demand (left-linear here) or factored (right-linear).
+func TestARewrittenRuleErrsUnderItsOwnName(t *testing.T) {
+	want := `query: rule "r" head variable ?b is not bound by a positive body relation`
+	for _, rec := range []string{`r(?a, ?b), edge(?b, ?c)`, `edge(?a, ?b), r(?b, ?c)`} {
+		text := `r(?a, ?b) :- edge(?a, ?b); r(?a, ?b) :- node(?a), ?a = ?b; r(?a, ?c) :- ` + rec + `; r("v0", ?x) => ?x`
+		for _, ev := range evaluators {
+			if _, err := ev.Eval(bg, mustParse(t, text), baseFor(std(line(5)))); err == nil || err.Error() != want {
+				t.Errorf("%T, recursing %s: err = %v, want %s", ev, rec, err, want)
 			}
 		}
 	}

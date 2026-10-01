@@ -25,8 +25,10 @@
 // Evaluator answers a Query over it. SemiNaive is the one to run: it derives recursive rules
 // semi-naively, inlines single-rule non-recursive relations so a bound argument reaches the literals
 // that can use it, derives a relation called with bound arguments only for the values demanded
-// (magic sets), and plans each body, so a literal runs once as much as possible is bound and a
-// generator once one of its Modes is satisfied. Naive is the reference: written order, naive
+// (magic sets, with right-linear recursion from a constant start reduced to the set of nodes it
+// visits), and plans each body, so a literal runs once as much as possible is bound and a generator
+// once one of its Modes is satisfied. Each round of the fixpoint starts from its delta when that is
+// the smaller side. Naive is the reference: written order, naive
 // fixpoint, kept simple so every faster strategy can be tested against it. Every Eval takes a
 // context, which reaches the host's generators and cancellable Sources, and options: Bind gives goal
 // variables values from the host, Budget limits the work one Eval may do, and Witnesses records how

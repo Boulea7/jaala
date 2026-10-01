@@ -19,6 +19,9 @@ import (
 // demand for ?a becomes demand for each ?b, m_reach_bf(?b) :- m_reach_bf(?a), edge(?a, ?b).
 // Everything is still ordinary rules, so semi-naive evaluation, strata and planning apply unchanged.
 //
+// Right-linear recursion called from the goal with constants is factored instead (see factor): plain
+// magic sets would derive a full answer set for every node the recursion passes through.
+//
 // Which arguments are bound at a call depends on the order a body runs in, so each body is ordered by
 // the planner first, starting from what its head has bound. A call with nothing bound is left calling
 // the original relation, which is evaluated in full as before.
@@ -45,7 +48,9 @@ func magic(b *Base, q Query) Query {
 	var prefix []Literal
 	for _, lit := range pos {
 		if lit.Pos != nil {
-			if call, ok := m.call(*lit.Pos, bound, prefix, nil); ok {
+			if call, ok := m.factor(*lit.Pos, bound); ok {
+				lit = Literal{Pos: &call, at: lit.at}
+			} else if call, ok := m.call(*lit.Pos, bound, prefix, nil); ok {
 				lit = Literal{Pos: &call, at: lit.at}
 			}
 			bindAll(lit.Pos, bound)
@@ -72,7 +77,8 @@ type magician struct {
 	eligible map[string]bool
 	done     map[string]bool // adorned relations already queued
 	queue    []adorned
-	rules    []Rule // magic and adorned rules, in the order made
+	rules    []Rule // magic, adorned and factored rules, in the order made
+	factored int    // goal calls factored so far, numbering their relations
 }
 
 type adorned struct{ rel, adorn string }

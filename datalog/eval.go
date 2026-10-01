@@ -241,6 +241,12 @@ func evaluate(ctx context.Context, q Query, b *Base, opts []Option, rewrite func
 		return nil, err
 	}
 	if rewrite != nil {
+		// The rules are checked as linked too, before the rewrite renames them, so an error names
+		// the program's relations rather than an adorned or factored one.
+		b.idbArity = map[string]int{}
+		if _, _, err := b.checkRules(q.Rules); err != nil {
+			return nil, err
+		}
 		q = rewrite(b, q)
 	}
 	if len(q.Rules) > 0 {
