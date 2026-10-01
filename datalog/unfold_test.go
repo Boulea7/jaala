@@ -22,7 +22,7 @@ func coversVocabulary(t *testing.T, n int) (*ns.Vocabulary, *ns.MemSource, *[][2
 	src := line(n)
 	v := std(src)
 	calls := walker(t, v, [][]bool{{true, false}, {false, true}})
-	if err := v.AddModule("go", LanguageName, coversModule); err != nil {
+	if err := v.AddModule("go", LanguageName, coversModule, ""); err != nil {
 		t.Fatal(err)
 	}
 	return v, src, calls

@@ -14,7 +14,7 @@ import (
 // modules written in it:
 //
 //	v.AddLanguage(datalog.Language)
-//	v.AddModule("net", datalog.LanguageName, `has_test_point(?n: net) :- component.net(?tp, ?n), ...;`)
+//	v.AddModule("net", datalog.LanguageName, `has_test_point(?n: net) :- component.net(?tp, ?n), ...;`, "lib/net.dl")
 //
 // A module's text is rules only. Each rule head names a member of the module, written bare:
 // `has_test_point(?n) :- ...` at "net" defines net.has_test_point. Inside the text a bare name is
@@ -118,13 +118,17 @@ func resolveAll(v *ns.Vocabulary) (*resolution, error) {
 	perModule := make([][]Rule, len(mods)) // nil for a module in another language
 	privates := map[string]bool{}
 	var all []Rule
+	// fail attributes a failure to the module responsible, so a host can name its file (#30).
+	fail := func(i int, err error) error {
+		return &ns.ModuleError{Module: i, Path: mods[i].Path, Origin: mods[i].Origin, Err: err}
+	}
 	for i, m := range mods {
 		if m.Language != LanguageName {
 			continue
 		}
 		rules, err := ParseRules(m.Text)
 		if err != nil {
-			return nil, fmt.Errorf("%w (in module %q)", err, m.Path)
+			return nil, fail(i, fmt.Errorf("%w (in module %q)", err, m.Path))
 		}
 		own := map[string]bool{}
 		for _, r := range rules {
@@ -149,13 +153,26 @@ func resolveAll(v *ns.Vocabulary) (*resolution, error) {
 			for _, rule := range rules {
 				for _, a := range ruleAtoms(rule.Body) {
 					if !privates[a.Relation] && !v.Has(a.Relation) {
-						return nil, fmt.Errorf("query: module %q rule %q reads %s", mods[i].Path, displayName(rule.Head.Relation), v.Unknown(a.Relation))
+						return nil, fail(i, fmt.Errorf("query: module %q rule %q reads %s", mods[i].Path, displayName(rule.Head.Relation), v.Unknown(a.Relation)))
 					}
 				}
 			}
 		}
 	}
+	// Each rule is checked within its module first, so its failure names the module; what is left
+	// for the whole program, such as recursion through negation across modules, belongs to no one
+	// module and stays a plain error.
 	b := newValidationBase(v)
+	for _, r := range all {
+		b.idbArity[r.Head.Relation] = len(r.Head.Args)
+	}
+	for i, rules := range perModule {
+		for _, r := range rules {
+			if err := b.validateRule(r); err != nil {
+				return nil, fail(i, err)
+			}
+		}
+	}
 	if _, _, err := b.checkRules(all); err != nil {
 		return nil, err
 	}
@@ -172,20 +189,22 @@ func resolveAll(v *ns.Vocabulary) (*resolution, error) {
 			}
 			sig, err := t.signature(path)
 			if err != nil {
-				return nil, err
+				return nil, fail(i, err)
 			}
 			res.sigs[path] = sig
 		}
 	}
 	if hasBase {
 		b.sigs = res.sigs
-		for _, rule := range all {
-			if err := b.checkLiterals(rule.Body.Literals); err != nil {
-				return nil, fmt.Errorf("%w (in module rule %q)", err, displayName(rule.Head.Relation))
-			}
-			_, negs := splitNegations(rule.Body.Literals)
-			if err := b.validateNegations(rule.Body, negs); err != nil {
-				return nil, fmt.Errorf("%w (in module rule %q)", err, displayName(rule.Head.Relation))
+		for i, rules := range perModule {
+			for _, rule := range rules {
+				if err := b.checkLiterals(rule.Body.Literals); err != nil {
+					return nil, fail(i, fmt.Errorf("%w (in module rule %q)", err, displayName(rule.Head.Relation)))
+				}
+				_, negs := splitNegations(rule.Body.Literals)
+				if err := b.validateNegations(rule.Body, negs); err != nil {
+					return nil, fail(i, fmt.Errorf("%w (in module rule %q)", err, displayName(rule.Head.Relation)))
+				}
 			}
 		}
 	}

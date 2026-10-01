@@ -151,7 +151,7 @@ grounded(?x) :- _helper(?x);
 
 func TestSignaturesAreDeclaredOrInferredAndMarked(t *testing.T) {
 	r := circuit()
-	if err := r.AddModule("net", LanguageName, power); err != nil {
+	if err := r.AddModule("net", LanguageName, power, ""); err != nil {
 		t.Fatal(err)
 	}
 	for path, want := range map[string]string{
@@ -186,7 +186,7 @@ func TestADeclarationItsRulesContradictIsRefused(t *testing.T) {
 		`x(?n: net) :- net.ground(?n); x(?n: component) :- net.ground(?n);`: `declares its "n" argument as both "net" and "component"`,
 	} {
 		r := circuit()
-		if err := r.AddModule("net", LanguageName, text); err != nil {
+		if err := r.AddModule("net", LanguageName, text, ""); err != nil {
 			t.Fatal(err)
 		}
 		if err := r.Check(); err == nil || !strings.Contains(err.Error(), frag) {
@@ -197,7 +197,7 @@ func TestADeclarationItsRulesContradictIsRefused(t *testing.T) {
 
 func TestADerivedVocabularyIsEnforcedInQueries(t *testing.T) {
 	r := circuit()
-	if err := r.AddModule("net", LanguageName, power); err != nil {
+	if err := r.AddModule("net", LanguageName, power, ""); err != nil {
 		t.Fatal(err)
 	}
 	_, err := Naive{}.Eval(mustParse(t, `net.role(?n, "sorce")`), baseFor(r))
@@ -208,7 +208,7 @@ func TestADerivedVocabularyIsEnforcedInQueries(t *testing.T) {
 
 func TestLookupDrillsFromModuleToMemberToDefinition(t *testing.T) {
 	r := circuit()
-	if err := r.AddModule("net", LanguageName, power); err != nil {
+	if err := r.AddModule("net", LanguageName, power, ""); err != nil {
 		t.Fatal(err)
 	}
 	root, err := r.Lookup("")

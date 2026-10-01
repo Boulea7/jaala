@@ -28,9 +28,11 @@ type Entry struct {
 	// Doc is the member's description: a Schema's or Builtin's Doc, or for a derived member the
 	// comment lines above its first rule.
 	Doc string
-	// Module and Definition locate a derived member's definition: the path of the module defining it
-	// and its clauses as that module's language reports them.
+	// Module, Origin and Definition locate a derived member's definition: the path of the module
+	// defining it, where that module came from (see Module.Origin), and its clauses as the module's
+	// language reports them.
 	Module     string
+	Origin     string
 	Definition []string
 	// Members are a module's direct children as full paths, sorted. A child may itself be a module.
 	Members []string
@@ -75,7 +77,7 @@ func (v *Vocabulary) Lookup(path string) (Entry, error) {
 	}
 	mod := v.mods[m.module]
 	_, leaf := splitPath(path)
-	e := Entry{Path: path, Kind: EntryDerived, Args: sigs[path], Module: mod.Path}
+	e := Entry{Path: path, Kind: EntryDerived, Args: sigs[path], Module: mod.Path, Origin: mod.Origin}
 	for _, d := range mod.Members {
 		if d.Name == leaf {
 			e.Doc, e.Definition = d.Doc, d.Definition

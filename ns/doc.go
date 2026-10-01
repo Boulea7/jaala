@@ -18,6 +18,11 @@
 // A segment is a module or a member, never both, and each path has one definer; the vocabulary
 // refuses anything else when it is registered, whatever the kinds involved.
 //
+// A module records its Origin, such as the file it was read from, and AddModulesFS registers a whole
+// tree of module files under a Layout (ByDirectory or ByFileName). A failure one module is responsible
+// for, whether AddModule refuses it or a language's Check does, is a *ModuleError carrying that
+// module's index and origin, so a host can name the file to fix.
+//
 // Every member has a signature: per argument a name and an ArgType saying what it denotes (an opaque
 // entity kind such as "net", a kind taken per row from another argument, a kind located through an
 // owner argument, or a scalar type with a unit), optionally closed over a vocabulary of values. Base
