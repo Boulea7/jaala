@@ -51,6 +51,12 @@ go list -deps ./... | grep '\.' | grep -v '^github.com/panyam/jaala' | grep -v '
 - **Nothing inside a module resolution may call `Vocabulary.Signature` or `Check`.** They run
   through the memo entry that is mid-computation, and `sync.Once` deadlocks on re-entry. That is
   why the validation base carries `sigs` while it checks module rules.
+- **The answer order is a total order, and hosts see it.** `orderValues` ranks absent, then numbers by
+  value, then text (#8). Comparing as numbers only when both are numbers cycles on a mixed column
+  (2 < 10, "10" < "1a" < "2"). `dedupSort` sorts before it dedups, because dedup keys on text
+  (`N(1)` and `S("1")` are one row) and the survivor must not depend on arrival. `order by`, `limit`
+  and `offset` apply last, against the columns as written, so a host-bound variable is still one.
+  Moving the default order changes agni's goldens, so it ships with an upgrade note.
 - **Comments use agni's circuit vocabulary on purpose** (`doc.go` says so). Host-specific test
   data doesn't belong here, though: checks against agni's real catalog, such as its
   `columnkinds.golden`, live in agni. Copying another repo's catalog in creates a fixture that goes
@@ -88,7 +94,8 @@ go list -deps ./... | grep '\.' | grep -v '^github.com/panyam/jaala' | grep -v '
   a factored reachable set (`factor.go`), so an answer cites one whole path, and a supplementary
   relation (`\x00s:`, #54), a stored body prefix. Under Witnesses a supplementary tuple carries its
   literals' witnesses as `idbTuple.parts`, which `solve` splices back in at their written positions.
-  Factoring is off for a witnessed Eval.
+  Factoring is off for a witnessed Eval. A call with nothing bound isn't rewritten and reads its
+  relation in full, even from a clause whose guard never holds (#60).
 - **Demand goes through negation and into it (#34).** If the rewritten program doesn't stratify
   (a recursive caller negating what it demands), `magic` redoes it with negated calls reading their
   relations in full, which always stratifies: demand and supplementary rules hold no negation, and
@@ -120,7 +127,10 @@ go list -deps ./... | grep '\.' | grep -v '^github.com/panyam/jaala' | grep -v '
   `line`/`walker` (a two-mode generator recording what each call had bound) and `tested()` (line
   with tests as attributes, Declaire's shape) in `plan_test.go`; `hopper` (a generator citing its
   path in walk order) and `workOf` in `magic_test.go`; `reversedLine` and `counter` in
-  `seminaive_test.go`. datalog's tests import `stdlib` for `std()`; production datalog code must not.
+  `seminaive_test.go`; `parts()` (counts and numbers whose text and value orders differ) in
+  `order_test.go`. `both()` compares rows in order, so every test checks the answer order too. Don't
+  compare rows by `fmt.Sprint`: `ns.Value.Num` is a pointer, so the text carries an address. datalog's
+  tests import `stdlib` for `std()`; production datalog code must not.
 
 ## Releasing
 
