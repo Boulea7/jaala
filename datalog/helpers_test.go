@@ -1,7 +1,9 @@
 package datalog
 
 import (
+	"fmt"
 	"github.com/panyam/jaala/ns"
+	"reflect"
 	"sort"
 	"strings"
 	"testing"
@@ -55,9 +57,21 @@ var sources = map[*ns.Vocabulary]ns.Source{}
 // baseFor binds a vocabulary std built to the Source it was built from.
 func baseFor(v *ns.Vocabulary) *Base { return MustBase(v, sources[v]) }
 
+// both answers q with the reference evaluator and with SemiNaive, and panics when they disagree on
+// a row, a citation or an error, so every test that evaluates through these helpers is also a
+// differential test of SemiNaive against Naive. It returns Naive's answer.
+func both(q Query, b *Base) ([]Row, error) {
+	want, werr := Naive{}.Eval(q, b)
+	got, gerr := SemiNaive{}.Eval(q, b)
+	if fmt.Sprint(werr) != fmt.Sprint(gerr) || !reflect.DeepEqual(want, got) {
+		panic(fmt.Sprintf("SemiNaive disagrees with Naive on %v\n naive:     %v %v\n seminaive: %v %v", q, want, werr, got, gerr))
+	}
+	return want, werr
+}
+
 func eval(t *testing.T, src ns.Source, text string) []Row {
 	t.Helper()
-	rows, err := Naive{}.Eval(mustParse(t, text), baseFor(std(src)))
+	rows, err := both(mustParse(t, text), baseFor(std(src)))
 	if err != nil {
 		t.Fatalf("Eval(%q): %v", text, err)
 	}
@@ -69,7 +83,7 @@ func evalErr(src ns.Source, text string) error {
 	if err != nil {
 		return err
 	}
-	_, err = Naive{}.Eval(q, baseFor(std(src)))
+	_, err = both(q, baseFor(std(src)))
 	return err
 }
 

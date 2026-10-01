@@ -15,7 +15,8 @@ type idbTuple struct {
 	cites []string
 }
 
-// materialize evaluates the query's user-defined rules into b.idb by stratified fixpoint. Rules
+// materialize is Naive's fixpoint: it evaluates the query's user-defined rules into b.idb by stratified
+// fixpoint. Rules
 // define derived (IDB) relations; a rule derives its head for every binding of its body, and
 // recursion (a rule whose body reads its own head, directly or transitively) runs to fixpoint —
 // which terminates because the fact base is finite and no rule invents new values (no function
@@ -38,7 +39,7 @@ type idbTuple struct {
 // link's stratum). The fixpoint first derives every link pair, then re-runs the two conn rules until
 // no new conn tuple appears — which is where a chain U1-N1-U2-N2-U3 closes up so conn(U1,U3) exists
 // even though U1 and U3 share no net directly. See stratify for the strata assignment.
-func (b *Base) materialize(rules []Rule) error {
+func (Naive) materialize(b *Base, rules []Rule) error {
 	byHead, strata, err := b.checkRules(rules)
 	if err != nil {
 		return err
@@ -67,7 +68,7 @@ func (b *Base) materialize(rules []Rule) error {
 // and the strata to derive them in. It populates b.idbArity as it goes, since a rule's own head is
 // what gives a derived relation its arity.
 //
-// It is separated from materialize because Validate runs it WITHOUT a design (agni issue 540). Every
+// It is separated from the evaluators' fixpoints because Validate runs it WITHOUT a design (agni issue 540). Every
 // check here reads the rules and the relation vocabulary, never a row, so a broken rule set can be
 // rejected where the rule is built rather than where it first runs.
 func (b *Base) checkRules(rules []Rule) (map[string][]Rule, [][]string, error) {
