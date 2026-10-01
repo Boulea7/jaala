@@ -30,6 +30,10 @@ go list -deps ./... | grep '\.' | grep -v '^github.com/panyam/jaala' | grep -v '
   per-query (the `idb*` fields on Eval's shallow copy), atomic (`work`), or locked (`edbCache`,
   the vocabulary's `Memo` entries). `TestConcurrentEvalsShareOneCheck` and
   `TestBasesOverDifferentSourcesEvaluateConcurrently` catch a regression under `-race`.
+- **Strategy code lives on its strategy, never on shared state.** `Base` is the fact store plus the
+  primitives every evaluator shares (`checkRules`, `applyRule`, `solve`); each evaluator owns its
+  fixpoint (`Naive.materialize`, `SemiNaive.materialize`), and SemiNaive's rewrites live in their own
+  files. Same-package access to `Base`'s fields is not a reason to add a method to it.
 - **Nothing inside a module resolution may call `Vocabulary.Signature` or `Check`.** They run
   through the memo entry that is mid-computation, and `sync.Once` deadlocks on re-entry. That is
   why the validation base carries `sigs` while it checks module rules.
@@ -44,8 +48,14 @@ go list -deps ./... | grep '\.' | grep -v '^github.com/panyam/jaala' | grep -v '
   fails on its assertion. When scripting mutations, **treat a build failure as "not checked", not
   as red**. An unused variable left by a mutation fails the build, and a naive harness counts that
   as a pass.
-- **`Naive` is the reference evaluator and stays unoptimized.** Every faster strategy (`SemiNaive`
-  now; join planning and magic sets, #7) must answer exactly as it does. The test helpers
+- **Give a test a control that proves its fixture can tell the cases apart.** Most surviving
+  mutations here were fixtures that could not: a recursion guard tested only with two-rule
+  relations, a column-order test whose sort orders coincided, a "free" call the planner bound, a
+  citation-leak fixture whose first derivation happened to follow the leaked path. A `control:`
+  assertion (Naive walks n times; the plan does start with the reordered literal) catches that.
+- **`Naive` is the reference evaluator and stays unoptimized.** `SemiNaive` (semi-naive fixpoint,
+  then the rewrites `unfold` → `magic` → `plan`, all off with `WrittenOrder`) must answer as it
+  does. The test helpers
   (`eval`, `evalErr`, `evalReg`, `evalRegErr`) route through `both()`, which runs Naive,
   `SemiNaive{WrittenOrder: true}` (same rows and errors; same citations too unless the program is
   recursive, where rounds run in another order and a tuple reachable two ways may cite the other
@@ -61,8 +71,8 @@ go list -deps ./... | grep '\.' | grep -v '^github.com/panyam/jaala' | grep -v '
   program before any rewrite, so inlining a rule away can't hide an unrunnable body.
 - **Generators declare `Modes`; `checkModes` is shared validation, the planner is SemiNaive's.** A
   body that can never satisfy a generator is refused by every evaluator and by `Validate` with one
-  message. Planning lives in `plan.go`, called only by `SemiNaive` (see the strategy-on-its-type
-  rule: nothing planner-specific goes on `Base`).
+  message, checked on the linked program before any rewrite. Planning lives in `plan.go`, called
+  only by `SemiNaive`.
 - Fixtures: `graph()` and the `eval`/`evalErr`/`col`/`std`/`baseFor` helpers in `helpers_test.go`;
   `withModules`/`evalReg` in `module_test.go`; the agni-shaped `circuit()` in `signature_test.go`;
   `vocabulary()` (no Source) in `baseover_test.go`; the `stub` language in `ns/vocabulary_test.go`.
@@ -74,8 +84,10 @@ Merge the PR, then put an annotated tag on the merge commit and push it
 releases are patch bumps on v0.1.x, breaking changes included, pre-1.0. agni consumes tags only
 (`go get github.com/panyam/jaala@vX`), never a `replace`.
 
-## Working with agni
+## Working with hosts
 
-agni (github.com/panyam/agni) is the first host. Cross-repo work is split by repo: jaala issues are
-worked from jaala sessions, agni issues from agni sessions. If agni needs something jaala lacks, it
-files a jaala issue rather than working around it.
+agni (github.com/panyam/agni) is the first host and Declaire (github.com/panyam/declaire) the
+second. Cross-repo work is split by repo: jaala issues are worked from jaala sessions, host issues
+from host sessions. A host that needs something jaala lacks files a jaala issue rather than working
+around it, and a release that breaks hosts gets an upgrade note on the issue they filed, with the
+exact lines each must change (as #7's v0.1.6 comment did for `Modes`).
