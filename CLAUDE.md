@@ -44,6 +44,10 @@ go list -deps ./... | grep '\.' | grep -v '^github.com/panyam/jaala' | grep -v '
   context; a new loop over candidates must call it and return its error. Host code gets the context
   (`Gen`'s first argument, `ns.ContextSource`), and every emitted generator row counts as work. A
   Source read that fails is not cached.
+- **A rewrite that rebuilds a `Literal` must keep its `at`, and one that rebuilds a `Rule` its
+  `text`.** They carry the written position and form a witness follows (`witness.go`); dropping
+  either makes that literal vanish from explanations or shows a rule in its rewritten form, with no
+  error. `magic.go` and `readingDelta` both rebuild literals.
 - **Nothing inside a module resolution may call `Vocabulary.Signature` or `Check`.** They run
   through the memo entry that is mid-computation, and `sync.Once` deadlocks on re-entry. That is
   why the validation base carries `sigs` while it checks module rules.

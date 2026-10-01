@@ -48,6 +48,9 @@ type Rule struct {
 	// `has_test_point(?n: net)`. Empty, or a zero entry, declares nothing for that argument, which is
 	// then inferred (see ns.Vocabulary.Lookup). KindFrom and Owner name other head VARIABLES, without "?".
 	HeadTypes []ns.ArgType
+	// text is the rule as written, set for a witnessed Eval before any rewrite, so a derived node can
+	// name the rule its author wrote rather than its planned or adorned form.
+	text string
 }
 
 // A Body is an implicit conjunction (AND) of Literals. Disjunction (OR) is several Rules sharing
@@ -63,6 +66,9 @@ type Literal struct {
 	Pos     *Atom
 	Neg     *Atom
 	Compare *Compare
+	// at is the literal's written position in its body (1-based), set for a witnessed Eval before any
+	// rewrite; 0 marks a literal a rewrite added. See Witness.
+	at int
 }
 
 // An Atom applies a relation to argument terms: Relation(Args...). Relation is an EDB name
@@ -132,6 +138,9 @@ type Aggregate struct {
 type Row struct {
 	Bind  map[Var]ns.Value
 	Cites []string
+	// Witness says how the row holds, one node per goal literal in written order, when the Eval asked
+	// for witnesses (see Witnesses). It is nil otherwise, and on an aggregate row.
+	Witness []*Witness
 }
 
 // v builds a variable term; k builds a constant string term. Kept unexported helpers for tests and
