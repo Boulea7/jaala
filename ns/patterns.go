@@ -47,37 +47,86 @@ func CompilePattern(pattern string) (*regexp.Regexp, error) {
 	return re, nil
 }
 
-// CompileGlob compiles pattern as a shell-style glob, memoized: `*` matches any run of characters,
-// `?` matches exactly one, and everything else is literal. Unlike CompilePattern the match is
-// WHOLE-STRING, which is what a glob conventionally means.
+// CompileGlob compiles pattern as a glob with SQLite GLOB's semantics, memoized: `*` matches any run
+// of characters, `?` exactly one, and `[...]` one character of a class (`[abc]`, `[a-z]`, `[^abc]`).
+// Unlike CompilePattern the match is WHOLE-STRING and case-sensitive, which is what a glob
+// conventionally means. A literal `[` is written `[[]`, so a bus name like DATA[1:0] is matched as
+// `DATA[[]1:0]`. An unclosed `[` is an error rather than a pattern that matches nothing.
 //
 // It translates to a regexp rather than deferring to path.Match because path.Match's `*` does not
 // cross `/`, and hierarchical net names contain `/` (a sub-sheet local is `/amp1/DATA0`), so
 // path.Match would silently under-match exactly the names a multi-instance interface is named with.
-// The translation escapes every other character, so the result always compiles; the error return
-// exists so callers can handle both pattern forms through one shape.
+// SQLite's dialect is the one Declaire's walk selectors use, so a pattern means the same in a host's
+// SQL and in a query.
 func CompileGlob(pattern string) (*regexp.Regexp, error) {
-	re, err := compileCached("glob\x00"+pattern, globToRegexp(pattern))
-	if err != nil {
-		return nil, fmt.Errorf("query: invalid glob %q: %w", pattern, err)
+	expr, err := globToRegexp(pattern)
+	if err == nil {
+		var re *regexp.Regexp
+		if re, err = compileCached("glob\x00"+pattern, expr); err == nil {
+			return re, nil
+		}
 	}
-	return re, nil
+	return nil, fmt.Errorf("query: invalid glob %q: %w", pattern, err)
 }
 
-// globToRegexp renders a glob as an anchored regexp source.
-func globToRegexp(pattern string) string {
+// globToRegexp translates a glob with SQLite GLOB's semantics, case-sensitive and matching the whole
+// string: "*" any run of characters ("/" included, which hierarchical net names rely on), "?" any one,
+// and "[...]" one character from a class. In a class, "a-z" is a range, a leading "^" negates, and a
+// "]" first (after any "^") is literal, so "[]x]" holds "]" and "x". There is no escape character;
+// a literal "[" is written "[[]", and a literal "*" "[*]". Everything else is literal.
+func globToRegexp(pattern string) (string, error) {
 	var b strings.Builder
-	b.WriteString("^")
-	for _, r := range pattern {
-		switch r {
+	b.WriteString("(?s)^")
+	rs := []rune(pattern)
+	for i := 0; i < len(rs); i++ {
+		switch r := rs[i]; r {
 		case '*':
 			b.WriteString(".*")
 		case '?':
 			b.WriteString(".")
+		case '[':
+			class, next, err := globClass(rs, i+1)
+			if err != nil {
+				return "", err
+			}
+			b.WriteString(class)
+			i = next
 		default:
 			b.WriteString(regexp.QuoteMeta(string(r)))
 		}
 	}
 	b.WriteString("$")
-	return b.String()
+	return b.String(), nil
+}
+
+// globClass translates the class starting after a "[" at rs[i], returning the regexp class and the
+// index of its closing "]".
+func globClass(rs []rune, i int) (string, int, error) {
+	var b strings.Builder
+	b.WriteString("[")
+	if i < len(rs) && rs[i] == '^' {
+		b.WriteString("^")
+		i++
+	}
+	lit := func(r rune) string { return fmt.Sprintf(`\x{%x}`, r) }
+	for first := true; ; first = false {
+		if i >= len(rs) {
+			return "", 0, fmt.Errorf("unclosed [ (write [[] for a literal [)")
+		}
+		r := rs[i]
+		if r == ']' && !first {
+			b.WriteString("]")
+			return b.String(), i, nil
+		}
+		if i+2 < len(rs) && rs[i+1] == '-' && rs[i+2] != ']' {
+			if rs[i+2] < r {
+				return "", 0, fmt.Errorf("range %c-%c runs backwards", r, rs[i+2])
+			}
+			b.WriteString(lit(r) + "-" + lit(rs[i+2]))
+			i += 3
+			continue
+		}
+		b.WriteString(lit(r))
+		i++
+	}
 }

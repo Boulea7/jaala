@@ -99,8 +99,8 @@ func TestStandardPredicateDocsSayWhatTheyDo(t *testing.T) {
 		path, doc string
 		cases     map[bool][][]Value
 	}{
-		{"str.glob", "the whole string matches a shell-style glob (`*` any run, `?` one character)", map[bool][][]Value{
-			true:  {{S("abc"), S("a?c")}, {S("abbbc"), S("a*c")}},
+		{"str.glob", "the whole string matches a SQLite-style glob (`*` any run, `?` one character, `[a-z]` or `[^a-z]` one of a class, `[[]` a literal `[`)", map[bool][][]Value{
+			true:  {{S("abc"), S("a?c")}, {S("abbbc"), S("a*c")}, {S("Bx"), S("[A-C]x")}, {S("Dx"), S("[^A-C]x")}, {S("D[1]"), S("D[[]1]")}},
 			false: {{S("xabc"), S("a*")}, {S("abcx"), S("a?c")}, {S("abbc"), S("a?c")}},
 		}},
 		{"str.match", "an unanchored regular expression", map[bool][][]Value{

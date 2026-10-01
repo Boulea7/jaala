@@ -123,7 +123,7 @@ func StandardPredicates(r *Vocabulary) error {
 		{"str.contains", strFilter(strings.Contains, "substring", "reports whether a string contains a substring")},
 		{"str.prefix", strFilter(strings.HasPrefix, "prefix", "reports whether a string starts with a prefix")},
 		{"str.suffix", strFilter(strings.HasSuffix, "suffix", "reports whether a string ends with a suffix")},
-		{"str.glob", patFilter(CompileGlob, "pattern", "reports whether the whole string matches a shell-style glob (`*` any run, `?` one character)")},
+		{"str.glob", patFilter(CompileGlob, "pattern", "reports whether the whole string matches a SQLite-style glob (`*` any run, `?` one character, `[a-z]` or `[^a-z]` one of a class, `[[]` a literal `[`)")},
 		{"str.match", patFilter(CompilePattern, "regex", "reports whether the string matches an unanchored regular expression")},
 		// absent(?x) is the only way to ASK about a field the source did not state. Before
 		// Value.Absent existed such a field bound to the empty string, so it was not merely hard to
