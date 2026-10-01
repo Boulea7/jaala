@@ -2,6 +2,7 @@ package datalog
 
 import (
 	"fmt"
+	"github.com/panyam/jaala/ns"
 	"sort"
 )
 
@@ -14,10 +15,10 @@ import (
 func V(name string) Term { return Term{Var: Var(name)} }
 
 // Str builds a string-constant term.
-func Str(s string) Term { return Term{Const: &Value{S: s}} }
+func Str(s string) Term { return Term{Const: &ns.Value{S: s}} }
 
 // Num builds a numeric-constant term.
-func Num(f float64) Term { return Term{Const: &Value{S: ftoa(f), Num: &f}} }
+func Num(f float64) Term { return Term{Const: &ns.Value{S: ftoa(f), Num: &f}} }
 
 // Rel builds an atom Relation(args...) — an EDB relation, a built-in, or an IDB relation a Def
 // introduces.
@@ -61,7 +62,7 @@ func MustParse(s string) Query {
 // It counts reads inside the derived modules the query links in, since a check built on
 // net.has_test_point depends on whatever net.has_test_point reads. When the query does not link, it
 // reports the query's own reads, and Validate says why.
-func Reads(q Query, reg *Registry) []string {
+func Reads(q Query, reg *ns.Vocabulary) []string {
 	if linked, err := Link(q, reg); err == nil {
 		q = linked
 	}
@@ -72,7 +73,7 @@ func Reads(q Query, reg *Registry) []string {
 				if a == nil {
 					continue
 				}
-				if _, ok := reg.schema(a.Relation); ok {
+				if _, ok := reg.Schema(a.Relation); ok {
 					seen[a.Relation] = true
 				}
 			}
@@ -114,7 +115,7 @@ func Reads(q Query, reg *Registry) []string {
 // since it is the obvious first idea: requiring the first literal to share a variable with the head
 // catches neither offender, because both `reaches(?n, ...)` and `component-on-net(?pu, ?n)` do mention
 // the head variable. Mentioning it is not binding it.
-func GeneratorFirstRules(q Query, reg *Registry) []string {
+func GeneratorFirstRules(q Query, reg *ns.Vocabulary) []string {
 	if linked, err := Link(q, reg); err == nil {
 		q = linked
 	}
@@ -124,8 +125,8 @@ func GeneratorFirstRules(q Query, reg *Registry) []string {
 			if l.Pos == nil {
 				continue // a comparison or negation cannot enumerate, so it is not the opening scan
 			}
-			bi, ok := reg.predicate(l.Pos.Relation)
-			if ok && bi.generator() && len(l.Pos.Args) > 0 && l.Pos.Args[0].Const == nil {
+			bi, ok := reg.Predicate(l.Pos.Relation)
+			if ok && bi.IsGenerator() && len(l.Pos.Args) > 0 && l.Pos.Args[0].Const == nil {
 				out = append(out, r.Head.Relation)
 			}
 			break // only the FIRST positive literal opens the scan

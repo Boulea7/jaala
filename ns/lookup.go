@@ -1,4 +1,4 @@
-package datalog
+package ns
 
 import (
 	"fmt"
@@ -28,9 +28,10 @@ type Entry struct {
 	// Doc is the member's description: a Schema's or Builtin's Doc, or for a derived member the
 	// comment lines above its first rule.
 	Doc string
-	// Rules are a derived member's defining rules as its module wrote them, names bare where the
-	// module wrote them bare.
-	Rules []Rule
+	// Module and Definition locate a derived member's definition: the path of the module defining it
+	// and its clauses as that module's language reports them.
+	Module     string
+	Definition []string
 	// Members are a module's direct children as full paths, sorted. A child may itself be a module.
 	Members []string
 }
@@ -45,25 +46,26 @@ func (e Entry) Signature() string {
 }
 
 // Lookup answers what is at path: a module (its members) or a member (its signature, kind, doc, and
-// for a derived member its rules). "" is the root module. It runs Check first, since a derived
+// for a derived member its definition). "" is the root module. It runs Check first, since a derived
 // member's signature is only known once every module has been resolved, and returns Check's error
 // when the modules do not check. An unknown path is an error worded as the engine words it in a
 // query, suggestion included.
-func (r *Registry) Lookup(path string) (Entry, error) {
-	if err := r.Check(); err != nil {
+func (v *Vocabulary) Lookup(path string) (Entry, error) {
+	sigs, err := v.signatures()
+	if err != nil {
 		return Entry{}, err
 	}
-	if path == "" || r.isModule(path) {
-		children := r.children(path)
+	if path == "" || v.IsModule(path) {
+		children := v.children(path)
 		out := Entry{Path: path, Kind: EntryModule, Members: make([]string, len(children))}
 		for i, c := range children {
 			out.Members[i] = joinPath(path, c)
 		}
 		return out, nil
 	}
-	m, ok := r.members[path]
+	m, ok := v.members[path]
 	if !ok {
-		return Entry{}, fmt.Errorf("query: %s", r.unknown(path))
+		return Entry{}, fmt.Errorf("query: %s", v.Unknown(path))
 	}
 	switch m.kind {
 	case kindBase:
@@ -71,20 +73,20 @@ func (r *Registry) Lookup(path string) (Entry, error) {
 	case kindPredicate:
 		return Entry{Path: path, Kind: EntryPredicate, Args: sigOf(m.pred.Labels, m.pred.Types, m.pred.Arity), Doc: m.pred.Doc}, nil
 	}
-	u := r.units[m.unit]
+	mod := v.mods[m.module]
 	_, leaf := splitPath(path)
-	e := Entry{Path: path, Kind: EntryDerived, Args: r.check.sigs[path], Doc: u.docs[leaf]}
-	for _, rule := range u.rules {
-		if rule.Head.Relation == leaf {
-			e.Rules = append(e.Rules, rule)
+	e := Entry{Path: path, Kind: EntryDerived, Args: sigs[path], Module: mod.Path}
+	for _, d := range mod.Members {
+		if d.Name == leaf {
+			e.Doc, e.Definition = d.Doc, d.Definition
 		}
 	}
 	return e, nil
 }
 
 // Members lists what a module holds, one Entry per direct child, sorted by path. "" is the root.
-func (r *Registry) Members(module string) ([]Entry, error) {
-	e, err := r.Lookup(module)
+func (v *Vocabulary) Members(module string) ([]Entry, error) {
+	e, err := v.Lookup(module)
 	if err != nil {
 		return nil, err
 	}
@@ -93,7 +95,7 @@ func (r *Registry) Members(module string) ([]Entry, error) {
 	}
 	out := make([]Entry, 0, len(e.Members))
 	for _, p := range e.Members {
-		c, err := r.Lookup(p)
+		c, err := v.Lookup(p)
 		if err != nil {
 			return nil, err
 		}
@@ -118,21 +120,4 @@ func sigOf(labels []string, types []ArgType, arity int) []ArgSig {
 		}
 	}
 	return out
-}
-
-// derivedSchema is a checked derived member's signature as a Schema, so a query constant outside a
-// closed vocabulary is refused for it exactly as for a base relation.
-func (r *Registry) derivedSchema(path string) (Schema, bool) {
-	if r == nil {
-		return Schema{}, false
-	}
-	sig, ok := r.check.sigs[path]
-	if !ok {
-		return Schema{}, false
-	}
-	s := Schema{Arity: len(sig), Labels: make([]string, len(sig)), Types: make([]ArgType, len(sig))}
-	for i, a := range sig {
-		s.Labels[i], s.Types[i] = a.Name, a.ArgType
-	}
-	return s, true
 }

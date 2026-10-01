@@ -2,11 +2,12 @@ package datalog
 
 import (
 	"fmt"
+	"github.com/panyam/jaala/ns"
 	"strings"
 )
 
 // Link returns q with every derived module it reaches expanded into its rules, so the result is an
-// ordinary query that evaluates without the registry's modules. Naive.Eval, Validate, Reads and
+// ordinary query that evaluates without the vocabulary's modules. Naive.Eval, Validate, Reads and
 // GeneratorFirstRules link first; a host calls Link itself to inspect or cache the expanded program.
 //
 // Loading is transitive and by need: a query naming net.has_test_point pulls in the module call that
@@ -17,26 +18,26 @@ import (
 //
 // A query's own rules stay local and bare. Link refuses a query rule whose head is a qualified path
 // (quietly adding a rule to a shared relation is the accident a namespace exists to prevent), names a
-// module, or names a derived relation a module registered. It returns Check's error when the registry's
+// module, or names a derived relation a module registered. It returns Check's error when the vocabulary's
 // modules do not check.
-func Link(q Query, reg *Registry) (Query, error) {
+func Link(q Query, reg *ns.Vocabulary) (Query, error) {
 	for _, r := range q.Rules {
 		head := r.Head.Relation
 		switch {
 		case strings.Contains(head, "."):
 			return Query{}, fmt.Errorf("query: rule head %q is a qualified path; a query defines only its own bare relations, and a shared one is registered with AddModule", head)
-		case reg.isModule(head):
+		case reg.IsModule(head):
 			return Query{}, fmt.Errorf("query: rule head %q is a module, not a relation", head)
 		}
-		if id, ok := reg.derived(head); ok {
-			return Query{}, fmt.Errorf("query: rule head %q redefines a derived relation registered in module %q", head, reg.units[id].module)
+		if id, ok := reg.DefiningModule(head); ok {
+			return Query{}, fmt.Errorf("query: rule head %q redefines a derived relation registered in module %q", head, reg.Modules()[id].Path)
 		}
 	}
 	var pending []string
 	visit := func(b Body) error {
 		for _, a := range ruleAtoms(b) {
 			if strings.Contains(a.Relation, privateSep) {
-				return fmt.Errorf("query: %s", reg.unknown(displayName(a.Relation)))
+				return fmt.Errorf("query: %s", reg.Unknown(displayName(a.Relation)))
 			}
 			pending = append(pending, a.Relation)
 		}
@@ -50,7 +51,7 @@ func Link(q Query, reg *Registry) (Query, error) {
 	if err := visit(q.Goal); err != nil {
 		return Query{}, err
 	}
-	resolved, err := reg.resolvedUnits()
+	res, err := resolved(reg)
 	if err != nil {
 		return Query{}, err
 	}
@@ -59,12 +60,12 @@ func Link(q Query, reg *Registry) (Query, error) {
 	for len(pending) > 0 {
 		name := pending[len(pending)-1]
 		pending = pending[:len(pending)-1]
-		id, ok := reg.derived(name)
+		id, ok := reg.DefiningModule(name)
 		if !ok || loaded[id] {
 			continue
 		}
 		loaded[id] = true
-		for _, r := range resolved[id] {
+		for _, r := range res.rules[id] {
 			linked = append(linked, r)
 			for _, a := range ruleAtoms(r.Body) {
 				pending = append(pending, a.Relation)

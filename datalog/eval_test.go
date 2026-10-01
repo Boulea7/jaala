@@ -2,6 +2,7 @@ package datalog
 
 import (
 	"fmt"
+	"github.com/panyam/jaala/ns"
 	"strings"
 	"testing"
 )
@@ -94,18 +95,18 @@ func TestUnknownRelationSuggestsAKnownOne(t *testing.T) {
 	}
 }
 
-type hintedEmpty struct{ *MemSource }
+type hintedEmpty struct{ *ns.MemSource }
 
 func (hintedEmpty) NoVocabularyHint() string { return "install the widgets" }
 
 // A Source serving nothing cannot call a relation unknown, so the error says the vocabulary is
 // missing instead, in the host's words when it offers them.
 func TestEmptyVocabularySaysSoRatherThanGuessing(t *testing.T) {
-	err := evalErr(NewMemSource(), `egde(?a, ?b)`)
+	err := evalErr(ns.NewMemSource(), `egde(?a, ?b)`)
 	if err == nil || !strings.Contains(err.Error(), "no relations are installed") {
 		t.Errorf("err = %v, want the no-vocabulary hint", err)
 	}
-	err = evalErr(hintedEmpty{NewMemSource()}, `egde(?a, ?b)`)
+	err = evalErr(hintedEmpty{ns.NewMemSource()}, `egde(?a, ?b)`)
 	if err == nil || !strings.Contains(err.Error(), "install the widgets") {
 		t.Errorf("err = %v, want the host's hint", err)
 	}
@@ -119,8 +120,8 @@ func TestWrongArityIsAnError(t *testing.T) {
 }
 
 func TestClosedDomainRejectsAConstantOutsideIt(t *testing.T) {
-	src := NewMemSource().DeclareSchema("role", Schema{Arity: 2, Labels: []string{"node", "role"}, Types: []ArgType{{}, {Domain: []string{"source", "sink"}}}})
-	src.Add("role", Tuple{Vals: []Value{S("a"), S("source")}})
+	src := ns.NewMemSource().DeclareSchema("role", ns.Schema{Arity: 2, Labels: []string{"node", "role"}, Types: []ns.ArgType{{}, {Domain: []string{"source", "sink"}}}})
+	src.Add("role", ns.Tuple{Vals: []ns.Value{ns.S("a"), ns.S("source")}})
 	err := evalErr(src, `role(?n, "sorce")`)
 	if err == nil || !strings.Contains(err.Error(), `did you mean "source"`) {
 		t.Errorf("err = %v, want a domain error suggesting source", err)
@@ -142,9 +143,9 @@ func TestFilterNeedsBoundArguments(t *testing.T) {
 
 // succ is a host generator over the Source it is handed: succ(?a, ?b) enumerates edges out of ?a
 // (or out of every node when ?a is unbound). It exercises the path a host's own graph walk takes.
-func succRegistry() *Registry {
+func succRegistry() *ns.Vocabulary {
 	r := std(graph())
-	err := r.AddPredicate("succ", Builtin{Arity: 2, Gen: func(src Source, args []Arg, emit func([]Value, []string) error) error {
+	err := r.AddPredicate("succ", ns.Builtin{Arity: 2, Gen: func(src ns.Source, args []ns.Arg, emit func([]ns.Value, []string) error) error {
 		for _, t := range src.Tuples("edge") {
 			if args[0].Bound && t.Vals[0].S != args[0].Value.S {
 				continue
@@ -162,7 +163,7 @@ func succRegistry() *Registry {
 }
 
 func TestGeneratorBindsNegatesAndCites(t *testing.T) {
-	b := NewBase(succRegistry())
+	b := baseFor(succRegistry())
 	rows, err := Naive{}.Eval(mustParse(t, `succ("b", ?x) => ?x`), b)
 	if err != nil || col(rows, "x") != "c" || len(rows[0].Cites) != 1 {
 		t.Fatalf("succ(b) = %v, %v; want c with one citation", rows, err)
@@ -187,16 +188,16 @@ func TestGeneratorFirstRulesNamesAnUnboundOpeningGenerator(t *testing.T) {
 
 // big is a relation past IndexMinTuples whose numbers are stated canonically, so a probe spelled
 // 20.0 has to find the fact filed as 20. The indexed and unindexed bases must agree on it.
-func big() *MemSource {
-	src := NewMemSource().Declare("v", "k", "n")
+func big() *ns.MemSource {
+	src := ns.NewMemSource().Declare("v", "k", "n")
 	for i := 0; i < IndexMinTuples+8; i++ {
-		src.Add("v", Tuple{Vals: []Value{S(fmt.Sprintf("k%d", i)), N(float64(i))}})
+		src.Add("v", ns.Tuple{Vals: []ns.Value{ns.S(fmt.Sprintf("k%d", i)), ns.N(float64(i))}})
 	}
 	return src
 }
 
 func TestIndexedAndUnindexedAgree(t *testing.T) {
-	b := NewBase(std(big()))
+	b := baseFor(std(big()))
 	for _, q := range []string{`v(?k, 20) => ?k`, `v(?k, 20.0) => ?k`, `v("k3", ?n) => ?n`, `v(?k, ?n), v(?k2, ?n) => ?k, ?k2`} {
 		qq := mustParse(t, q)
 		indexed, err1 := Naive{}.Eval(qq, b)
@@ -214,7 +215,7 @@ func TestIndexedAndUnindexedAgree(t *testing.T) {
 }
 
 func TestRulesDoNotLeakBetweenQueriesOnOneBase(t *testing.T) {
-	b := NewBase(std(graph()))
+	b := baseFor(std(graph()))
 	if _, err := (Naive{}).Eval(mustParse(t, `src(?n) :- edge(?n, ?_); src(?n)`), b); err != nil {
 		t.Fatal(err)
 	}
@@ -239,10 +240,10 @@ func TestValidateCatchesALaterAtomWithoutEvaluating(t *testing.T) {
 		t.Errorf("err = %v, want the arity error in position two", err)
 	}
 	// With no vocabulary, only the checks that need one stand down.
-	if err := Validate(mustParse(t, `nope(?a)`), std(NewMemSource())); err != nil {
+	if err := Validate(mustParse(t, `nope(?a)`), std(ns.NewMemSource())); err != nil {
 		t.Errorf("err = %v, want no vocabulary check against an empty source", err)
 	}
-	err = Validate(mustParse(t, `p(?x) :- nope(?x), not q(?x); q(?x) :- nope(?x), not p(?x); p(?x)`), MustRegistry(NewMemSource()))
+	err = Validate(mustParse(t, `p(?x) :- nope(?x), not q(?x); q(?x) :- nope(?x), not p(?x); p(?x)`), ns.MustVocabulary(ns.NewMemSource()))
 	if err == nil || !strings.Contains(err.Error(), "not stratifiable") {
 		t.Errorf("err = %v, want stratification still checked with no vocabulary", err)
 	}
@@ -257,17 +258,17 @@ func TestReadsNamesOnlySourceRelations(t *testing.T) {
 
 func TestAddPredicateRefusesAndCloneIsIndependent(t *testing.T) {
 	r := std(graph())
-	if err := r.AddPredicate("str.contains", Filter(2, func([]Value) (bool, error) { return true, nil })); err == nil {
+	if err := r.AddPredicate("str.contains", ns.Filter(2, func([]ns.Value) (bool, error) { return true, nil })); err == nil {
 		t.Error("adding str.contains twice was accepted")
 	}
 	c := r.Clone()
-	if err := c.AddPredicate("extra", Filter(1, func([]Value) (bool, error) { return true, nil })); err != nil {
+	if err := c.AddPredicate("extra", ns.Filter(1, func([]ns.Value) (bool, error) { return true, nil })); err != nil {
 		t.Fatal(err)
 	}
-	if _, ok := r.predicate("extra"); ok {
+	if _, ok := r.Predicate("extra"); ok {
 		t.Error("a predicate added to the clone reached the original")
 	}
-	if _, ok := c.predicate("extra"); !ok {
+	if _, ok := c.Predicate("extra"); !ok {
 		t.Error("the clone lost the predicate added to it")
 	}
 }

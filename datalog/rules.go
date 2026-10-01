@@ -2,6 +2,7 @@ package datalog
 
 import (
 	"fmt"
+	"github.com/panyam/jaala/ns"
 	"sort"
 	"strings"
 )
@@ -10,7 +11,7 @@ import (
 // provenance of the base facts that derived it, so a derived answer stays as verifiable as a
 // looked-up one.
 type idbTuple struct {
-	vals  []Value
+	vals  []ns.Value
 	cites []string
 }
 
@@ -76,7 +77,7 @@ func (b *Base) checkRules(rules []Rule) (map[string][]Rule, [][]string, error) {
 		if _, ok := b.schemaOf(rel); ok {
 			return nil, nil, fmt.Errorf("query: rule head %q redefines a fact relation", rel)
 		}
-		if _, ok := b.reg.predicate(rel); ok {
+		if _, ok := b.reg.Predicate(rel); ok {
 			return nil, nil, fmt.Errorf("query: rule head %q redefines a built-in relation", rel)
 		}
 		ar := len(r.Head.Args)
@@ -121,11 +122,11 @@ func (b *Base) validateRule(r Rule) error {
 		default:
 			continue // a comparison has no relation
 		}
-		// Only when there IS a vocabulary to be unknown in. An empty registry cannot distinguish a
+		// Only when there IS a vocabulary to be unknown in. An empty vocabulary cannot distinguish a
 		// misspelled relation from one nobody installed, and answering "unknown" there would be a
-		// statement about the query that the registry has no standing to make (see Validate).
-		if b.reg.hasBase() && !b.knownRelation(rel) {
-			return fmt.Errorf("query: rule %q reads %s", r.Head.Relation, b.unknown(rel))
+		// statement about the query that the vocabulary has no standing to make (see Validate).
+		if len(b.reg.BaseRelations()) > 0 && !b.knownRelation(rel) {
+			return fmt.Errorf("query: rule %q reads %s", r.Head.Relation, b.reg.Unknown(rel))
 		}
 	}
 	bound := map[Var]bool{}
@@ -143,7 +144,7 @@ func (b *Base) validateRule(r Rule) error {
 // knownRelation reports whether a relation name resolves to something the evaluator can read: an EDB
 // fact relation, a built-in (reaches or a string filter), or a rule-defined IDB relation.
 func (b *Base) knownRelation(rel string) bool {
-	if _, ok := b.reg.predicate(rel); ok {
+	if _, ok := b.reg.Predicate(rel); ok {
 		return true
 	}
 	if _, ok := b.schemaOf(rel); ok {
@@ -169,7 +170,7 @@ func (b *Base) applyRule(r Rule) (bool, error) {
 		if !ok {
 			return nil
 		}
-		vals := make([]Value, len(r.Head.Args))
+		vals := make([]ns.Value, len(r.Head.Args))
 		for j, arg := range r.Head.Args {
 			val, ok := resolve(arg, bnd)
 			if !ok {
@@ -224,7 +225,7 @@ func (b *Base) idbIndexFor(rel string, mask patternMask) *idbIndex {
 	return x
 }
 
-func valsEqual(a, b []Value) bool {
+func valsEqual(a, b []ns.Value) bool {
 	if len(a) != len(b) {
 		return false
 	}

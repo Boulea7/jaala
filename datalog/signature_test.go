@@ -1,6 +1,7 @@
 package datalog
 
 import (
+	"github.com/panyam/jaala/ns"
 	"reflect"
 	"strings"
 	"testing"
@@ -9,22 +10,22 @@ import (
 
 // circuit is a registry shaped like agni's, under the paths agni#751 moves them to: enough relations
 // to carry every kind of declaration its column typing reads.
-func circuit() *Registry {
-	src := NewMemSource().
-		DeclareSchema("component.class", Schema{Arity: 2, Labels: []string{"ref_des", "class"}, Types: []ArgType{{Kind: "component"}, {Type: TypeString}}}).
-		DeclareSchema("component.net", Schema{Arity: 2, Labels: []string{"ref_des", "net"}, Types: []ArgType{{Kind: "component"}, {Kind: "net"}}, Doc: "a component is on a net"}).
-		DeclareSchema("component.pin", Schema{Arity: 2, Labels: []string{"ref_des", "pin"}, Types: []ArgType{{Kind: "component"}, {Kind: "pin", Owner: "ref_des"}}}).
-		DeclareSchema("component.mpn", Schema{Arity: 2, Labels: []string{"ref_des", "mpn"}, Types: []ArgType{{Kind: "component"}}}).
-		DeclareSchema("net.ground", Schema{Arity: 1, Labels: []string{"net"}, Types: []ArgType{{Kind: "net"}}}).
-		DeclareSchema("net.max_voltage", Schema{Arity: 2, Labels: []string{"net", "volts"}, Types: []ArgType{{Kind: "net"}, {Type: TypeNumber, Unit: "V"}}}).
-		DeclareSchema("entity", Schema{Arity: 2, Labels: []string{"name", "kind"}, Types: []ArgType{{KindFrom: "kind"}, {Domain: []string{"component", "net", "bus"}}}})
-	src.Add("component.class", Tuple{Vals: []Value{S("L1"), S("ferrite")}}).
-		Add("component.net", Tuple{Vals: []Value{S("L1"), S("VBUS")}}).
-		Add("entity", Tuple{Vals: []Value{S("VBUS"), S("net")}})
+func circuit() *ns.Vocabulary {
+	src := ns.NewMemSource().
+		DeclareSchema("component.class", ns.Schema{Arity: 2, Labels: []string{"ref_des", "class"}, Types: []ns.ArgType{{Kind: "component"}, {Type: ns.TypeString}}}).
+		DeclareSchema("component.net", ns.Schema{Arity: 2, Labels: []string{"ref_des", "net"}, Types: []ns.ArgType{{Kind: "component"}, {Kind: "net"}}, Doc: "a component is on a net"}).
+		DeclareSchema("component.pin", ns.Schema{Arity: 2, Labels: []string{"ref_des", "pin"}, Types: []ns.ArgType{{Kind: "component"}, {Kind: "pin", Owner: "ref_des"}}}).
+		DeclareSchema("component.mpn", ns.Schema{Arity: 2, Labels: []string{"ref_des", "mpn"}, Types: []ns.ArgType{{Kind: "component"}}}).
+		DeclareSchema("net.ground", ns.Schema{Arity: 1, Labels: []string{"net"}, Types: []ns.ArgType{{Kind: "net"}}}).
+		DeclareSchema("net.max_voltage", ns.Schema{Arity: 2, Labels: []string{"net", "volts"}, Types: []ns.ArgType{{Kind: "net"}, {Type: ns.TypeNumber, Unit: "V"}}}).
+		DeclareSchema("entity", ns.Schema{Arity: 2, Labels: []string{"name", "kind"}, Types: []ns.ArgType{{KindFrom: "kind"}, {Domain: []string{"component", "net", "bus"}}}})
+	src.Add("component.class", ns.Tuple{Vals: []ns.Value{ns.S("L1"), ns.S("ferrite")}}).
+		Add("component.net", ns.Tuple{Vals: []ns.Value{ns.S("L1"), ns.S("VBUS")}}).
+		Add("entity", ns.Tuple{Vals: []ns.Value{ns.S("VBUS"), ns.S("net")}})
 	return std(src)
 }
 
-func kinds(t *testing.T, r *Registry, q string) []ColumnKind {
+func kinds(t *testing.T, r *ns.Vocabulary, q string) []ColumnKind {
 	t.Helper()
 	got, err := ColumnKinds(mustParse(t, q), r)
 	if err != nil {
@@ -103,7 +104,7 @@ func TestAPinIsLocatedThroughItsOwner(t *testing.T) {
 
 func TestAScalarColumnKeepsItsTypeAndUnit(t *testing.T) {
 	got := kinds(t, circuit(), `net.max_voltage(?n, ?v) => ?n, ?v`)
-	if got[0].Kind != "net" || got[1].Type != TypeNumber || got[1].Unit != "V" {
+	if got[0].Kind != "net" || got[1].Type != ns.TypeNumber || got[1].Unit != "V" {
 		t.Errorf("ColumnKinds = %+v, want net then number[V]", got)
 	}
 }
@@ -150,7 +151,7 @@ grounded(?x) :- _helper(?x);
 
 func TestSignaturesAreDeclaredOrInferredAndMarked(t *testing.T) {
 	r := circuit()
-	if err := r.AddModule("net", power); err != nil {
+	if err := r.AddModule("net", LanguageName, power); err != nil {
 		t.Fatal(err)
 	}
 	for path, want := range map[string]string{
@@ -185,7 +186,7 @@ func TestADeclarationItsRulesContradictIsRefused(t *testing.T) {
 		`x(?n: net) :- net.ground(?n); x(?n: component) :- net.ground(?n);`: `declares its "n" argument as both "net" and "component"`,
 	} {
 		r := circuit()
-		if err := r.AddModule("net", text); err != nil {
+		if err := r.AddModule("net", LanguageName, text); err != nil {
 			t.Fatal(err)
 		}
 		if err := r.Check(); err == nil || !strings.Contains(err.Error(), frag) {
@@ -196,10 +197,10 @@ func TestADeclarationItsRulesContradictIsRefused(t *testing.T) {
 
 func TestADerivedVocabularyIsEnforcedInQueries(t *testing.T) {
 	r := circuit()
-	if err := r.AddModule("net", power); err != nil {
+	if err := r.AddModule("net", LanguageName, power); err != nil {
 		t.Fatal(err)
 	}
-	_, err := Naive{}.Eval(mustParse(t, `net.role(?n, "sorce")`), NewBase(r))
+	_, err := Naive{}.Eval(mustParse(t, `net.role(?n, "sorce")`), baseFor(r))
 	if err == nil || !strings.Contains(err.Error(), `net.role's "arg1" argument cannot be "sorce", did you mean "source"?`) {
 		t.Errorf("err = %v, want the vocabulary enforced with a suggestion", err)
 	}
@@ -207,11 +208,11 @@ func TestADerivedVocabularyIsEnforcedInQueries(t *testing.T) {
 
 func TestLookupDrillsFromModuleToMemberToDefinition(t *testing.T) {
 	r := circuit()
-	if err := r.AddModule("net", power); err != nil {
+	if err := r.AddModule("net", LanguageName, power); err != nil {
 		t.Fatal(err)
 	}
 	root, err := r.Lookup("")
-	if err != nil || root.Kind != EntryModule || !reflect.DeepEqual(root.Members, []string{"absent", "component", "entity", "net", "str"}) {
+	if err != nil || root.Kind != ns.EntryModule || !reflect.DeepEqual(root.Members, []string{"absent", "component", "entity", "net", "str"}) {
 		t.Errorf("root = %+v, %v", root, err)
 	}
 	members, err := r.Members("net")
@@ -234,13 +235,14 @@ func TestLookupDrillsFromModuleToMemberToDefinition(t *testing.T) {
 		t.Errorf("Members(net) =\n %s\nwant\n %s", strings.Join(listed, "\n "), strings.Join(want, "\n "))
 	}
 	e, _ := r.Lookup("net.role")
-	if e.Doc != "A net's role: declared closed, both values from constant heads." || len(e.Rules) != 2 || e.Rules[0].Head.Relation != "role" {
+	wantDef := []string{`role(?n, "source") :- net.ground(?n)`, `role(?n, "sink") :- has_test_point(?n)`}
+	if e.Doc != "A net's role: declared closed, both values from constant heads." || e.Module != "net" || !reflect.DeepEqual(e.Definition, wantDef) {
 		t.Errorf("net.role = %+v, want its doc and its two rules as written", e)
 	}
-	if e, _ := r.Lookup("component.net"); e.Kind != EntryBase || e.Doc != "a component is on a net" {
+	if e, _ := r.Lookup("component.net"); e.Kind != ns.EntryBase || e.Doc != "a component is on a net" {
 		t.Errorf("component.net = %+v", e)
 	}
-	if e, _ := r.Lookup("str.contains"); e.Kind != EntryPredicate || e.Signature() != "str.contains(string: string, substring: string)" {
+	if e, _ := r.Lookup("str.contains"); e.Kind != ns.EntryPredicate || e.Signature() != "str.contains(string: string, substring: string)" {
 		t.Errorf("str.contains = %+v", e)
 	}
 	if _, err := r.Lookup("net._helper"); err == nil || !strings.Contains(err.Error(), `unknown relation "net._helper"`) {

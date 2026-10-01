@@ -1,9 +1,11 @@
 package datalog
 
+import "github.com/panyam/jaala/ns"
+
 // A Query is a datalog program answered over a fact base: Rules define derived (IDB) relations and
 // Goal is the conjunction to solve. Goal's free variables — narrowed by Select — are the answer
 // columns. EDB relations come from the Base's Source; IDB relations come from Rules; predicates are
-// computed (see Registry.AddPredicate).
+// computed (see ns.Vocabulary.AddPredicate).
 //
 // The whole IR is what Parse produces. For the query text
 //
@@ -44,8 +46,8 @@ type Rule struct {
 	Hops int // 0 = run to fixpoint; >0 = bound recursion depth (reserved; the fixpoint is finite regardless)
 	// HeadTypes are the types the rule declares for its head's arguments, by position, written
 	// `has_test_point(?n: net)`. Empty, or a zero entry, declares nothing for that argument, which is
-	// then inferred (see Registry.Lookup). KindFrom and Owner name other head VARIABLES, without "?".
-	HeadTypes []ArgType
+	// then inferred (see ns.Vocabulary.Lookup). KindFrom and Owner name other head VARIABLES, without "?".
+	HeadTypes []ns.ArgType
 }
 
 // A Body is an implicit conjunction (AND) of Literals. Disjunction (OR) is several Rules sharing
@@ -84,42 +86,12 @@ type Compare struct {
 // a Select column and on the left of a Having; anywhere else there is no group for it to reduce.
 type Term struct {
 	Var   Var
-	Const *Value
+	Const *ns.Value
 	Agg   *Aggregate
 }
 
 // Var is a logic variable name (the leading "?" is stripped at parse time).
 type Var string
-
-// A Value is a scalar fact value. A fact carries a string and, when numeric, a number, so a bound
-// term keeps both: string equality and numeric comparison both work with no re-parse.
-type Value struct {
-	S   string
-	Num *float64
-	// Absent marks a field the source did not state AT ALL, which is different from an empty string
-	// and different from zero. A datasheet row stating only a maximum leaves its minimum absent.
-	//
-	// It is a field rather than something inferred from a nil Num because the two are not the same
-	// question: a non-numeric string also has a nil Num, and conflating them means the engine
-	// RECONSTRUCTS absence from a coincidence instead of representing it. Before it was
-	// representable, an absent field bound to the empty string and ordering fell through to string
-	// order, where "" precedes everything and so "passed" every upper-bound test, including against a
-	// negative threshold.
-	Absent bool
-	// BaseUnit is the SI BASE symbol this value's number is expressed in ("V", "A", UnitOhm), or ""
-	// for a dimensionless value or a non-numeric one.
-	//
-	// NEVER A PREFIXED SPELLING. Scale normalization is the host's job and happens before a value
-	// reaches the engine, so a millivolt reading is already volts by the time it reaches a query.
-	// This layer checks DIMENSION (is this volts or amps) and never converts SCALE. Naming the field
-	// for that invariant is deliberate: a projector that set "mV" here would make a
-	// volts-against-millivolts comparison REFUSE rather than convert, which is a fresh silent wrong
-	// answer wearing the fix's clothes. A host should test that it never publishes a prefixed unit.
-	//
-	// Distinct from the `param.unit` RELATION, which reports what the vendor PRINTED ("mV") for a
-	// human checking a citation. This says what the number IS in, for a machine comparing it.
-	BaseUnit string
-}
 
 // An Aggregate reduces Var over each group of the projection's plain-variable columns. Example:
 // `component-on-net(?ref,?net) => ?net, count(?ref)` groups by ?net and counts the ?ref bindings
@@ -158,12 +130,12 @@ type Aggregate struct {
 // Row is one answer: the projected variables bound to values, plus the provenance of the base
 // facts that produced it — so an answer stays verifiable.
 type Row struct {
-	Bind  map[Var]Value
+	Bind  map[Var]ns.Value
 	Cites []string
 }
 
 // v builds a variable term; k builds a constant string term. Kept unexported helpers for tests and
 // the parser to construct queries without the struct noise.
 func v(name string) Term { return Term{Var: Var(name)} }
-func k(s string) Term    { return Term{Const: &Value{S: s}} }
-func num(f float64) Term { return Term{Const: &Value{S: ftoa(f), Num: &f}} }
+func k(s string) Term    { return Term{Const: &ns.Value{S: s}} }
+func num(f float64) Term { return Term{Const: &ns.Value{S: ftoa(f), Num: &f}} }

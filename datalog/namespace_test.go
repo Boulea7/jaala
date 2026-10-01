@@ -1,20 +1,21 @@
 package datalog
 
 import (
+	"github.com/panyam/jaala/ns"
 	"strings"
 	"testing"
 )
 
 // tree is a source whose relations sit at the root, one module deep and two deep.
-func tree() *MemSource {
-	src := NewMemSource().
+func tree() *ns.MemSource {
+	src := ns.NewMemSource().
 		Declare("edge", "from", "to").
 		Declare("net.pin_count", "net", "n").
 		Declare("bus.pin_cont", "bus", "n").
 		Declare("acme.power.rail_budget", "rail", "watts")
-	src.Add("edge", Tuple{Vals: []Value{S("a"), S("b")}})
-	src.Add("net.pin_count", Tuple{Vals: []Value{S("VBUS"), N(4)}})
-	src.Add("acme.power.rail_budget", Tuple{Vals: []Value{S("VBUS"), N(10)}})
+	src.Add("edge", ns.Tuple{Vals: []ns.Value{ns.S("a"), ns.S("b")}})
+	src.Add("net.pin_count", ns.Tuple{Vals: []ns.Value{ns.S("VBUS"), ns.N(4)}})
+	src.Add("acme.power.rail_budget", ns.Tuple{Vals: []ns.Value{ns.S("VBUS"), ns.N(10)}})
 	return src
 }
 
@@ -26,37 +27,37 @@ func TestPathsResolveAtEveryDepth(t *testing.T) {
 }
 
 func TestASegmentCannotBeBothModuleAndMember(t *testing.T) {
-	_, err := NewRegistry(NewMemSource().Declare("pin", "ref", "pin").Declare("pin.net", "pin", "net"))
+	_, err := ns.NewVocabulary(ns.NewMemSource().Declare("pin", "ref", "pin").Declare("pin.net", "pin", "net"))
 	if err == nil || !strings.Contains(err.Error(), `needs "pin" to be a module`) {
 		t.Errorf("member then module: err = %v, want pin refused as a module", err)
 	}
-	r := MustRegistry(tree())
-	err = r.AddPredicate("acme.power", Filter(1, func([]Value) (bool, error) { return true, nil }))
+	r := ns.MustVocabulary(tree())
+	err = r.AddPredicate("acme.power", ns.Filter(1, func([]ns.Value) (bool, error) { return true, nil }))
 	if err == nil || !strings.Contains(err.Error(), "already a module holding rail_budget") {
 		t.Errorf("module then member: err = %v, want acme.power refused as a member", err)
 	}
 }
 
 func TestOnePathHasOneDefiner(t *testing.T) {
-	r := MustRegistry(tree())
-	err := r.AddPredicate("net.pin_count", Filter(2, func([]Value) (bool, error) { return true, nil }))
+	r := ns.MustVocabulary(tree())
+	err := r.AddPredicate("net.pin_count", ns.Filter(2, func([]ns.Value) (bool, error) { return true, nil }))
 	if err == nil || !strings.Contains(err.Error(), `"net.pin_count" is defined twice, as a base relation and as a predicate`) {
 		t.Errorf("err = %v, want both definitions named", err)
 	}
 }
 
 func TestAPathMustBeSpellable(t *testing.T) {
-	r := MustRegistry(nil)
+	r := ns.MustVocabulary(nil)
 	for _, p := range []string{"", "a..b", ".a", "a b"} {
-		if err := r.AddPredicate(p, Filter(1, func([]Value) (bool, error) { return true, nil })); err == nil {
+		if err := r.AddPredicate(p, ns.Filter(1, func([]ns.Value) (bool, error) { return true, nil })); err == nil {
 			t.Errorf("AddPredicate(%q) was accepted", p)
 		}
 	}
 }
 
 func TestStringFiltersLiveUnderStrAndAbsentAtTheRoot(t *testing.T) {
-	src := NewMemSource().Declare("row", "name", "min")
-	src.Add("row", Tuple{Vals: []Value{S("VBUS"), Absent()}}).Add("row", Tuple{Vals: []Value{S("GND"), N(0)}})
+	src := ns.NewMemSource().Declare("row", "name", "min")
+	src.Add("row", ns.Tuple{Vals: []ns.Value{ns.S("VBUS"), ns.Absent()}}).Add("row", ns.Tuple{Vals: []ns.Value{ns.S("GND"), ns.N(0)}})
 	for q, want := range map[string]string{
 		`row(?n, _), str.contains(?n, "BU") => ?n`: "VBUS",
 		`row(?n, _), str.prefix(?n, "G") => ?n`:    "GND",
@@ -102,7 +103,7 @@ func TestAModuleIsNotARelation(t *testing.T) {
 }
 
 func TestDidYouMeanUsesTheTree(t *testing.T) {
-	if got := DidYouMean(std(tree()), "net.pin_cont"); got != `; did you mean "net.pin_count"?` {
+	if got := ns.DidYouMean(std(tree()), "net.pin_cont"); got != `; did you mean "net.pin_count"?` {
 		t.Errorf("DidYouMean = %q", got)
 	}
 }

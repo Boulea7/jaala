@@ -1,0 +1,29 @@
+// Package ns is the namespace contract between a host and a query engine: what names exist, at
+// which paths, and what each one's arguments denote. It holds names, never evaluates them, and
+// imports nothing outside the standard library, so a host's fact layer can register into it without
+// depending on an engine.
+//
+// A Vocabulary is one namespace tree. Every name a query can call lives at a path, its segments
+// separated by "." (edge, str.contains, acme.power.rail_budget), and a leaf of the tree is one of:
+//
+//   - a base relation, described by a Schema, whose tuples a Source serves;
+//   - a predicate, a Builtin the host computes: a filter or a generator. StandardPredicates
+//     registers the string tests under str (str.contains, str.prefix, ...) and absent at the root;
+//   - a derived relation, defined by a module written in a Language an engine provides
+//     (jaala/datalog provides "datalog"). The vocabulary asks the language what a module defines
+//     and enters each member's path; it never parses the text itself.
+//
+// A segment is a module or a member, never both, and each path has one definer; the vocabulary
+// refuses anything else when it is registered, whatever the kinds involved.
+//
+// Every member has a signature: per argument a name and an ArgType saying what it denotes (an opaque
+// entity kind such as "net", a kind taken per row from another argument, a kind located through an
+// owner argument, or a scalar type with a unit), optionally closed over a vocabulary of values. Base
+// relations and predicates declare theirs; a derived member's comes from its language's Check, which
+// may infer it. Check runs once per state of the vocabulary and is shared by every query over it.
+// Lookup and Members answer what is at a path, for a host offering drill-down discovery, and Unknown
+// and Hint word an unknown name the way every engine over the vocabulary should.
+//
+// A Vocabulary holds no data. An engine pairs it with a Source per query, so a host composes its
+// vocabulary once, checks it at load, and binds each dataset as it reads it.
+package ns

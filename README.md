@@ -6,27 +6,39 @@ Its first package, `datalog`, is a Datalog evaluator with stratified negation, r
 aggregation and `having`, binding-pattern indexes, and provenance: every answer row carries the
 citations of the facts that produced it. It knows nothing about any particular domain.
 
-A host registers every name a query can call in a `Registry`, one tree of dotted paths. A leaf is a
-base relation whose facts come from a `Source`, a predicate the host computes, or a derived relation
-written in Datalog and registered as a module:
+It comes in two packages:
+
+- `ns` is the vocabulary: one tree of dotted paths holding every name a query can call, with each
+  name's signature. A leaf is a base relation whose facts some `Source` serves, a predicate the host
+  computes, or a derived relation defined by a module. `ns` parses and evaluates nothing, and imports
+  only the standard library, so a host's fact layer can register into it without taking on an engine.
+- `datalog` is the engine. It provides Datalog as a module language, links the modules a query
+  names, and evaluates queries over a vocabulary paired with one `Source`.
 
 ```go
-reg, _ := datalog.NewRegistry(src)          // net.pin_count, component.net, ... from the Source
-datalog.StandardPredicates(reg)             // str.contains, str.prefix, ..., absent
-reg.AddModule("net", `
+v, _ := ns.NewVocabulary(nil)                     // names only; no data
+v.AddRelation("component.net", ns.Schema{Arity: 2, Labels: []string{"ref_des", "net"}})
+v.AddRelation("component.class", ns.Schema{Arity: 2, Labels: []string{"ref_des", "class"}})
+ns.StandardPredicates(v)                          // str.contains, str.prefix, ..., absent
+v.AddLanguage(datalog.Language)
+v.AddModule("net", datalog.LanguageName, `
 # Nets that carry a test point.
 has_test_point(?n: net) :- component.net(?tp, ?n), component.class(?tp, "test_point");
 `)
-rows, err := datalog.Naive{}.Eval(datalog.MustParse(`net.has_test_point(?n) => ?n`), datalog.NewBase(reg))
+if err := v.Check(); err != nil { ... }           // once, at load
+
+base, err := datalog.NewBase(v, designSource)     // per dataset
+rows, err := datalog.Naive{}.Eval(datalog.MustParse(`net.has_test_point(?n) => ?n`), base)
 ```
 
 A query naming `net.has_test_point` pulls in the module that defines it. Each member carries a
 signature (argument names, entity kinds, scalar types and units), declared or inferred through its
-rules, which `reg.Lookup(path)` returns for a host that lists and drills into what is available.
+rules, which `v.Lookup(path)` returns for a host that lists and drills into what is available.
 
 It started as the query engine inside [agni](https://github.com/panyam/agni), an EDA tooling
 engine, and was extracted so other graph tools could share it.
 
-The package imports only the Go standard library and builds for `GOOS=js GOARCH=wasm`.
+Both packages import only the Go standard library (and `datalog` imports `ns`), and build for
+`GOOS=js GOARCH=wasm`.
 
 Licensed under Apache-2.0.

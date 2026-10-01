@@ -5,160 +5,175 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync/atomic"
+
+	"github.com/panyam/jaala/ns"
 )
 
-// A unit is one AddModule call: rules registered at a module path. It is the scope of its private
-// members, so two units may each define an _helper without meeting.
-type unit struct {
-	module   string
-	rules    []Rule // as written: heads bare, bodies unresolved
-	privates map[string]bool
-	docs     map[string]string // by bare member name, from the comment lines above its first rule
-}
+// Language is Datalog as a module language for an ns.Vocabulary. A host registers it once, then adds
+// modules written in it:
+//
+//	v.AddLanguage(datalog.Language)
+//	v.AddModule("net", datalog.LanguageName, `has_test_point(?n: net) :- component.net(?tp, ?n), ...;`)
+//
+// A module's text is rules only. Each rule head names a member of the module, written bare:
+// `has_test_point(?n) :- ...` at "net" defines net.has_test_point. Inside the text a bare name is
+// this module's member first, among members of every kind and from any module at the same path, and
+// then the root's; a dotted name is always a full path. So in module "net", `pin_count(?n, ?c)`
+// reads net.pin_count when that is registered, and `component.pin(...)` reads component.pin
+// wherever it sits.
+//
+// A member whose name starts with "_" is private to its module: it gets no path, no query can name
+// it, and another module's _helper is a different relation. A rule head may declare its arguments'
+// types, `has_test_point(?n: net)`; an argument no head declares is inferred, and Check refuses a
+// declaration its rules contradict. The comment lines directly above a member's first rule are its
+// doc.
+var Language ns.Language = language{}
 
-// AddModule registers derived relations, written as Datalog rules, in the module at path. Each rule
-// head names a member of that module and is written bare: `has_test_point(?n) :- ...` registered at
-// "net" defines net.has_test_point. A path of "" registers at the root.
-//
-// Inside the text, a bare name is looked up in this module first, among members of every kind and
-// from any unit, and then at the root. A dotted name is always a full path. So in module "net",
-// `pin_count(?n, ?c)` reads net.pin_count when that is registered, and `component.pin(...)` reads
-// component.pin wherever it sits.
-//
-// A member whose name starts with "_" is private to this call: it is not registered at a path, no
-// query can name it, and another call's _helper is a different relation.
-//
-// AddModule refuses text holding a goal, a qualified rule head, a member defined with two arities, and
-// any member path the tree's rules refuse (see Registry). Nothing is registered when it fails. What it
-// cannot check alone, because a name may be registered later, waits for Check: that every name the
-// rules read exists, and that the rules are well formed together.
-//
-// Several calls may register at one module path, provided each member path has one definer, which is
-// how a host's standard library and a project's own relations share a module.
-//
-// A rule head may declare its arguments' types, `has_test_point(?n: net)`; an argument no head
-// declares is inferred (see Registry.Lookup). The comment lines directly above a member's first rule
-// are its doc.
-func (r *Registry) AddModule(path, text string) error {
-	if path != "" {
-		if err := checkPath(path); err != nil {
-			return err
-		}
-	}
+// LanguageName is the name Language registers under, for ns.Vocabulary.AddModule.
+const LanguageName = "datalog"
+
+type language struct{}
+
+func (language) Name() string { return LanguageName }
+
+// Members parses a module and reports its public members. It refuses text holding a goal, a
+// qualified rule head, and a member defined with two arities.
+func (language) Members(text string) ([]ns.MemberDecl, error) {
 	rules, err := ParseRules(text)
 	if err != nil {
-		return fmt.Errorf("%w (in module %q)", err, path)
+		return nil, err
 	}
-	u := &unit{module: path, rules: rules, privates: map[string]bool{}, docs: moduleDocs(text)}
+	docs := moduleDocs(text)
+	var out []ns.MemberDecl
 	arity := map[string]int{}
-	var public []string
+	at := map[string]int{} // public members only: index into out
 	for _, rule := range rules {
 		name := rule.Head.Relation
 		if strings.Contains(name, ".") {
-			return fmt.Errorf("query: module %q rule head %q is qualified; a module defines its own members, written bare", path, name)
+			return nil, fmt.Errorf("query: rule head %q is qualified; a module defines its own members, written bare", name)
 		}
-		if prev, ok := arity[name]; ok {
-			if prev != len(rule.Head.Args) {
-				return fmt.Errorf("query: module %q defines %q with %d and %d args (arity must be consistent)", path, name, prev, len(rule.Head.Args))
-			}
-			continue
+		if prev, ok := arity[name]; ok && prev != len(rule.Head.Args) {
+			return nil, fmt.Errorf("query: the module defines %q with %d and %d args (arity must be consistent)", name, prev, len(rule.Head.Args))
 		}
 		arity[name] = len(rule.Head.Args)
 		if strings.HasPrefix(name, "_") {
-			u.privates[name] = true
-		} else {
-			public = append(public, name)
+			continue
 		}
-	}
-	id := len(r.units)
-	for _, name := range public {
-		if err := r.admits(joinPath(path, name), member{kind: kindDerived, unit: id}); err != nil {
-			return err
+		if i, ok := at[name]; ok {
+			out[i].Definition = append(out[i].Definition, rule.String())
+			continue
 		}
+		at[name] = len(out)
+		out = append(out, ns.MemberDecl{Name: name, Arity: len(rule.Head.Args), Doc: docs[name], Definition: []string{rule.String()}})
 	}
-	for _, name := range public {
-		r.put(joinPath(path, name), member{kind: kindDerived, unit: id})
-	}
-	r.units = append(r.units, u)
-	r.check = &checkState{}
-	return nil
+	return out, nil
 }
 
-// Check is the semantic pass over every registered module: it resolves each name the modules' rules
-// read to a path, and validates all module rules together, as one program, against the registry.
-// That catches a name no one registered, a wrong arity, an unbound head variable, unsafe negation and
-// recursion through negation, including across modules, before any query runs.
-//
-// It runs lazily, because modules may read each other in any registration order: Link calls it, and
-// the result is kept until something new is registered. A host calls it directly to report a broken
-// library at load rather than at its first query. As elsewhere, a registry holding no base relation
-// cannot call a name unknown, so that one check stands down until it has some.
-func (r *Registry) Check() error {
-	_, err := r.resolvedUnits()
-	return err
+// Check validates every Datalog module of v together and returns each public member's signature.
+func (language) Check(v *ns.Vocabulary) (map[string][]ns.ArgSig, error) {
+	res, err := resolved(v)
+	if err != nil {
+		return nil, err
+	}
+	return res.sigs, nil
 }
 
-// resolvedUnits returns every unit's rules with names resolved to paths, computing them once.
-func (r *Registry) resolvedUnits() ([][]Rule, error) {
-	if r == nil {
-		return nil, nil
-	}
-	c := r.check
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	if !c.done {
-		c.resolved, c.err = r.resolveAll()
-		c.done = true
-	}
-	return c.resolved, c.err
+// A resolution is every Datalog module's rules with their names resolved to paths, and the public
+// members' signatures. It depends only on the vocabulary, so it is memoized there and shared by every
+// Base and query over it.
+type resolution struct {
+	rules [][]Rule // by module index; nil for a module in another language
+	sigs  map[string][]ns.ArgSig
 }
 
-func (r *Registry) resolveAll() ([][]Rule, error) {
-	out := make([][]Rule, len(r.units))
+type resolutionKey struct{}
+
+// resolutions counts how many times modules have been resolved, for a test asserting it happens once
+// per vocabulary however many Bases share it.
+var resolutions atomic.Int64
+
+func resolved(v *ns.Vocabulary) (*resolution, error) {
+	out, err := v.Memo(resolutionKey{}, func() (any, error) {
+		resolutions.Add(1)
+		return resolveAll(v)
+	})
+	if err != nil {
+		return nil, err
+	}
+	return out.(*resolution), nil
+}
+
+// resolveAll is the semantic pass over every Datalog module: it resolves each name the modules'
+// rules read to a path, and validates all module rules together, as one program, against the
+// vocabulary. That catches a name no one registered, a wrong arity, an unbound head variable, unsafe
+// negation and recursion through negation, including across modules, and a declared type the rules
+// contradict. A vocabulary holding no base relation cannot call a name unknown, so that one check
+// stands down until it has some.
+func resolveAll(v *ns.Vocabulary) (*resolution, error) {
+	mods := v.Modules()
+	res := &resolution{rules: make([][]Rule, len(mods))}
 	privates := map[string]bool{}
 	var all []Rule
-	for i, u := range r.units {
-		for name := range u.privates {
-			privates[privateName(u.module, name, i)] = true
+	for i, m := range mods {
+		if m.Language != LanguageName {
+			continue
 		}
-		for _, rule := range u.rules {
-			out[i] = append(out[i], r.resolveRule(u, i, rule))
+		rules, err := ParseRules(m.Text)
+		if err != nil {
+			return nil, fmt.Errorf("%w (in module %q)", err, m.Path)
 		}
-		all = append(all, out[i]...)
+		own := map[string]bool{}
+		for _, r := range rules {
+			if strings.HasPrefix(r.Head.Relation, "_") {
+				own[r.Head.Relation] = true
+				privates[privateName(m.Path, r.Head.Relation, i)] = true
+			}
+		}
+		for _, r := range rules {
+			res.rules[i] = append(res.rules[i], resolveRule(v, m.Path, own, i, r))
+		}
+		all = append(all, res.rules[i]...)
 	}
 	if len(all) == 0 {
-		return out, nil
+		return res, nil
 	}
-	if r.hasBase() {
-		for i, rules := range out {
+	hasBase := len(v.BaseRelations()) > 0
+	if hasBase {
+		for i, rules := range res.rules {
 			for _, rule := range rules {
 				for _, a := range ruleAtoms(rule.Body) {
-					if privates[a.Relation] || r.isMember(a.Relation) {
-						continue
+					if !privates[a.Relation] && !v.Has(a.Relation) {
+						return nil, fmt.Errorf("query: module %q rule %q reads %s", mods[i].Path, displayName(rule.Head.Relation), v.Unknown(a.Relation))
 					}
-					return nil, fmt.Errorf("query: module %q rule %q reads %s", r.units[i].module, displayName(rule.Head.Relation), r.unknown(a.Relation))
 				}
 			}
 		}
 	}
-	b := newValidationBase(r)
+	b := newValidationBase(v)
 	if _, _, err := b.checkRules(all); err != nil {
 		return nil, err
 	}
-	t := newTyper(r, all)
-	sigs := map[string][]ArgSig{}
-	for path, m := range r.members {
-		if m.kind != kindDerived {
+	t := newTyper(v, all)
+	res.sigs = map[string][]ns.ArgSig{}
+	for i, m := range mods {
+		if m.Language != LanguageName {
 			continue
 		}
-		sig, err := t.signature(path)
-		if err != nil {
-			return nil, err
+		for _, d := range m.Members {
+			path := joinPath(m.Path, d.Name)
+			if id, ok := v.DefiningModule(path); !ok || id != i {
+				continue
+			}
+			sig, err := t.signature(path)
+			if err != nil {
+				return nil, err
+			}
+			res.sigs[path] = sig
 		}
-		sigs[path] = sig
 	}
-	r.check.sigs = sigs
-	if r.hasBase() {
+	if hasBase {
+		b.sigs = res.sigs
 		for _, rule := range all {
 			if err := b.checkLiterals(rule.Body.Literals); err != nil {
 				return nil, fmt.Errorf("%w (in module rule %q)", err, displayName(rule.Head.Relation))
@@ -169,20 +184,20 @@ func (r *Registry) resolveAll() ([][]Rule, error) {
 			}
 		}
 	}
-	return out, nil
+	return res, nil
 }
 
-// resolveRule rewrites one rule of unit u so every relation it names is a full path: its head the
-// member it defines, and each body name by the lookup AddModule describes.
-func (r *Registry) resolveRule(u *unit, id int, rule Rule) Rule {
+// resolveRule rewrites one rule of the module at path so every relation it names is a full path: its
+// head the member it defines, and each body name by the lookup Language describes.
+func resolveRule(v *ns.Vocabulary, path string, privates map[string]bool, id int, rule Rule) Rule {
 	name := func(n string) string {
 		switch {
 		case strings.Contains(n, "."):
 			return n
-		case u.privates[n]:
-			return privateName(u.module, n, id)
+		case privates[n]:
+			return privateName(path, n, id)
 		}
-		if p := joinPath(u.module, n); u.module != "" && r.isMember(p) {
+		if p := joinPath(path, n); path != "" && v.Has(p) {
 			return p
 		}
 		return n
@@ -219,11 +234,6 @@ func ruleAtoms(b Body) []*Atom {
 		}
 	}
 	return out
-}
-
-func (r *Registry) isMember(path string) bool {
-	_, ok := r.members[path]
-	return ok
 }
 
 // privateSep marks a private member's linked name. The parser never accepts it in a relation name,

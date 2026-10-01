@@ -1,4 +1,4 @@
-package datalog
+package ns
 
 import (
 	"fmt"
