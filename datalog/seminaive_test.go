@@ -116,3 +116,43 @@ func TestEveryRecursiveAtomGetsItsDeltaVariant(t *testing.T) {
 		t.Errorf("both = %q, want x", got)
 	}
 }
+
+// reversedLine is line(n) with its edges stored last-first, so no single pass over them follows the
+// path: a recursion reaching along it takes a round per node.
+func reversedLine(n int) *ns.MemSource {
+	src := ns.NewMemSource().Declare("edge", "from", "to").Declare("node", "name")
+	for i := 0; i < n; i++ {
+		src.Add("node", ns.Tuple{Vals: []ns.Value{ns.S(fmt.Sprintf("v%d", i))}})
+	}
+	for i := n - 2; i >= 0; i-- {
+		src.Add("edge", ns.Tuple{Vals: []ns.Value{ns.S(fmt.Sprintf("v%d", i)), ns.S(fmt.Sprintf("v%d", i+1))}})
+	}
+	return src
+}
+
+// A round starts from its delta (#27): written edge-first, a reach still costs each round only its new
+// nodes, not a scan of every edge, so its work grows with the path. The control runs the written
+// order, which scans the edges every round.
+func TestARoundStartsFromItsDelta(t *testing.T) {
+	q := `r(?y) :- node(?y), ?y = "v0"; r(?y) :- edge(?x, ?y), r(?x); r(?y) => ?y`
+	if ratio := float64(workOf(t, SemiNaive{}, reversedLine(400), q)) / float64(workOf(t, SemiNaive{}, reversedLine(200), q)); ratio > 2.5 {
+		t.Errorf("work grew %.1fx when the path doubled, want about 2x", ratio)
+	}
+	if full := float64(workOf(t, SemiNaive{WrittenOrder: true}, reversedLine(400), q)) / float64(workOf(t, SemiNaive{WrittenOrder: true}, reversedLine(200), q)); full < 3.5 {
+		t.Errorf("control: the written order grew only %.1fx, so the path is not taking a round per node", full)
+	}
+}
+
+// A delta is not always small. With the edges stored in walk order, the first round derives every
+// pair, and the next round's delta is all of them: then probing the delta from the edges is cheaper
+// than scanning it, and the round must do that rather than start from the delta regardless. On the
+// reversed path the deltas are small and starting from them wins.
+func TestARoundStartsFromTheSmallerSide(t *testing.T) {
+	q := `reach(?a, ?b) :- edge(?a, ?b); reach(?a, ?c) :- edge(?b, ?c), reach(?a, ?b); reach(?a, ?b) => ?a, ?b`
+	if got, written := workOf(t, SemiNaive{}, line(100), q), workOf(t, SemiNaive{WrittenOrder: true}, line(100), q); got > written {
+		t.Errorf("walk order: work %d, written order %d; want no more, since the big delta should be probed", got, written)
+	}
+	if got, written := workOf(t, SemiNaive{}, reversedLine(100), q), workOf(t, SemiNaive{WrittenOrder: true}, reversedLine(100), q); got*3 > written*2 {
+		t.Errorf("reversed: work %d, written order %d; want under two thirds, since the small deltas should go first", got, written)
+	}
+}

@@ -79,6 +79,12 @@ go list -deps ./... | grep '\.' | grep -v '^github.com/panyam/jaala' | grep -v '
 - **Magic tuples carry no citations.** `magic.go` adds relations recording what a query demanded;
   `SemiNaive`'s `derive` clears their citations, or an answer would cite the facts that worked out
   someone else's demand. A relation that reads a negation, transitively, is not rewritten (#34).
+  Factored right-linear recursion (`factor.go`) is the exception on purpose: its reachable set is
+  an ordinary derived relation, so an answer cites one whole path. Factoring is off for a witnessed
+  Eval.
+- **Rules are checked as linked before any rewrite renames them** (`checkRules` in `evaluate`), so
+  an error names `r`, never `r\x00/bf` or a factored relation. A new rewrite gets this for free;
+  a new check that names a relation belongs there too.
 - **Inlining must not change multiplicity.** `unfold.go` inlines single-rule, non-recursive derived
   relations, but never into a goal whose aggregate counts bindings (`count`, `sum`, `list` without
   `distinct`): a derived relation is a set, its inlined body is not. Modes are checked on the linked
