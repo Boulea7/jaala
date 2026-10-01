@@ -197,8 +197,8 @@ func TestAPlainDependencyIsDerivedOnce(t *testing.T) {
 }
 
 // The shapes #36 left to this issue: two rules, or a witnessed Eval (nothing inlined), walk from the
-// bound end once per rule. Demand passes into test by copying the walk into test's magic rule, so the
-// witnessed shape walks twice until supplementary magic sets store that prefix once (#54).
+// bound end once per rule. In the witnessed shape demand passes on into test after the walk, which a
+// supplementary relation stores once (#54) rather than the walk running again in test's magic rule.
 func TestAGeneratorInADerivedRelationRunsOncePerRule(t *testing.T) {
 	const test = `test(?f) :- attr(?f, "role", "test"); `
 	for _, c := range []struct {
@@ -207,7 +207,7 @@ func TestAGeneratorInADerivedRelationRunsOncePerRule(t *testing.T) {
 		walks       int
 	}{
 		{"two rules", test + `covers(?t, ?f) :- test(?t), walk(?t, ?f); covers(?t, ?f) :- test(?t), walk(?t, ?f), node(?f); `, nil, 2},
-		{"witnessed", test + `covers(?t, ?f) :- test(?t), walk(?t, ?f); `, []Option{Witnesses()}, 2},
+		{"witnessed", test + `covers(?t, ?f) :- test(?t), walk(?t, ?f); `, []Option{Witnesses()}, 1},
 	} {
 		v := std(tested())
 		calls := walker(t, v, [][]bool{{true, false}, {false, true}})
