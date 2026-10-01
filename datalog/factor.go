@@ -54,7 +54,7 @@ func (m *magician) factor(a Atom, bound map[Var]bool) (Atom, bool) {
 		calls[i] = call
 	}
 	m.factored++
-	from := a.Relation + "\x00from" + strconv.Itoa(m.factored)
+	from := a.Relation + fromSep + strconv.Itoa(m.factored)
 	answer := a.Relation + "\x00answer" + strconv.Itoa(m.factored)
 	m.rules = append(m.rules, Rule{Head: Atom{Relation: from, Args: demanded}})
 	for i, r := range m.byHead[a.Relation] {
@@ -77,6 +77,10 @@ func (m *magician) factor(a Atom, bound map[Var]bool) (Atom, bool) {
 	}
 	return Atom{Relation: answer, Args: a.Args}, true
 }
+
+// fromSep marks a factored reachable set's name. Like a magic relation, the set guards the rules that
+// read it, so planning keeps it first (see plan).
+const fromSep = "\x00from"
 
 // rightLinear reports whether a rule of rel qualifies for factoring under adorn (see factor), with the
 // index of its recursive call, or -1 for a base rule.

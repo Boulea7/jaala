@@ -14,7 +14,7 @@ import (
 func factored(t *testing.T, b *Base, text string) bool {
 	t.Helper()
 	for _, r := range magic(b, mustParse(t, text)).Rules {
-		if strings.Contains(r.Head.Relation, "\x00from") {
+		if strings.Contains(r.Head.Relation, fromSep) {
 			return true
 		}
 	}
@@ -111,7 +111,7 @@ func TestTwoFactoredCallsKeepTheirOwnSets(t *testing.T) {
 	q := magic(baseFor(std(line(6))), mustParse(t, text))
 	sets := map[string]bool{}
 	for _, r := range q.Rules {
-		if strings.Contains(r.Head.Relation, "\x00from") {
+		if strings.Contains(r.Head.Relation, fromSep) {
 			sets[r.Head.Relation] = true
 		}
 	}
