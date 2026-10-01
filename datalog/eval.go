@@ -950,7 +950,7 @@ func passesHaving(row Row, having []Compare) (bool, error) {
 func groupKeyOf(keyVars []Var, bnd *binding) string {
 	var b strings.Builder
 	for _, kv := range keyVars {
-		b.WriteString(bnd.vals[kv].S)
+		b.WriteString(keyText(bnd.vals[kv]))
 		b.WriteByte('\x1f')
 	}
 	return b.String()
@@ -1144,10 +1144,19 @@ func rowKey(r Row, sel []Var) string {
 	for _, v := range sel {
 		b.WriteString(string(v))
 		b.WriteByte('=')
-		b.WriteString(r.Bind[v].S)
+		b.WriteString(keyText(r.Bind[v]))
 		b.WriteByte('\x1f')
 	}
 	return b.String()
+}
+
+// keyText is a value's text as an answer or group key: N(1) and S("1") key alike, as they join alike,
+// but an absent value keys apart from the empty string, as valueEq and the index keep it (#62).
+func keyText(v ns.Value) string {
+	if v.Absent {
+		return absentKey
+	}
+	return v.S
 }
 
 func dedupStrings(ss []string) []string {

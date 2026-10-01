@@ -25,7 +25,8 @@ type evalOptions struct {
 // variables are their own. Binding a variable the goal does not use is an error. Like a constant, a
 // bound value is read as the type of the argument it stands in (see ns.ArgType.Type), so a host
 // holding only text, such as an input box's, can bind ns.S("3") to a number argument; text that
-// argument cannot read is refused. The answer column still holds the value as bound.
+// argument cannot read is refused. The answer column still holds the value as bound. ValidateBound
+// checks a goal ahead of time knowing which variables the host will bind.
 func Bind(values map[Var]ns.Value) Option {
 	return func(o *evalOptions) {
 		if o.bind == nil {
