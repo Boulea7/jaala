@@ -92,7 +92,9 @@ go list -deps ./... | grep '\.' | grep -v '^github.com/panyam/jaala' | grep -v '
 - **Generators declare `Modes`; `checkModes` is shared validation, the planner is SemiNaive's.** A
   body that can never satisfy a generator is refused by every evaluator and by `Validate` with one
   message, checked on the linked program before any rewrite. Planning lives in `plan.go`, called
-  only by `SemiNaive`.
+  only by `SemiNaive`. A generator runs as soon as one of its modes is satisfied, after only the
+  ready checks (comparisons, filters, and relations with every argument bound), so a host never
+  has to write a body generator-first (#36).
 - Fixtures: `graph()` and the `eval`/`evalErr`/`col`/`std`/`baseFor` helpers in `helpers_test.go`;
   `withModules`/`evalReg` in `module_test.go`; the agni-shaped `circuit()` in `signature_test.go`;
   `vocabulary()` (no Source) in `baseover_test.go`; the `stub` language in `ns/vocabulary_test.go`.

@@ -110,10 +110,14 @@ func plan(b *Base, q Query) Query {
 	return out
 }
 
-// planBody orders a body greedily. At each step it takes the first comparison or filter whose
-// arguments are all bound, since checking early only discards; failing that, the relation or
-// callable generator with the most bound arguments, earliest written on a tie, since it fans out
-// least and binds the most for what follows. A literal nothing can make runnable keeps its written
+// planBody orders a body greedily. At each step it takes the first check whose arguments are all
+// bound, since checking early only discards: a comparison, a filter, or a relation whose arguments
+// are all bound, which only asks whether a tuple exists. Failing that, the first generator one of
+// whose Modes is satisfied (#36): a generator call is the host's own work, such as a graph walk, and
+// one placed after a relation runs once per row of it, where a relation bound only by constants is
+// a scan that costs a cheap comparison per row. Failing that, the relation with the most bound
+// arguments, earliest written on a tie, since it fans out least and binds the most for what
+// follows. A literal nothing can make runnable keeps its written
 // place at the end, where solving reports it as it always has. bound is what is bound on entry, such
 // as a rule head's demanded arguments (see magic); it is not changed.
 func planBody(b *Base, body Body, entry map[Var]bool) Body {
@@ -126,9 +130,20 @@ func planBody(b *Base, body Body, entry map[Var]bool) Body {
 	for len(pos) > 0 {
 		pick := -1
 		for i, lit := range pos {
-			if isCheck(b, lit) && checkReady(lit, bound) {
+			if (isCheck(b, lit) || isProbe(b, lit)) && checkReady(lit, bound) {
 				pick = i
 				break
+			}
+		}
+		if pick < 0 {
+			for i, lit := range pos {
+				if lit.Pos == nil {
+					continue
+				}
+				if bi, ok := b.reg.Predicate(lit.Pos.Relation); ok && bi.IsGenerator() && bi.Satisfied(boundFlags(lit.Pos, bound)) {
+					pick = i
+					break
+				}
 			}
 		}
 		if pick < 0 {
@@ -167,6 +182,16 @@ func isCheck(b *Base, lit Literal) bool {
 	}
 	bi, ok := b.reg.Predicate(lit.Pos.Relation)
 	return ok && !bi.IsGenerator()
+}
+
+// isProbe reports whether a literal reads a relation rather than calling a predicate. Once all its
+// arguments are bound (checkReady) it only asks whether a tuple exists, so it ranks with the checks.
+func isProbe(b *Base, lit Literal) bool {
+	if lit.Pos == nil {
+		return false
+	}
+	_, isPred := b.reg.Predicate(lit.Pos.Relation)
+	return !isPred
 }
 
 // checkReady reports whether every variable a check reads is bound.
