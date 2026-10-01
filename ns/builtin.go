@@ -86,15 +86,15 @@ func StandardPredicates(r *Vocabulary) error {
 		{"str.contains", strFilter(strings.Contains, "substring", "reports whether a string contains a substring")},
 		{"str.prefix", strFilter(strings.HasPrefix, "prefix", "reports whether a string starts with a prefix")},
 		{"str.suffix", strFilter(strings.HasSuffix, "suffix", "reports whether a string ends with a suffix")},
-		{"str.glob", patFilter(CompileGlob, "pattern", "reports whether a string matches a glob pattern")},
-		{"str.match", patFilter(CompilePattern, "regex", "reports whether a string matches a regular expression")},
+		{"str.glob", patFilter(CompileGlob, "pattern", "reports whether the whole string matches a shell-style glob (`*` any run, `?` one character)")},
+		{"str.match", patFilter(CompilePattern, "regex", "reports whether the string matches an unanchored regular expression")},
 		// absent(?x) is the only way to ASK about a field the source did not state. Before
 		// Value.Absent existed such a field bound to the empty string, so it was not merely hard to
 		// select, it was indistinguishable from one that was stated as "". Its negation is the useful
 		// half as often as not: `not absent(?min)` reads "this row states a lower bound".
 		{"absent", Builtin{
 			Arity: 1, Labels: []string{"value"},
-			Doc:   "reports whether the source left a field unstated, for any value",
+			Doc:   "reports whether the field carried no value at all, which is different from an empty string and from zero; `not absent(?x)` reads \"this field is stated\"",
 			Holds: func(args []Value) (bool, error) { return args[0].Absent, nil },
 		}},
 	} {
