@@ -31,10 +31,15 @@ func extendBuiltin(bi ns.Builtin, atom *Atom, bnd *binding, b *Base, yield func(
 		if err != nil {
 			return err
 		}
-		if ok {
-			return yield(bnd)
+		if !ok {
+			return nil
 		}
-		return nil
+		if b.witnessing() {
+			c := bnd.clone()
+			c.last = leaf(atom.Relation, args, nil)
+			return yield(c)
+		}
+		return yield(bnd)
 	}
 	args := make([]ns.Arg, len(atom.Args))
 	for i, a := range atom.Args {
@@ -55,6 +60,9 @@ func extendBuiltin(bi ns.Builtin, atom *Atom, bnd *binding, b *Base, yield func(
 			}
 		}
 		next.cites = append(next.cites, cites...)
+		if b.witnessing() {
+			next.last = leaf(atom.Relation, vals, cites)
+		}
 		return yield(next)
 	})
 }
@@ -168,6 +176,9 @@ func (b *Base) extendEDB(atom *Atom, bnd *binding, yield func(*binding) error) e
 			return err
 		}
 		if next, ok := unify(atom.Args, t, bnd); ok {
+			if b.witnessing() {
+				next.last = leaf(atom.Relation, t.Vals, t.Cites)
+			}
 			if err := yield(next); err != nil {
 				return err
 			}
@@ -195,6 +206,7 @@ func (b *Base) extendIDB(atom *Atom, bnd *binding, yield func(*binding) error) e
 			continue
 		}
 		out.cites = append(out.cites, t.cites...)
+		out.last = t.wit
 		if err := yield(out); err != nil {
 			return err
 		}

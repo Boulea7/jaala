@@ -13,6 +13,7 @@ import (
 type idbTuple struct {
 	vals  []ns.Value
 	cites []string
+	wit   *Witness // its first derivation, when the Eval records witnesses
 }
 
 // materialize is Naive's fixpoint: it evaluates the query's user-defined rules into b.idb by stratified
@@ -185,7 +186,16 @@ func (b *Base) applyRule(r Rule) (bool, error) {
 			}
 			vals[j] = val
 		}
-		fresh, err := b.addTuple(r.Head.Relation, idbTuple{vals: vals, cites: dedupStrings(bnd.cites)})
+		t := idbTuple{vals: vals, cites: dedupStrings(bnd.cites)}
+		if b.witnessing() && !isMagic(r.Head.Relation) {
+			text := r.text
+			if text == "" {
+				text = r.String()
+			}
+			t.wit = &Witness{Relation: shownName(r.Head.Relation), Values: vals, Rule: text,
+				Children: inWrittenOrder(append(bnd.wit[:len(bnd.wit):len(bnd.wit)], b.negationWitnesses(negs, bnd)...))}
+		}
+		fresh, err := b.addTuple(r.Head.Relation, t)
 		if err != nil {
 			return err
 		}

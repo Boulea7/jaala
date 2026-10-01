@@ -46,7 +46,7 @@ func magic(b *Base, q Query) Query {
 	for _, lit := range pos {
 		if lit.Pos != nil {
 			if call, ok := m.call(*lit.Pos, bound, prefix, nil); ok {
-				lit = Literal{Pos: &call}
+				lit = Literal{Pos: &call, at: lit.at}
 			}
 			bindAll(lit.Pos, bound)
 		}
@@ -128,7 +128,7 @@ func (m *magician) adornRules(rel, adorn string) {
 		for _, lit := range planBody(m.b, r.Body, entry).Literals {
 			if lit.Pos != nil {
 				if call, ok := m.call(*lit.Pos, bound, prefix, guard); ok {
-					lit = Literal{Pos: &call}
+					lit = Literal{Pos: &call, at: lit.at}
 				}
 				bindAll(lit.Pos, bound)
 			}
@@ -140,6 +140,7 @@ func (m *magician) adornRules(rel, adorn string) {
 			Body:      Body{Literals: lits},
 			Hops:      r.Hops,
 			HeadTypes: r.HeadTypes,
+			text:      r.text,
 		})
 	}
 }

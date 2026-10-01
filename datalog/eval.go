@@ -208,7 +208,7 @@ func evaluate(ctx context.Context, q Query, b *Base, opts []Option, rewrite func
 	// The query runs on its own copy of the Base: its context, its budget and its derived relations
 	// are its own, while the Source's tuples and their indexes stay shared (see Base).
 	nb := *b
-	nb.run = &evalRun{ctx: ctx, budget: o.budget}
+	nb.run = &evalRun{ctx: ctx, budget: o.budget, witness: o.witness}
 	b = &nb
 	if err := b.run.done(); err != nil {
 		return nil, err
@@ -226,6 +226,9 @@ func evaluate(ctx context.Context, q Query, b *Base, opts []Option, rewrite func
 	q, err = Link(q, b.reg)
 	if err != nil {
 		return nil, err
+	}
+	if o.witness {
+		q = tagWritten(q)
 	}
 	// Modes are checked on the program as linked, before any rewrite, so an evaluator that inlines a
 	// rule away still refuses what its body could never run, with the message Validate gives.
@@ -267,7 +270,9 @@ func evaluate(ctx context.Context, q Query, b *Base, opts []Option, rewrite func
 			return err
 		}
 		if ok {
-			raw = append(raw, bnd.clone())
+			c := bnd.clone()
+			c.wit = append(c.wit, b.negationWitnesses(negs, bnd)...)
+			raw = append(raw, c)
 		}
 		return nil
 	})
@@ -404,6 +409,10 @@ func passesNegations(bnd *binding, negs []Literal, b *Base) (bool, error) {
 type binding struct {
 	vals  map[Var]ns.Value
 	cites []string
+	// For a witnessed Eval: the witness of each literal solved so far, and of the one just extended
+	// by (set by extendAtom, placed by solve, which knows the literal's written position).
+	wit  []placed
+	last *Witness
 }
 
 func newBinding() *binding { return &binding{vals: map[Var]ns.Value{}} }
@@ -413,7 +422,7 @@ func (b *binding) clone() *binding {
 	for k, v := range b.vals {
 		nv[k] = v
 	}
-	return &binding{vals: nv, cites: append([]string(nil), b.cites...)}
+	return &binding{vals: nv, cites: append([]string(nil), b.cites...), wit: append([]placed(nil), b.wit...)}
 }
 
 // solve recurses over the goal literals: a positive atom fans out through extendAtom (the one
@@ -448,6 +457,10 @@ func solve(lits []Literal, i int, bnd *binding, b *Base, emit func(*binding) err
 		return fmt.Errorf("query: internal: negated literal reached the positive solver")
 	case lit.Pos != nil:
 		return b.extendAtom(lit.Pos, bnd, func(ext *binding) error {
+			if b.witnessing() {
+				ext.wit = append(ext.wit[:len(ext.wit):len(ext.wit)], placed{at: lit.at, node: ext.last})
+				ext.last = nil
+			}
 			return solve(lits, i+1, ext, b, emit)
 		})
 	default:
@@ -767,6 +780,9 @@ func projectRows(sel []Term, raw []*binding) []Row {
 	rows := make([]Row, 0, len(raw))
 	for _, bnd := range raw {
 		row := Row{Bind: make(map[Var]ns.Value, len(sel)), Cites: dedupStrings(bnd.cites)}
+		if len(bnd.wit) > 0 {
+			row.Witness = inWrittenOrder(bnd.wit)
+		}
 		for _, t := range sel {
 			if t.Var != "" {
 				row.Bind[t.Var] = bnd.vals[t.Var]

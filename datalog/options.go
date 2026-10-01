@@ -13,8 +13,9 @@ import (
 type Option func(*evalOptions)
 
 type evalOptions struct {
-	bind   map[Var]ns.Value
-	budget int64
+	bind    map[Var]ns.Value
+	budget  int64
+	witness bool
 }
 
 // Bind gives goal variables values from the host, so a parameterized query needs no program text built
@@ -53,9 +54,10 @@ func (e *BudgetExceeded) Error() string {
 // evalRun is one Eval's own state, carried on its copy of the Base: its context, and the work it has
 // done against its budget.
 type evalRun struct {
-	ctx    context.Context
-	budget int64
-	used   int64
+	ctx     context.Context
+	budget  int64
+	used    int64
+	witness bool // record witnesses (see Witnesses)
 }
 
 // ctxCheckEvery is how many units of work pass between checks of the context. Checking on every

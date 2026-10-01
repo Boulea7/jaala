@@ -30,7 +30,12 @@ type SemiNaive struct {
 func (s SemiNaive) Eval(ctx context.Context, q Query, b *Base, opts ...Option) ([]Row, error) {
 	var rewrite func(*Base, Query) Query
 	if !s.WrittenOrder {
-		rewrite = func(b *Base, q Query) Query { return plan(b, magic(b, unfold(b, q))) }
+		rewrite = func(b *Base, q Query) Query {
+			if b.witnessing() {
+				return plan(b, magic(b, q)) // inlining would remove a relation's node from the witness
+			}
+			return plan(b, magic(b, unfold(b, q)))
+		}
 	}
 	return evaluate(ctx, q, b, opts, rewrite, s.materialize)
 }
@@ -163,6 +168,6 @@ func readingDelta(r Rule, i int) Rule {
 	lits := append([]Literal(nil), r.Body.Literals...)
 	a := *lits[i].Pos
 	a.Relation += deltaSep
-	lits[i] = Literal{Pos: &a}
-	return Rule{Head: r.Head, Body: Body{Literals: lits}, Hops: r.Hops, HeadTypes: r.HeadTypes}
+	lits[i] = Literal{Pos: &a, at: lits[i].at}
+	return Rule{Head: r.Head, Body: Body{Literals: lits}, Hops: r.Hops, HeadTypes: r.HeadTypes, text: r.text}
 }
