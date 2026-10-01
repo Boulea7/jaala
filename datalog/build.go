@@ -59,8 +59,9 @@ func MustParse(s string) Query {
 // and deduped. Rule-defined relations and predicates are excluded; only base relations count as
 // reads. A host uses it to declare which facts a query-backed check depends on.
 //
-// It counts reads inside the derived modules the query links in, since a check built on
-// net.has_test_point depends on whatever net.has_test_point reads. When the query does not link, it
+// It counts reads inside the module relations the query reaches, since a check built on
+// net.has_test_point depends on whatever net.has_test_point reads, and only those: a relation
+// defined beside it in the same module, but never reached, is not a dependency. When the query does not link, it
 // reports the query's own reads, and Validate says why.
 func Reads(q Query, reg *ns.Vocabulary) []string {
 	if linked, err := Link(q, reg); err == nil {

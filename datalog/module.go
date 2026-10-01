@@ -83,8 +83,10 @@ func (language) Check(v *ns.Vocabulary) (map[string][]ns.ArgSig, error) {
 // members' signatures. It depends only on the vocabulary, so it is memoized there and shared by every
 // Base and query over it.
 type resolution struct {
-	rules [][]Rule // by module index; nil for a module in another language
-	sigs  map[string][]ns.ArgSig
+	// byHead is every module rule by the relation it defines, private members included under their
+	// linked names, so Link can load exactly the relations a query reaches.
+	byHead map[string][]Rule
+	sigs   map[string][]ns.ArgSig
 }
 
 type resolutionKey struct{}
@@ -112,7 +114,8 @@ func resolved(v *ns.Vocabulary) (*resolution, error) {
 // stands down until it has some.
 func resolveAll(v *ns.Vocabulary) (*resolution, error) {
 	mods := v.Modules()
-	res := &resolution{rules: make([][]Rule, len(mods))}
+	res := &resolution{byHead: map[string][]Rule{}}
+	perModule := make([][]Rule, len(mods)) // nil for a module in another language
 	privates := map[string]bool{}
 	var all []Rule
 	for i, m := range mods {
@@ -131,16 +134,18 @@ func resolveAll(v *ns.Vocabulary) (*resolution, error) {
 			}
 		}
 		for _, r := range rules {
-			res.rules[i] = append(res.rules[i], resolveRule(v, m.Path, own, i, r))
+			rr := resolveRule(v, m.Path, own, i, r)
+			perModule[i] = append(perModule[i], rr)
+			res.byHead[rr.Head.Relation] = append(res.byHead[rr.Head.Relation], rr)
 		}
-		all = append(all, res.rules[i]...)
+		all = append(all, perModule[i]...)
 	}
 	if len(all) == 0 {
 		return res, nil
 	}
 	hasBase := len(v.BaseRelations()) > 0
 	if hasBase {
-		for i, rules := range res.rules {
+		for i, rules := range perModule {
 			for _, rule := range rules {
 				for _, a := range ruleAtoms(rule.Body) {
 					if !privates[a.Relation] && !v.Has(a.Relation) {

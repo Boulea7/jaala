@@ -274,3 +274,59 @@ func TestConcurrentEvalsShareOneCheck(t *testing.T) {
 		}
 	}
 }
+
+// countingWalk registers a generator that counts its calls, standing in for an expensive walk such as
+// Declaire's graph.reach over SQLite.
+func countingWalk(t *testing.T, v *ns.Vocabulary) *int {
+	t.Helper()
+	calls := new(int)
+	if err := v.AddPredicate("walk", ns.Builtin{Arity: 2, Gen: func(src ns.Source, args []ns.Arg, emit func([]ns.Value, []string) error) error {
+		*calls++
+		return nil
+	}}); err != nil {
+		t.Fatal(err)
+	}
+	return calls
+}
+
+// A query pays for the relations it names, not for their neighbours in the same module (#7, Declaire's
+// go.test beside go.covers: 568s when naming the cheap one ran the expensive one).
+func TestOnlyReachedModuleRelationsRun(t *testing.T) {
+	v := std(graph())
+	calls := countingWalk(t, v)
+	if err := v.AddModule("go", LanguageName, `
+_tested(?f) :- node(?f);
+test(?f) :- _tested(?f);
+_reached(?t, ?f) :- walk(?t, ?f);
+covers(?t, ?f) :- test(?t), _reached(?t, ?f);
+`); err != nil {
+		t.Fatal(err)
+	}
+	q, err := Link(mustParse(t, `go.test(?f) => ?f`), v)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var heads []string
+	for _, r := range q.Rules {
+		heads = append(heads, displayName(r.Head.Relation))
+	}
+	if got := strings.Join(heads, ","); got != "go.test,go._tested" {
+		t.Errorf("linked %s, want go.test and the private member it reads, not go.covers or its helper", got)
+	}
+	if got := col(evalReg(t, v, `go.test(?f) => ?f`), "f"); got != "a,b,c,d,x" || *calls != 0 {
+		t.Errorf("go.test = %s with %d walk calls, want a,b,c,d,x and none", got, *calls)
+	}
+	evalReg(t, v, `go.covers(?t, ?f) => ?t`)
+	if *calls == 0 {
+		t.Error("positive control: naming go.covers made no walk calls, so the counter sees nothing")
+	}
+}
+
+// Reads reports the base relations a query depends on, so a relation only an unreached neighbour
+// reads is not among them.
+func TestReadsFollowOnlyReachedRelations(t *testing.T) {
+	v := withModules(t, "m", `cheap(?x) :- node(?x); pricey(?x, ?w) :- weight(?x, ?w);`)
+	if got := strings.Join(Reads(mustParse(t, `m.cheap(?x)`), v), ","); got != "node" {
+		t.Errorf("Reads(m.cheap) = %s, want node only", got)
+	}
+}

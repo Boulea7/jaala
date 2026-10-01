@@ -10,10 +10,14 @@ import (
 // ordinary query that evaluates without the vocabulary's modules. Naive.Eval, Validate, Reads and
 // GeneratorFirstRules link first; a host calls Link itself to inspect or cache the expanded program.
 //
-// Loading is transitive and by need: a query naming net.has_test_point pulls in the module call that
-// registered it, then whatever that module's rules read, and so on. Each call is loaded once, however
-// many paths reach it. Module rules come after the query's own, heads renamed to full paths and
-// private members to names no query can spell. Because the result is ordinary rules, stratification,
+// Loading is transitive and by need, one relation at a time: a query naming net.has_test_point pulls
+// in the rules defining net.has_test_point, then the rules of whatever those read, and so on. A
+// member defined in the same module but never reached is not loaded, so a query pays for the
+// relations it names, not for their neighbours: a cheap member and an expensive one can share a
+// module. Each relation is loaded once, however many paths reach it. Module rules come after the
+// query's own, heads renamed to full paths and private members to names no query can spell. The
+// query's own rules are all kept, reached or not, so Validate still checks every rule its author
+// wrote. Because the result is ordinary rules, stratification,
 // negation safety and range restriction apply to module rules exactly as to a query's own.
 //
 // A query's own rules stay local and bare. Link refuses a query rule whose head is a qualified path
@@ -55,17 +59,17 @@ func Link(q Query, reg *ns.Vocabulary) (Query, error) {
 	if err != nil {
 		return Query{}, err
 	}
-	loaded := map[int]bool{}
+	loaded := map[string]bool{}
 	var linked []Rule
 	for len(pending) > 0 {
 		name := pending[len(pending)-1]
 		pending = pending[:len(pending)-1]
-		id, ok := reg.DefiningModule(name)
-		if !ok || loaded[id] {
+		rules := res.byHead[name]
+		if len(rules) == 0 || loaded[name] {
 			continue
 		}
-		loaded[id] = true
-		for _, r := range res.rules[id] {
+		loaded[name] = true
+		for _, r := range rules {
 			linked = append(linked, r)
 			for _, a := range ruleAtoms(r.Body) {
 				pending = append(pending, a.Relation)
