@@ -182,6 +182,13 @@ func TestDemandAgreesWithNaiveOnRandomGraphs(t *testing.T) {
 		leftReach + `cov(?a) :- reach(?a, ?b), weight(?b, ?w), ?w > 6; node(?c), not cov(?c) => ?c`,
 		`q(?y) :- weight(?y, ?w), ?w > 5; p(?x, ?y) :- edge(?x, ?y), not q(?y); p(?x, ?z) :- p(?x, ?y), edge(?y, ?z), not q(?z); p("v0", ?z) => ?z`,
 		leftReach + `node(?s), weight(?s, ?w), reach(?s, ?x) => ?s, count(?x)`,
+		roles + `role(?n, "sink") => ?n`,
+		roles + `role(?n, "source") => ?n`,
+		roles + `role(?n, "source"), reach(?x, _) => ?n, ?x`,
+		`deg(?n, count(?w)) :- edge(?n, ?m), weight(?m, ?w); hub(?n, "a") :- deg(?n, ?k), ?k > 0; ` +
+			`hub(?n, "b") :- edge(_, ?n); hub(?n, "a") => ?n`,
+		rightReach + `far(?a, ?b) :- reach(?a, ?b); far(?a, ?b) :- reach(?a, ?b), node(?b); ` +
+			`lone(?n, "a") :- node(?n), not far(_, _); lone(?n, "b") :- edge(?n, _); lone(?n, "a") => ?n`,
 	}
 	for seed := int64(1); seed <= 25; seed++ {
 		b := baseFor(std(randomGraph(seed, 5+int(seed%8), 0.1+float64(seed%4)*0.07)))
@@ -423,5 +430,121 @@ func TestACallIntoItsOwnRecursionIsLeftAlone(t *testing.T) {
 	}
 	if got := rowSet(eval(t, line(6), text)); len(got) != 6 {
 		t.Errorf("rows %v, want the 5 edges and v2-v4 (only v4 reaches v5 in one step)", got)
+	}
+}
+
+// role's two clauses, each called with its kind bound: a "source" clause reading reach with nothing
+// bound, and a "sink" clause that doesn't read it. Asked for sinks, the source clause's guard never
+// holds.
+const roles = leftReach + `role(?n, "source") :- reach(?n, _); role(?n, "sink") :- edge(_, ?n); `
+
+// A call with nothing bound, from a clause no caller demands, derives nothing (#60): asked for sinks,
+// reach is never built, so the work grows with the chain rather than its square.
+func TestDemandReachesACallWithNothingBound(t *testing.T) {
+	sinks := roles + `role(?n, "sink") => ?n`
+	ratio := float64(workOf(t, SemiNaive{}, line(400), sinks)) / float64(workOf(t, SemiNaive{}, line(200), sinks))
+	if ratio > 2.5 {
+		t.Errorf("a dead clause's closure: work grew %.1fx when the chain doubled, want about 2x", ratio)
+	}
+	full := float64(workOf(t, SemiNaive{WrittenOrder: true}, line(400), sinks)) / float64(workOf(t, SemiNaive{WrittenOrder: true}, line(200), sinks))
+	if full < 3.5 {
+		t.Errorf("control: without demand the work grew only %.1fx, so reach is not being built in full", full)
+	}
+	lone := leftReach + `far(?a, ?b) :- reach(?a, ?b); far(?a, ?b) :- reach(?a, ?b), node(?b); ` +
+		`lone(?n, "a") :- node(?n), not far(_, _); lone(?n, "b") :- edge(?n, _); lone(?n, "b") => ?n`
+	if ratio := float64(workOf(t, SemiNaive{}, line(400), lone)) / float64(workOf(t, SemiNaive{}, line(200), lone)); ratio > 2.5 {
+		t.Errorf("a dead clause's negated closure: work grew %.1fx when the chain doubled, want about 2x", ratio)
+	}
+	if got := col(eval(t, line(6), sinks), "n"); got != "v1,v2,v3,v4,v5" {
+		t.Errorf("sinks = %s, want v1..v5", got)
+	}
+	if got := col(eval(t, line(6), roles+`role(?n, "source") => ?n`), "n"); got != "v0,v1,v2,v3,v4" {
+		t.Errorf("sources = %s, want v0..v4: a demanded clause still reads reach in full", got)
+	}
+}
+
+// A clause no caller demands never calls its generator, even in a mode with nothing bound.
+func TestADeadClauseNeverCallsAnAllFreeGenerator(t *testing.T) {
+	const text = `role(?n, "source") :- walk(?n, _); role(?n, "sink") :- edge(_, ?n); `
+	run := func(goal string) int {
+		v := std(line(6))
+		calls := walker(t, v, [][]bool{{false, false}})
+		if _, err := (SemiNaive{}).Eval(bg, mustParse(t, text+goal), baseFor(v)); err != nil {
+			t.Fatal(err)
+		}
+		return len(*calls)
+	}
+	if n := run(`role(?n, "sink") => ?n`); n != 0 {
+		t.Errorf("asked for sinks, walk ran %d times, want 0", n)
+	}
+	if n := run(`role(?n, "source") => ?n`); n == 0 {
+		t.Error("control: asked for sources, walk never ran")
+	}
+}
+
+// When something reads a relation in full anyway, its all-free calls read the original too, rather
+// than deriving it a second time behind a guard.
+func TestAllFreeCallsFoldBackWhenTheOriginalIsRead(t *testing.T) {
+	free := adornedName("reach", "ff")
+	rewritten := func(goal string) string {
+		b := baseFor(std(line(6)))
+		return fmt.Sprint(magic(b, unfold(b, mustParse(t, roles+goal))).Rules)
+	}
+	if !strings.Contains(rewritten(`role(?n, "source") => ?n`), free) {
+		t.Fatal("control: the source clause's call is not rewritten all-free, so this test proves nothing")
+	}
+	if got := rewritten(`role(?n, "source"), reach(?x, _) => ?n, ?x`); strings.Contains(got, free) {
+		t.Errorf("reach is read in full and still derived all-free:\n%s", got)
+	}
+	rows := eval(t, line(4), roles+`role(?n, "source"), reach(?x, _) => ?n, ?x`)
+	if len(rows) != 9 {
+		t.Errorf("%d rows, want 9 (three sources by three starts)", len(rows))
+	}
+}
+
+// A recursive call passing on the demand its rule received adds no magic rule restating the guard.
+func TestARecursiveAllFreeCallAddsNoTautology(t *testing.T) {
+	b := baseFor(std(line(6)))
+	for _, r := range magic(b, unfold(b, mustParse(t, roles+`role(?n, "source") => ?n`))).Rules {
+		if len(r.Body.Literals) == 1 && r.Body.Literals[0].Pos != nil && sameAtom(*r.Body.Literals[0].Pos, r.Head) {
+			t.Errorf("rule %v restates its own guard", r)
+		}
+	}
+}
+
+// Witnessed, the demanded clause answers as unwitnessed (factoring is off, demand is not).
+func TestAWitnessedAllFreeCallAnswersAsUnwitnessed(t *testing.T) {
+	text := roles + `role(?n, "source") => ?n`
+	plain, err := SemiNaive{}.Eval(bg, mustParse(t, text), baseFor(std(line(6))))
+	if err != nil {
+		t.Fatal(err)
+	}
+	rows, err := SemiNaive{}.Eval(bg, mustParse(t, text), baseFor(std(line(6))), Witnesses())
+	if err != nil || !reflect.DeepEqual(rowSet(rows), rowSet(plain)) || len(rows) != 5 {
+		t.Errorf("witnessed %v %v, unwitnessed %v; want the same five sources", rowSet(rows), err, rowSet(plain))
+	}
+	for _, r := range rows {
+		for _, c := range r.Cites {
+			if strings.Contains(c, magicPrefix) {
+				t.Errorf("row %v cites a magic tuple: %s", r.Bind, c)
+			}
+		}
+	}
+}
+
+// An aggregating relation is read in full (#4), even from a demanded clause that calls it with nothing
+// bound.
+func TestAnAggregatingRelationCalledAllFreeIsReadInFull(t *testing.T) {
+	const rest = `hub(?n, "a") :- deg(?n, ?k), ?k > 0; hub(?n, "b") :- edge(_, ?n); hub(?n, "a") => ?n`
+	rewritten := func(deg string) string {
+		b := baseFor(std(line(6)))
+		return fmt.Sprint(magic(b, unfold(b, mustParse(t, deg+rest))).Rules)
+	}
+	free := adornedName("deg", "ff")
+	if !strings.Contains(rewritten(`deg(?n, ?m) :- edge(?n, ?m); deg(?n, ?m) :- edge(?m, ?n); `), free) {
+		t.Fatal("control: a plain deg is not called all-free, so this test proves nothing")
+	}
+	if got := rewritten(`deg(?n, count(?m)) :- edge(?n, ?m); `); strings.Contains(got, free) {
+		t.Errorf("the aggregating deg is demanded all-free:\n%s", got)
 	}
 }

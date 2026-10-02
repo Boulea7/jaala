@@ -102,8 +102,12 @@ go list -deps ./... | grep '\.' | grep -v '^github.com/panyam/jaala' | grep -v '
   a factored reachable set (`factor.go`), so an answer cites one whole path, and a supplementary
   relation (`\x00s:`, #54), a stored body prefix. Under Witnesses a supplementary tuple carries its
   literals' witnesses as `idbTuple.parts`, which `solve` splices back in at their written positions.
-  Factoring is off for a witnessed Eval. A call with nothing bound isn't rewritten and reads its
-  relation in full, even from a clause whose guard never holds (#60).
+  Factoring is off for a witnessed Eval. A call with nothing bound, from a guarded body, calls the
+  all-free relation (`reach_ff`) under a zero-argument magic relation, so a clause whose guard never
+  holds derives nothing (#60). From the goal or a rule evaluated in full it reads the original, and
+  when the original is read anyway `foldFree` points the all-free calls back at it, then drops the
+  rewrite's rules that read what it removed (`withoutOrphans`), since a rule reading a relation with
+  no rules errs as unknown rather than deriving nothing.
 - **A rule head may aggregate (#4), and that rule is its relation's only one.** `applyAggregate`
   reuses the goal's `aggregate`, so grouping, `distinct`, citations and the one-row-over-nothing case
   match an answer's. `stratify` makes its body edges strict, as negation's are. Demand stops at it
