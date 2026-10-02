@@ -55,14 +55,16 @@ go list -deps ./... | grep '\.' | grep -v '^github.com/panyam/jaala' | grep -v '
   keys read the text. Only a number type pulls a compared constant, which keeps #8's "a number and
   a word have no order". `ValidateBound` binds `ns.Absent()`, which coercion and the Domain check
   (`checkArgValues`, #68) both leave alone, so a variable the host will bind is never refused for
-  its type or its value.
+  its type or its value. `checkArgValues` is the only validation that reads a constant's value, so
+  a new placeholder or substitution has to pass it.
 - **Nothing inside a module resolution may call `Vocabulary.Signature` or `Check`.** They run
   through the memo entry that is mid-computation, and `sync.Once` deadlocks on re-entry. That is
   why the validation base carries `sigs` while it checks module rules.
 - **The answer order is a total order, and hosts see it.** `orderValues` ranks absent, then numbers by
   value, then text (#8). Comparing as numbers only when both are numbers cycles on a mixed column
   (2 < 10, "10" < "1a" < "2"). `dedupSort` sorts before it dedups, because dedup keys on text
-  (`N(1)` and `S("1")` are one row) and the survivor must not depend on arrival. `order by`, `limit`
+  (`N(1)` and `S("1")` are one row) and the survivor must not depend on arrival. An absent value
+  keys apart from `""` (`keyText`, the index's `absentKey`, #62), in answers and in groups. `order by`, `limit`
   and `offset` apply last, against the columns as written, so a host-bound variable is still one.
   Moving the default order changes agni's goldens, so it ships with an upgrade note.
 - **Comments use agni's circuit vocabulary on purpose** (`doc.go` says so). Host-specific test
@@ -80,7 +82,8 @@ go list -deps ./... | grep '\.' | grep -v '^github.com/panyam/jaala' | grep -v '
 - **Give a test a control that proves its fixture can tell the cases apart.** Most surviving
   mutations here were fixtures that could not: a recursion guard tested only with two-rule
   relations, a column-order test whose sort orders coincided, a "free" call the planner bound, a
-  citation-leak fixture whose first derivation happened to follow the leaked path. A `control:`
+  citation-leak fixture whose first derivation happened to follow the leaked path, a `ValidateBound`
+  test with no closed-Domain argument (#68, which shipped). A `control:`
   assertion (Naive walks n times; the plan does start with the reordered literal) catches that.
   **Inlining hides rewrites**: a single-rule relation is folded into its caller, so a test of how
   demand, planning or the fixpoint treat a derived relation gives it two rules or runs with
@@ -146,7 +149,8 @@ go list -deps ./... | grep '\.' | grep -v '^github.com/panyam/jaala' | grep -v '
   path in walk order) and `workOf` in `magic_test.go`; `reversedLine` and `counter` in
   `seminaive_test.go`; `parts()` (counts and numbers whose text and value orders differ) in
   `order_test.go`; `typedNets()` (number counts, a numeric-looking ref, a pin stored as `ns.N`, an
-  untyped relation) and `answersAs` in `coerce_test.go`. `both()` takes Eval options, so a `Bind`
+  untyped relation) and `answersAs` in `coerce_test.go`; `netlist()` (C1's two pins both on GND, so
+  counting bindings and distinct values disagree; `ohms` carries a unit) in `aggregate_test.go`. `both()` takes Eval options, so a `Bind`
   case runs through all three evaluators. `both()` compares rows in order, so every test checks the
   answer order too. Don't compare rows by `fmt.Sprint`: `ns.Value.Num` is a pointer, so the text
   carries an address. datalog's tests import `stdlib` for `std()`; production datalog code must not.
