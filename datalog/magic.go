@@ -1,6 +1,7 @@
 package datalog
 
 import (
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -37,9 +38,14 @@ import (
 // fact m_covers_fb("p.write"). See fromConstants.
 //
 // Which arguments are bound at a call depends on the order a body runs in, so each body is ordered by
-// the planner first, starting from what its head has bound. A call with nothing bound is left calling
-// the original relation, which is evaluated in full as before, and so is a call to a relation whose
-// rule aggregates (#4).
+// the planner first, starting from what its head has bound. A call with nothing bound, from a body the
+// rewrite guards, is demanded all the same (#60): it calls reach_ff, whose rules are guarded by the
+// zero-argument m_reach_ff(), derived from the caller's guard. When no caller is demanded, nothing in
+// reach is derived. A call with nothing bound from the goal, or from a rule evaluated in full, would
+// demand it unconditionally, so it is left calling the original relation, which is evaluated in full
+// as before. So is a call to a relation whose rule aggregates (#4). When the original is evaluated in
+// full anyway, because something still reads it, the all-free calls read it too (see foldFree), so a
+// relation is never derived twice.
 //
 // Demand passes through relations that use negation (#34), and into a negated call: in
 // nocov(?c) :- p(?c), not cov(?c), demand for nocov becomes demand for cov at the ?c that reach the
@@ -86,7 +92,105 @@ func magicWith(b *Base, q Query, intoNeg bool) Query {
 		return q
 	}
 	out.Rules = append(originals, m.rules...)
-	return dropUnreached(q, out)
+	return m.foldFree(q, dropUnreached(q, out))
+}
+
+// foldFree points the all-free calls of a relation back at the original, and drops the all-free
+// relation, whenever the rewritten program still reads the original: it is evaluated in full anyway,
+// and deriving it a second time behind a guard would only add work. Folding one relation back can
+// leave another's original read, through the original rules it now reaches, so it repeats until none
+// changes.
+func (m *magician) foldFree(before, q Query) Query {
+	free := m.free
+	for {
+		read := reached(q)
+		folded := map[string]string{} // all-free relation -> original
+		var gone []string
+		var left []adorned
+		for _, f := range free {
+			if !read[f.rel] {
+				left = append(left, f)
+				continue
+			}
+			folded[adornedName(f.rel, f.adorn)] = f.rel
+			gone = append(gone, magicName(f.rel, f.adorn))
+		}
+		if len(folded) == 0 {
+			return q
+		}
+		free = left
+		rename := func(lits []Literal) []Literal {
+			out := make([]Literal, len(lits))
+			for i, l := range lits {
+				switch {
+				case l.Pos != nil && folded[l.Pos.Relation] != "":
+					a := Atom{Relation: folded[l.Pos.Relation], Args: l.Pos.Args}
+					l = Literal{Pos: &a, at: l.at}
+				case l.Neg != nil && folded[l.Neg.Relation] != "":
+					a := Atom{Relation: folded[l.Neg.Relation], Args: l.Neg.Args}
+					l = Literal{Neg: &a, at: l.at}
+				}
+				out[i] = l
+			}
+			return out
+		}
+		var rules []Rule
+		for _, r := range q.Rules {
+			if folded[r.Head.Relation] != "" || slices.Contains(gone, r.Head.Relation) {
+				continue
+			}
+			r.Body = Body{Literals: rename(r.Body.Literals)}
+			rules = append(rules, r)
+		}
+		q.Rules = withoutOrphans(rules)
+		q.Goal = Body{Literals: rename(q.Goal.Literals)}
+		q = dropUnreached(before, q)
+	}
+}
+
+// withoutOrphans drops every rule that reads a relation the rewrite made and no rule defines any
+// more, such as a supplementary relation over a magic relation foldFree removed. Such a rule can never
+// fire, and evaluating it would read an unknown relation. A rewrite's relations are only ever read
+// positively, so dropping the reader changes nothing else; it repeats, since a dropped rule can leave
+// another relation without rules.
+func withoutOrphans(rules []Rule) []Rule {
+	for {
+		defined := map[string]bool{}
+		for _, r := range rules {
+			defined[r.Head.Relation] = true
+		}
+		kept := rules[:0:0]
+		for _, r := range rules {
+			orphan := false
+			for _, l := range r.Body.Literals {
+				if l.Pos != nil && strings.Contains(l.Pos.Relation, "\x00") && !defined[l.Pos.Relation] {
+					orphan = true
+					break
+				}
+			}
+			if !orphan {
+				kept = append(kept, r)
+			}
+		}
+		if len(kept) == len(rules) {
+			return rules
+		}
+		rules = kept
+	}
+}
+
+// sameAtom reports whether two atoms are the same relation over the same terms.
+func sameAtom(a, b Atom) bool {
+	if a.Relation != b.Relation || len(a.Args) != len(b.Args) {
+		return false
+	}
+	for i := range a.Args {
+		x, y := a.Args[i], b.Args[i]
+		if x.Var != y.Var || (x.Const == nil) != (y.Const == nil) || (x.Const != nil && !valueEq(*x.Const, *y.Const)) {
+			return false
+		}
+	}
+	return true
 }
 
 // drain adorns the rules of every relation demand has reached so far.
@@ -113,11 +217,11 @@ func (m *magician) fromConstants(r Rule) Body {
 		case lit.Pos != nil && !m.reaches(lit.Pos.Relation, r.Head.Relation):
 			if call, ok := m.factor(*lit.Pos, none); ok {
 				lit = Literal{Pos: &call, at: lit.at}
-			} else if m.wants(*lit.Pos, none) {
+			} else if m.wants(*lit.Pos, none, false) {
 				call := m.call(*lit.Pos, none, nil)
 				lit = Literal{Pos: &call, at: lit.at}
 			}
-		case lit.Neg != nil && !m.reaches(lit.Neg.Relation, r.Head.Relation) && m.wants(*lit.Neg, none):
+		case lit.Neg != nil && !m.reaches(lit.Neg.Relation, r.Head.Relation) && m.wants(*lit.Neg, none, false):
 			call := m.call(*lit.Neg, none, nil)
 			lit = Literal{Neg: &call, at: lit.at}
 		}
@@ -141,9 +245,10 @@ type magician struct {
 	intoNeg  bool            // push demand into negated calls
 	done     map[string]bool // adorned relations already queued
 	queue    []adorned
-	rules    []Rule // magic, supplementary, adorned and factored rules, in the order made
-	factored int    // goal calls factored so far, numbering their relations
-	supplied int    // supplementary relations made so far, numbering them
+	rules    []Rule    // magic, supplementary, adorned and factored rules, in the order made
+	factored int       // goal calls factored so far, numbering their relations
+	supplied int       // supplementary relations made so far, numbering them
+	free     []adorned // all-free adornments made (#60), for foldFree
 }
 
 type adorned struct{ rel, adorn string }
@@ -168,7 +273,7 @@ func (m *magician) body(guard *Atom, lits []Literal, entry map[Var]bool, supply 
 				return call, true
 			}
 		}
-		if !m.wants(a, bound) {
+		if !m.wants(a, bound, guard != nil) {
 			return a, false
 		}
 		if supply && doesWork(front) {
@@ -188,7 +293,7 @@ func (m *magician) body(guard *Atom, lits []Literal, entry map[Var]bool, supply 
 	}
 	var outNegs []Literal
 	for _, lit := range negs {
-		if m.intoNeg && m.wants(*lit.Neg, bound) {
+		if m.intoNeg && m.wants(*lit.Neg, bound, guard != nil) {
 			call, _ := demand(*lit.Neg)
 			lit = Literal{Neg: &call, at: lit.at}
 		}
@@ -198,13 +303,13 @@ func (m *magician) body(guard *Atom, lits []Literal, entry map[Var]bool, supply 
 }
 
 // wants reports whether a call can be rewritten for demand: it reads a derived relation and binds at
-// least one argument.
-func (m *magician) wants(a Atom, bound map[Var]bool) bool {
+// least one argument, or binds none from a body the rewrite guards (#60).
+func (m *magician) wants(a Atom, bound map[Var]bool, guarded bool) bool {
 	if _, derived := m.byHead[a.Relation]; !derived || m.aggregates(a.Relation) {
 		return false
 	}
 	adorn, _ := adornment(a, bound)
-	return strings.Contains(adorn, "b")
+	return guarded || strings.Contains(adorn, "b")
 }
 
 // aggregates reports whether rel is an aggregating relation (#4), which is read in full: its head's
@@ -221,15 +326,21 @@ func (m *magician) aggregates(rel string) bool {
 
 // call adds the magic rule passing a call's demand in, reading front (the guard and the literals that
 // run before the call), and returns the call to the adorned relation.
+//
+// A magic rule that would only restate its own guard, as a recursive call passing on the demand it
+// received does, is left out.
 func (m *magician) call(a Atom, bound map[Var]bool, front []Literal) Atom {
 	adorn, demanded := adornment(a, bound)
-	m.rules = append(m.rules, Rule{
-		Head: Atom{Relation: magicName(a.Relation, adorn), Args: demanded},
-		Body: Body{Literals: append([]Literal(nil), front...)},
-	})
+	head := Atom{Relation: magicName(a.Relation, adorn), Args: demanded}
+	if !(len(front) == 1 && front[0].Pos != nil && sameAtom(*front[0].Pos, head)) {
+		m.rules = append(m.rules, Rule{Head: head, Body: Body{Literals: append([]Literal(nil), front...)}})
+	}
 	if key := adornedName(a.Relation, adorn); !m.done[key] {
 		m.done[key] = true
 		m.queue = append(m.queue, adorned{a.Relation, adorn})
+		if !strings.Contains(adorn, "b") {
+			m.free = append(m.free, adorned{a.Relation, adorn})
+		}
 	}
 	return Atom{Relation: adornedName(a.Relation, adorn), Args: a.Args}
 }
