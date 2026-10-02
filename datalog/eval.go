@@ -245,6 +245,9 @@ func evaluate(ctx context.Context, q Query, b *Base, opts []Option, rewrite func
 	if err := checkModes(b, "the query", q.Goal); err != nil {
 		return nil, err
 	}
+	if err := checkNoAggregates("the query", q.Goal); err != nil {
+		return nil, err
+	}
 	if rewrite != nil {
 		// The rules are checked as linked too, before the rewrite renames them, so an error names
 		// the program's relations rather than an adorned or factored one.

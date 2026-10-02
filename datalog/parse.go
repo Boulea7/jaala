@@ -399,7 +399,7 @@ func parseRule(headText, bodyText string) (Rule, error) {
 func parseHead(s string) (Atom, []ns.ArgType, error) {
 	open := strings.IndexByte(s, '(')
 	if open < 0 || !strings.HasSuffix(strings.TrimSpace(s), ")") || !strings.Contains(s, ":") {
-		a, err := parseAtom(s)
+		a, err := parseHeadAtom(s)
 		return a, nil, err
 	}
 	inner := strings.TrimSpace(s)
@@ -425,7 +425,7 @@ func parseHead(s string) (Atom, []ns.ArgType, error) {
 		plain = append(plain, a)
 		types = append(types, t)
 	}
-	head, err := parseAtom(strings.TrimSpace(s[:open]) + "(" + strings.Join(plain, ",") + ")")
+	head, err := parseHeadAtom(strings.TrimSpace(s[:open]) + "(" + strings.Join(plain, ",") + ")")
 	if err != nil || !declared {
 		return head, nil, err
 	}
@@ -499,7 +499,19 @@ func parseLiteral(s string) (Literal, error) {
 	return Literal{Compare: &cmp}, nil
 }
 
-func parseAtom(s string) (Atom, error) {
+func parseAtom(s string) (Atom, error) { return parseAtomArgs(s, parseTerm) }
+
+// parseHeadAtom parses a rule head, whose arguments may also be aggregates: degree(?n, count(?m)).
+func parseHeadAtom(s string) (Atom, error) {
+	return parseAtomArgs(s, func(a string) (Term, error) {
+		if a = strings.TrimSpace(a); a != "" && a[0] != '"' && strings.IndexByte(a, '(') >= 0 {
+			return parseAggregate(a)
+		}
+		return parseTerm(a)
+	})
+}
+
+func parseAtomArgs(s string, term func(string) (Term, error)) (Atom, error) {
 	open := strings.IndexByte(s, '(')
 	if open < 0 || !strings.HasSuffix(strings.TrimSpace(s), ")") {
 		return Atom{}, fmt.Errorf("query: malformed atom %q (want reln(args))", s)
@@ -515,7 +527,7 @@ func parseAtom(s string) (Atom, error) {
 		if strings.TrimSpace(a) == "" {
 			continue
 		}
-		t, err := parseTerm(a)
+		t, err := term(a)
 		if err != nil {
 			return Atom{}, err
 		}
@@ -592,25 +604,32 @@ func parseSelect(proj string) ([]Term, error) {
 }
 
 func parseSelItem(p string) (Term, error) {
-	if i := strings.IndexByte(p, '('); i >= 0 { // aggregate: func(?x)
-		fn := strings.TrimSpace(p[:i])
-		if !strings.HasSuffix(p, ")") {
-			return Term{}, fmt.Errorf("query: malformed aggregate %q", p)
-		}
-		inner := strings.TrimSpace(p[i+1 : len(p)-1])
-		distinct := false
-		if rest, ok := cutWord(inner, "distinct"); ok {
-			distinct, inner = true, strings.TrimSpace(rest)
-		}
-		if len(inner) < 2 || inner[0] != '?' {
-			return Term{}, fmt.Errorf("query: aggregate %s(...) expects a ?variable, got %q", fn, inner)
-		}
-		return Term{Agg: &Aggregate{Func: fn, Var: Var(inner[1:]), Distinct: distinct}}, nil
+	if strings.IndexByte(p, '(') >= 0 {
+		return parseAggregate(p)
 	}
 	if p[0] != '?' || len(p) == 1 {
 		return Term{}, fmt.Errorf("query: projection column %q must be a ?variable or an aggregate", p)
 	}
 	return Term{Var: Var(p[1:])}, nil
+}
+
+// parseAggregate parses func([distinct] ?x), the form an aggregate takes in a projection, a having
+// and a rule head.
+func parseAggregate(p string) (Term, error) {
+	i := strings.IndexByte(p, '(')
+	fn := strings.TrimSpace(p[:i])
+	if !strings.HasSuffix(p, ")") {
+		return Term{}, fmt.Errorf("query: malformed aggregate %q", p)
+	}
+	inner := strings.TrimSpace(p[i+1 : len(p)-1])
+	distinct := false
+	if rest, ok := cutWord(inner, "distinct"); ok {
+		distinct, inner = true, strings.TrimSpace(rest)
+	}
+	if len(inner) < 2 || inner[0] != '?' {
+		return Term{}, fmt.Errorf("query: aggregate %s(...) expects a ?variable, got %q", fn, inner)
+	}
+	return Term{Agg: &Aggregate{Func: fn, Var: Var(inner[1:]), Distinct: distinct}}, nil
 }
 
 // isRelation reports whether name is a valid relation identifier (letters, digits, '.', '-', '_').

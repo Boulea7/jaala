@@ -30,7 +30,7 @@ func randomGraph(seed int64, n int, p float64) *ns.MemSource {
 
 // recursivePrograms are the shapes a fixpoint has to get right: left, right and non-linear recursion,
 // mutual recursion, two recursive atoms in one body, a recursive relation read under negation and by
-// an aggregate in later strata, and a chain of strata.
+// an aggregate in later strata, a chain of strata, and aggregating rules.
 var recursivePrograms = []string{
 	`reach(?a, ?b) :- edge(?a, ?b); reach(?a, ?c) :- reach(?a, ?b), edge(?b, ?c); reach(?a, ?b) => ?a, ?b`,
 	`reach(?a, ?b) :- edge(?a, ?b); reach(?a, ?c) :- edge(?a, ?b), reach(?b, ?c); reach("v0", ?b) => ?b`,
@@ -46,6 +46,12 @@ var recursivePrograms = []string{
 	`r1(?a, ?b) :- edge(?a, ?b); r2(?a, ?c) :- r1(?a, ?b), r1(?b, ?c); r2(?a, ?c) :- r2(?a, ?b), r1(?b, ?c); ` +
 		`far(?a, ?b) :- r2(?a, ?b), not r1(?a, ?b); far(?a, ?b) => ?a, ?b`,
 	`t(?a, ?b) :- edge(?a, ?b); t(?a, ?c) :- t(?a, ?b), t(?b, ?c), ?a != ?c; t(?a, ?b), not edge(?a, ?b) => ?a, ?b`,
+	// Aggregating rules (#4): one over a recursive relation, read by a later recursion; one counting
+	// bindings of a join, which the planner reorders and nothing may inline into or demand.
+	`reach(?a, ?b) :- edge(?a, ?b); reach(?a, ?c) :- reach(?a, ?b), edge(?b, ?c); out(?a, count(distinct ?b), max(?w)) :- reach(?a, ?b), weight(?b, ?w); ` +
+		`hub(?a, ?b) :- out(?a, ?n, _), ?n >= 2, edge(?a, ?b); hub(?a, ?c) :- hub(?a, ?b), hub(?b, ?c); hub(?a, ?b) => ?a, ?b`,
+	`two(?a, ?c) :- edge(?a, ?b), edge(?b, ?c); deg(?a, count(?c), sum(?w)) :- two(?a, ?c), edge(?c, ?d), weight(?d, ?w); ` +
+		`deg(?a, ?n, ?s), deg("v0", ?m, _) => ?a, ?n, ?s, ?m`,
 }
 
 // SemiNaive must answer exactly as Naive does, rows and citations, on every recursive shape over many

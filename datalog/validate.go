@@ -23,7 +23,8 @@ func Validate(q Query, reg *ns.Vocabulary) error {
 // ValidateBound is Validate for a query whose host will Bind the given goal variables when it runs it.
 // A bound variable counts as a constant written in the goal, as it does in Eval, so a variable that
 // appears only inside a `not`, or one a generator's mode needs bound, is accepted when the host binds
-// it and still refused when it doesn't (#61). Only the names matter: validation never reads a value.
+// it and still refused when it doesn't (#61). Only the names matter: each stands in as an absent
+// value, which neither coercion nor a closed Domain refuses (#68).
 // Naming a variable the goal does not use is the error Eval gives for binding one.
 func ValidateBound(q Query, reg *ns.Vocabulary, vars ...Var) error {
 	bind := make(map[Var]ns.Value, len(vars))
@@ -56,6 +57,9 @@ func ValidateBound(q Query, reg *ns.Vocabulary, vars ...Var) error {
 	//
 	// Everything else still runs: negation safety, projection safety, rule-head collisions, arity of a
 	// derived relation, stratification. Only the checks that need a vocabulary stand down.
+	if err := checkNoAggregates("the query", q.Goal); err != nil {
+		return err
+	}
 	if len(reg.BaseRelations()) == 0 {
 		return validateWithoutVocabulary(q, reg, written, sel, cols)
 	}

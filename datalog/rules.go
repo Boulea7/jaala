@@ -96,6 +96,11 @@ func (b *Base) checkRules(rules []Rule) (map[string][]Rule, [][]string, error) {
 		byHead[rel] = append(byHead[rel], r)
 	}
 	for _, r := range rules {
+		if rs := byHead[r.Head.Relation]; len(rs) > 1 && r.aggregates() {
+			return nil, nil, fmt.Errorf("query: rule %q aggregates, so it must be the relation's only rule (%d define it)", r.Head.Relation, len(rs))
+		}
+	}
+	for _, r := range rules {
 		if err := b.validateRule(r); err != nil {
 			return nil, nil, err
 		}
@@ -140,13 +145,47 @@ func (b *Base) validateRule(r Rule) error {
 	if err := checkModes(b, whereRule(r), r.Body); err != nil {
 		return err
 	}
+	if err := checkNoAggregates(whereRule(r), r.Body); err != nil {
+		return err
+	}
 	bound := map[Var]bool{}
 	for _, vv := range positiveVars(r.Body) {
 		bound[vv] = true
 	}
 	for _, arg := range r.Head.Args {
+		if arg.Agg != nil {
+			if err := validateAggOrVar(arg, bound); err != nil {
+				return err
+			}
+			continue
+		}
 		if arg.Var != "" && arg.Var != "_" && !bound[arg.Var] {
 			return fmt.Errorf("query: rule %q head variable ?%s is not bound by a positive body relation", r.Head.Relation, arg.Var)
+		}
+	}
+	return nil
+}
+
+// aggregates reports whether the rule's head reduces its body's bindings, as degree(?n, count(?m))
+// does (#4). Such a rule derives one tuple per group of its head's plain variables, once every
+// relation its body reads is complete, so stratify places it above all of them.
+func (r Rule) aggregates() bool {
+	for _, t := range r.Head.Args {
+		if t.Agg != nil {
+			return true
+		}
+	}
+	return false
+}
+
+// checkNoAggregates refuses an aggregate inside a body, which only a Query built in Go can hold: an
+// aggregate reduces a group, and a body literal has none to reduce.
+func checkNoAggregates(where string, body Body) error {
+	for _, lit := range body.Literals {
+		for _, t := range literalTerms(lit) {
+			if t.Agg != nil {
+				return fmt.Errorf("query: %s uses %s in a literal; an aggregate can only stand in a rule head or the answer", where, t)
+			}
 		}
 	}
 	return nil
@@ -171,6 +210,9 @@ func (b *Base) applyRule(r Rule) (bool, error) {
 	pos, negs := splitNegations(r.Body.Literals)
 	if err := b.validateNegations(r.Body, negs); err != nil {
 		return false, err
+	}
+	if r.aggregates() {
+		return b.applyAggregate(r, pos, negs)
 	}
 	added := false
 	err := solve(pos, 0, newBinding(), b, func(bnd *binding) error {
@@ -208,6 +250,61 @@ func (b *Base) applyRule(r Rule) (bool, error) {
 		return nil
 	})
 	return added, err
+}
+
+// applyAggregate derives an aggregating rule's tuples: it solves the body as applyRule does, then
+// groups and reduces the bindings as a goal's projection does (see aggregate), the head's plain
+// variables being the group key. A group's citations are the union of its bindings', and its witness
+// names the rule without children, as an aggregate answer row has none.
+func (b *Base) applyAggregate(r Rule, pos, negs []Literal) (bool, error) {
+	var raw []*binding
+	err := solve(pos, 0, newBinding(), b, func(bnd *binding) error {
+		ok, err := passesNegations(bnd, negs, b)
+		if ok {
+			raw = append(raw, bnd.clone())
+		}
+		return err
+	})
+	if err != nil {
+		return false, err
+	}
+	var cols []Term
+	seen := map[Var]bool{}
+	for _, t := range r.Head.Args {
+		if lbl := colLabel(t); (t.Agg != nil || (t.Var != "" && t.Var != "_")) && !seen[lbl] {
+			seen[lbl] = true
+			cols = append(cols, t)
+		}
+	}
+	rows, err := aggregate(cols, nil, raw)
+	if err != nil {
+		return false, err
+	}
+	added := false
+	for _, row := range rows {
+		vals := make([]ns.Value, len(r.Head.Args))
+		for j, t := range r.Head.Args {
+			if t.Const != nil {
+				vals[j] = *t.Const
+			} else {
+				vals[j] = row.Bind[colLabel(t)]
+			}
+		}
+		t := idbTuple{vals: vals, cites: row.Cites}
+		if b.witnessing() {
+			text := r.text
+			if text == "" {
+				text = r.String()
+			}
+			t.wit = &Witness{Relation: shownName(r.Head.Relation), Values: vals, Rule: text}
+		}
+		fresh, err := b.addTuple(r.Head.Relation, t)
+		if err != nil {
+			return false, err
+		}
+		added = added || fresh
+	}
+	return added, nil
 }
 
 // addTuple appends a derived tuple to its relation unless an equal-valued one is already present
@@ -264,10 +361,10 @@ func valsEqual(a, b []ns.Value) bool {
 }
 
 // stratify assigns each IDB relation a stratum such that a relation's stratum is >= any relation it
-// reads positively and strictly > any it reads under negation, then returns the relation names
-// grouped by stratum in ascending order. It rejects a program that reads a relation under negation
-// from inside that relation's own recursive cycle (unstratifiable negation) — the standard condition
-// that keeps `not` well-defined.
+// reads positively and strictly > any it reads under negation or reduces in an aggregating rule, then
+// returns the relation names grouped by stratum in ascending order. It rejects a program that reads a
+// relation under negation, or aggregates over it, from inside that relation's own recursive cycle —
+// the standard condition that keeps `not` and an aggregate well-defined.
 //
 // Algorithm: iterative relaxation over the predicate-dependency edges (a longest-path / Bellman-Ford
 // shape), NOT strongly-connected-components. Each round raises a relation's stratum to satisfy its
@@ -289,7 +386,7 @@ func valsEqual(a, b []ns.Value) bool {
 func stratify(rules []Rule, arity map[string]int) ([][]string, error) {
 	var edges []depEdge
 	for _, r := range rules {
-		head := r.Head.Relation
+		head, agg := r.Head.Relation, r.aggregates()
 		for _, lit := range r.Body.Literals {
 			atom, neg := lit.Pos, false
 			if lit.Neg != nil {
@@ -299,7 +396,7 @@ func stratify(rules []Rule, arity map[string]int) ([][]string, error) {
 				continue // comparison
 			}
 			if _, isIDB := arity[atom.Relation]; isIDB {
-				edges = append(edges, depEdge{from: head, to: atom.Relation, neg: neg})
+				edges = append(edges, depEdge{from: head, to: atom.Relation, neg: neg, agg: agg})
 			}
 		}
 	}
@@ -312,7 +409,7 @@ func stratify(rules []Rule, arity map[string]int) ([][]string, error) {
 		changed := false
 		for _, e := range edges {
 			want := stratum[e.to]
-			if e.neg {
+			if e.neg || e.agg {
 				want++
 			}
 			if stratum[e.from] < want {
@@ -324,7 +421,10 @@ func stratify(rules []Rule, arity map[string]int) ([][]string, error) {
 			break
 		}
 		if round == n {
-			return nil, fmt.Errorf("query: rules are not stratifiable (recursion through negation: %s)", strings.Join(negativeCycle(edges), ", "))
+			if cycle := strictCycle(edges, func(e depEdge) bool { return e.neg }); len(cycle) > 0 {
+				return nil, fmt.Errorf("query: rules are not stratifiable (recursion through negation: %s)", strings.Join(cycle, ", "))
+			}
+			return nil, fmt.Errorf("query: rules are not stratifiable (recursion through an aggregate: %s)", strings.Join(strictCycle(edges, func(e depEdge) bool { return e.agg }), ", "))
 		}
 	}
 	byStratum := map[int][]string{}
@@ -345,15 +445,17 @@ func stratify(rules []Rule, arity map[string]int) ([][]string, error) {
 	return out, nil
 }
 
-// depEdge is one rule dependency: from's rule reads to, under negation when neg.
+// depEdge is one rule dependency: from's rule reads to, under negation when neg, and to reduce it when
+// agg (from's rule aggregates).
 type depEdge struct {
 	from, to string
-	neg      bool
+	neg, agg bool
 }
 
-// negativeCycle names the relations whose rules read, under negation, a relation that depends back on
-// them: the relations a recursion-through-negation error is about. Private names are shown as written.
-func negativeCycle(edges []depEdge) []string {
+// strictCycle names the relations whose rules read, through an edge strict says must climb (negation
+// or an aggregate), a relation that depends back on them: the relations a not-stratifiable error is
+// about. Private names are shown as written.
+func strictCycle(edges []depEdge, strict func(depEdge) bool) []string {
 	adj := map[string][]string{}
 	for _, e := range edges {
 		adj[e.from] = append(adj[e.from], e.to)
@@ -377,7 +479,7 @@ func negativeCycle(edges []depEdge) []string {
 	}
 	var out []string
 	for _, e := range edges {
-		if e.neg && reaches(e.to, e.from) {
+		if strict(e) && reaches(e.to, e.from) {
 			out = append(out, e.from, e.to)
 		}
 	}

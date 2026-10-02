@@ -38,7 +38,8 @@ import (
 //
 // Which arguments are bound at a call depends on the order a body runs in, so each body is ordered by
 // the planner first, starting from what its head has bound. A call with nothing bound is left calling
-// the original relation, which is evaluated in full as before.
+// the original relation, which is evaluated in full as before, and so is a call to a relation whose
+// rule aggregates (#4).
 //
 // Demand passes through relations that use negation (#34), and into a negated call: in
 // nocov(?c) :- p(?c), not cov(?c), demand for nocov becomes demand for cov at the ?c that reach the
@@ -199,11 +200,23 @@ func (m *magician) body(guard *Atom, lits []Literal, entry map[Var]bool, supply 
 // wants reports whether a call can be rewritten for demand: it reads a derived relation and binds at
 // least one argument.
 func (m *magician) wants(a Atom, bound map[Var]bool) bool {
-	if _, derived := m.byHead[a.Relation]; !derived {
+	if _, derived := m.byHead[a.Relation]; !derived || m.aggregates(a.Relation) {
 		return false
 	}
 	adorn, _ := adornment(a, bound)
 	return strings.Contains(adorn, "b")
+}
+
+// aggregates reports whether rel is an aggregating relation (#4), which is read in full: its head's
+// aggregate positions are not values a caller can demand, and a supplementary relation in its body
+// would turn the bindings a count reduces into a set.
+func (m *magician) aggregates(rel string) bool {
+	for _, r := range m.byHead[rel] {
+		if r.aggregates() {
+			return true
+		}
+	}
+	return false
 }
 
 // call adds the magic rule passing a call's demand in, reading front (the guard and the literals that
