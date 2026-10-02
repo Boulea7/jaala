@@ -2,7 +2,8 @@
 // whose every answer carries the provenance of the facts that produced it.
 //
 // It supports conjunction, comparison, stratified negation, recursion to a fixpoint, aggregation
-// with `having` and `distinct`, `order by`, `limit` and `offset`, and computed predicates. A Query is
+// with `having` and `distinct` in the answer and in a rule head (stratified, as negation is), `order
+// by`, `limit` and `offset`, and computed predicates. A Query is
 // the whole program: rules that define derived relations, a goal to solve, and the columns to answer
 // with. An answer is sorted, absent values first, then numbers by value, then text, unless `order by`
 // says otherwise. Parse reads the text

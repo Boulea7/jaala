@@ -57,6 +57,14 @@ type Order struct {
 //
 // Example (transitive closure over a derived edge): connected(?a,?c) :- connected(?a,?b), link(?b,?c)
 // is Rule{Head: Atom connected(?a,?c), Body: [Atom connected(?a,?b), Atom link(?b,?c)]}.
+//
+// A head may aggregate (#4): degree(?n, count(distinct ?m)) :- edge(?n, ?m) derives one tuple per
+// group of the head's plain variables, reducing its body's bindings as an answer's aggregate does
+// (see Aggregate), so a rule can count. It is evaluated once every relation its body reads is
+// complete, which stratification arranges as it does for negation, so a relation can't aggregate
+// over its own recursion. Such a rule must be its relation's only rule. As in an answer, a group
+// exists only where the body has a binding: a part with no pins gets no count of zero, and a head
+// with no plain variable gets one tuple even over nothing.
 type Rule struct {
 	Head Atom
 	Body Body
@@ -106,7 +114,8 @@ type Compare struct {
 
 // A Term is a variable, a constant, or an aggregate over the group formed by the projection's plain
 // variables. Exactly one of Var/Const/Agg is set (Var == "" means not a variable). An Agg is legal in
-// a Select column and on the left of a Having; anywhere else there is no group for it to reduce.
+// a Select column, on the left of a Having, and in a rule head, which groups by the head's plain
+// variables (see Rule); in a body literal there is no group for it to reduce.
 type Term struct {
 	Var   Var
 	Const *ns.Value

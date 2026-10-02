@@ -104,6 +104,11 @@ go list -deps ./... | grep '\.' | grep -v '^github.com/panyam/jaala' | grep -v '
   literals' witnesses as `idbTuple.parts`, which `solve` splices back in at their written positions.
   Factoring is off for a witnessed Eval. A call with nothing bound isn't rewritten and reads its
   relation in full, even from a clause whose guard never holds (#60).
+- **A rule head may aggregate (#4), and that rule is its relation's only one.** `applyAggregate`
+  reuses the goal's `aggregate`, so grouping, `distinct`, citations and the one-row-over-nothing case
+  match an answer's. `stratify` makes its body edges strict, as negation's are. Demand stops at it
+  (`magician.aggregates`): a caller binding the count column names no value of the body, and a
+  supplementary relation in its body would make the bindings a count reduces a set.
 - **Demand goes through negation and into it (#34).** If the rewritten program doesn't stratify
   (a recursive caller negating what it demands), `magic` redoes it with negated calls reading their
   relations in full, which always stratifies: demand and supplementary rules hold no negation, and
@@ -114,8 +119,8 @@ go list -deps ./... | grep '\.' | grep -v '^github.com/panyam/jaala' | grep -v '
   an error names `r`, never `r\x00/bf` or a factored relation. A new rewrite gets this for free;
   a new check that names a relation belongs there too.
 - **Inlining must not change multiplicity.** `unfold.go` inlines single-rule, non-recursive derived
-  relations, but never into a goal whose aggregate counts bindings (`count`, `sum`, `list` without
-  `distinct`): a derived relation is a set, its inlined body is not. Modes are checked on the linked
+  relations, but never into a goal or rule head whose aggregate counts bindings (`count`, `sum`,
+  `list` without `distinct`): a derived relation is a set, its inlined body is not. Modes are checked on the linked
   program before any rewrite, so inlining a rule away can't hide an unrunnable body.
 - **Generators declare `Modes`; `checkModes` is shared validation, the planner is SemiNaive's.** A
   body that can never satisfy a generator is refused by every evaluator and by `Validate` with one

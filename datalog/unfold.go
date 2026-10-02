@@ -15,10 +15,13 @@ import "strconv"
 //   - Its head is distinct variables, or constants the call matches with constants or "_". A head
 //     constant meeting a caller variable would need "=" to bind, and it does not.
 //   - The call is positive. "not p(...)" negates the whole body, not each literal of it.
-//   - In the goal, no aggregate counts bindings: count, sum and list without distinct. A derived
-//     relation is a set, so has_tp(?n) yields each net once, but its inlined body yields a net once per
-//     test point on it, and `=> count(?n)` would count those. A rule body is always safe, since its
-//     head is a set, and min, max and distinct aggregates never count duplicates.
+//   - No aggregate of the goal, or of the rule whose body holds the call, counts bindings: count,
+//     sum and list without distinct. A derived relation is a set, so has_tp(?n) yields each net once,
+//     but its inlined body yields a net once per test point on it, and `=> count(?n)` would count
+//     those. Any other rule body is safe, since its head is a set, and min, max and distinct
+//     aggregates never count duplicates.
+//   - The relation's rule doesn't aggregate (#4): its body yields what the aggregate reduces, not the
+//     relation's tuples. An aggregate head argument is no variable, so the head rule below refuses it.
 //
 // A relation the goal no longer reaches once its calls are inlined loses its rules, so it is not
 // materialized; a relation still called elsewhere, or under negation, keeps them.
@@ -34,7 +37,9 @@ func unfold(b *Base, q Query) Query {
 	}
 	out.Rules = make([]Rule, 0, len(q.Rules))
 	for _, r := range q.Rules {
-		r.Body = u.body(r.Body)
+		if !countsBindings(r.Head.Args, nil) {
+			r.Body = u.body(r.Body)
+		}
 		out.Rules = append(out.Rules, r)
 	}
 	if !countsBindings(out.Select, q.Having) {
@@ -166,8 +171,8 @@ func recursiveRelations(rules []Rule) map[string]bool {
 	return out
 }
 
-// countsBindings reports whether an aggregate in the answer counts bindings rather than values: count,
-// sum or list without distinct. Inlining into such a goal could change its answer.
+// countsBindings reports whether an aggregate in the answer, or in a rule head, counts bindings rather
+// than values: count, sum or list without distinct. Inlining into such a body could change its answer.
 func countsBindings(sel []Term, having []Compare) bool {
 	aggs := make([]*Aggregate, 0, len(sel)+len(having))
 	for _, t := range sel {

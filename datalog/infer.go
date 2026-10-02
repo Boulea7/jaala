@@ -145,6 +145,11 @@ func (t *typer) ofHead(rel string, j int, seen map[string]bool) ns.ArgType {
 			continue
 		}
 		hv := r.Head.Args[j]
+		if hv.Agg != nil {
+			got, found = aggregateType(*hv.Agg, t.ofVar(hv.Agg.Var, r.Body, next)), true
+			closed = false
+			continue // an aggregating relation has only this rule (see checkRules)
+		}
 		if hv.Const != nil {
 			domain = unionSorted(domain, []string{hv.Const.S})
 			untyped = true // a constant head argument names a value, not a kind
@@ -185,6 +190,21 @@ func (t *typer) ofHead(rel string, j int, seen map[string]bool) ns.ArgType {
 		got.Domain = domain
 	}
 	return got
+}
+
+// aggregateType is what an aggregate yields over a variable of type vt: list a string, count a
+// number of no unit, and sum, min and max a number in the unit the variable carries. It names no
+// entity, whatever it reduces: count(?ref) counts parts, it doesn't name one.
+func aggregateType(a Aggregate, vt varType) ns.ArgType {
+	switch a.Func {
+	case "list":
+		return ns.ArgType{Type: ns.TypeString}
+	case "sum", "min", "max":
+		if vt.Type == ns.TypeNumber {
+			return ns.ArgType{Type: ns.TypeNumber, Unit: vt.Unit}
+		}
+	}
+	return ns.ArgType{Type: ns.TypeNumber}
 }
 
 // headLabels names a derived relation's arguments by the variables of the first rule that declares a

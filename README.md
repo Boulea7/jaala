@@ -2,8 +2,8 @@
 
 Jaala (Sanskrit for "network") is a small query engine for graph-shaped data.
 
-Its engine, `datalog`, is a Datalog evaluator with stratified negation, recursion, aggregation and
-`having`, `order by` and `limit`, binding-pattern indexes, and provenance: every answer row carries the citations of the
+Its engine, `datalog`, is a Datalog evaluator with stratified negation, recursion, aggregation (in
+the answer, with `having`, and in rules: `degree(?n, count(?m)) :- edge(?n, ?m)`), `order by` and `limit`, binding-pattern indexes, and provenance: every answer row carries the citations of the
 facts that produced it, and on request a witness tree of the rules and facts behind it. `SemiNaive`
 derives only what a query's constants demand (magic sets, including through negation) and plans each
 rule body, so cost doesn't depend on the order a rule is written in. It knows nothing about any
