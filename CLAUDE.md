@@ -53,8 +53,9 @@ go list -deps ./... | grep '\.' | grep -v '^github.com/panyam/jaala' | grep -v '
   constant: text parses into a number argument or is refused, a number in a text or entity argument
   drops its `Num`. It rewrites `Num` only, never `S`, because the Domain check, the index and answer
   keys read the text. Only a number type pulls a compared constant, which keeps #8's "a number and
-  a word have no order". `ValidateBound` binds `ns.Absent()`, which coercion leaves alone, so a
-  variable the host will bind is never refused for its type.
+  a word have no order". `ValidateBound` binds `ns.Absent()`, which coercion and the Domain check
+  (`checkArgValues`, #68) both leave alone, so a variable the host will bind is never refused for
+  its type or its value.
 - **Nothing inside a module resolution may call `Vocabulary.Signature` or `Check`.** They run
   through the memo entry that is mid-computation, and `sync.Once` deadlocks on re-entry. That is
   why the validation base carries `sigs` while it checks module rules.

@@ -95,9 +95,12 @@ func (b *Base) schemaOf(rel string) (ns.Schema, bool) { return b.reg.Schema(rel)
 // It exists because the alternative is silence: a misspelled constant matches nothing and answers
 // "no results", which reads as a fact about the data rather than a typo. An empty answer to a
 // question that was never valid is the worst available outcome.
+//
+// An absent constant is no misspelling: query text can't write one, so it comes from a host's Bind,
+// or from the placeholder ValidateBound binds, and it is left to match what it matches (#68).
 func (b *Base) checkArgValues(atom *Atom, s ns.Schema) error {
 	for i, arg := range atom.Args {
-		if arg.Const == nil || i >= len(s.Labels) || i >= len(s.Types) {
+		if arg.Const == nil || arg.Const.Absent || i >= len(s.Labels) || i >= len(s.Types) {
 			continue
 		}
 		label := s.Labels[i]

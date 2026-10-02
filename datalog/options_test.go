@@ -263,3 +263,29 @@ func TestValidatingAGoalTheHostBinds(t *testing.T) {
 		t.Errorf("walk with ?s bound: %v, %v; want v2,v3", col(rows, "e"), err)
 	}
 }
+
+// A variable the host binds in a closed-Domain argument validates: the placeholder ValidateBound
+// binds is absent, and an absent value is no misspelling to refuse (#68).
+func TestValidatingABoundClosedDomainArgument(t *testing.T) {
+	src := ns.NewMemSource().DeclareSchema("role", ns.Schema{Arity: 2, Labels: []string{"node", "role"}, Types: []ns.ArgType{{}, {Domain: []string{"source", "sink"}}}})
+	src.Add("role", ns.Tuple{Vals: []ns.Value{ns.S("a"), ns.S("sink")}})
+	src.Add("role", ns.Tuple{Vals: []ns.Value{ns.S("b"), ns.Absent()}})
+	v := std(src)
+	q := mustParse(t, `role(?n, ?r) => ?n`)
+	if err := Validate(q, v); err != nil {
+		t.Errorf("control: unbound, Validate = %v, want nil, so a refusal below comes from binding ?r", err)
+	}
+	if err := ValidateBound(q, v, "r"); err != nil {
+		t.Errorf("?r bound: ValidateBound = %v, want nil", err)
+	}
+	if rows, err := both(q, baseFor(v), Bind(map[Var]ns.Value{"r": ns.S("sink")})); err != nil || col(rows, "n") != "a" {
+		t.Errorf("?r bound to sink: %v, %v; want a", col(rows, "n"), err)
+	}
+	if rows, err := both(q, baseFor(v), Bind(map[Var]ns.Value{"r": ns.Absent()})); err != nil || col(rows, "n") != "b" {
+		t.Errorf("?r bound absent: %v, %v; want b, the one absent role", col(rows, "n"), err)
+	}
+	misspelled := mustParse(t, `role(?n, "sinkk") => ?n`)
+	if err := ValidateBound(misspelled, v); err == nil || !strings.Contains(err.Error(), `role's "role" argument cannot be "sinkk"`) {
+		t.Errorf("control: a misspelled constant: %v, want the Domain refusal", err)
+	}
+}
