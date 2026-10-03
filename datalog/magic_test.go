@@ -548,3 +548,33 @@ func TestAnAggregatingRelationCalledAllFreeIsReadInFull(t *testing.T) {
 		t.Errorf("the aggregating deg is demanded all-free:\n%s", got)
 	}
 }
+
+// A rule the goal never reaches is still the query's rule, so a rewrite of what it reads must not
+// strand it (#90): demand for a bound call, inlining a single-rule relation, and demand into a
+// negated call each used to leave it reading a relation that no longer had rules.
+func TestAnUnreachedRuleDoesNotBreakTheRewrites(t *testing.T) {
+	for _, c := range []struct {
+		text string
+		opts []Option
+		want string
+	}{
+		{`r0(?x) :- node(?x); r1(?y, ?y) :- r0(?y); node(?x), r0(?x) => ?x`, []Option{Witnesses()}, "a,b,c,d,x"},
+		{`r0(?x) :- edge(?x, _); r1(?y) :- node(?y), not r0(?y); r0(?x) => ?x`, nil, "a,b,c"},
+		{`r0(?x, ?x) :- edge(?x, _); r0(?x, ?x) :- edge(_, ?x); r1(?y) :- r0(?y, _); node(?x), not r0(_, ?x) => ?x`, nil, "x"},
+		{`r0(?x, ?y) :- edge(?x, ?y); r0(?x, ?y) :- edge(?y, ?x); r1(?x) :- r0(?x, _); r0("b", ?x) => ?x`, nil, "a,c"},
+	} {
+		rows, diff, err := agree(mustParse(t, c.text), baseFor(std(graph())), c.opts...)
+		if diff != "" || err != nil {
+			t.Errorf("%s: %v\n%s", c.text, err, diff)
+			continue
+		}
+		if got := col(rows, "x"); got != c.want {
+			t.Errorf("%s = %s, want %s", c.text, got, c.want)
+		}
+	}
+	// control: the unreached rule is still checked, under its written name, by every evaluator.
+	_, diff, err := agree(mustParse(t, `r0(?x) :- node(?x); r1(?y, ?z) :- r0(?y); r0("a", ?x) => ?x`), baseFor(std(graph())))
+	if diff != "" || err == nil || !strings.Contains(err.Error(), `rule "r1"`) {
+		t.Errorf("an unreached rule with an unbound head variable: %v\n%s", err, diff)
+	}
+}

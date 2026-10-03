@@ -105,8 +105,11 @@ go list -deps ./... | grep '\.' | grep -v '^github.com/panyam/jaala' | grep -v '
   comparison `both()` makes, without the panic. Each program runs plain and under `Witnesses()`, and a
   disagreement is shrunk before it's reported (`JAALA_GEN_SEED=n` replays one). A disagreement that is
   filed and unfixed goes in `knownDisagreements`, matched by its message, and is counted rather than
-  failed; fixing the issue means deleting its line. A program is classified by its first
-  disagreement, so a known one can mask another (#90 hides #91, #92 and a broken `withoutOrphans`).
+  failed. Each entry carries a repro that `TestKnownDisagreementsStillDisagree` runs, so a pattern
+  that matches nothing fails at once (an inlined variable's name starts with a NUL, which a terminal
+  hides), and so does a fixed bug, whose line then goes. A program is classified by its first
+  disagreement, so a known one can mask another: #90 hid about a tenth of the planned comparisons
+  until it was fixed.
   Citations can differ without recursion too, when a relation's two rules reach one tuple at
   different depths (#22), so the corpus counts a citation-only difference as #22. The planned
   evaluator's rows are compared, never its citations. `./selfcheck.sh` runs the corpus at 5000
@@ -144,6 +147,9 @@ go list -deps ./... | grep '\.' | grep -v '^github.com/panyam/jaala' | grep -v '
   no original relation reads a rewritten one. A rule evaluated in full also has its constant calls
   rewritten (`fromConstants`, #57), adorned by the constants alone, so their demand rules are facts
   and add no dependency; that keeps the fallback's guarantee.
+- **SemiNaive drops the rules the goal never reaches before rewriting** (`withoutUnreached`, #90).
+  A rewrite renames or removes what they read, which left them reading a relation with no rules.
+  They are checked first, as linked, so their mistakes are still reported.
 - **Rules are checked as linked before any rewrite renames them** (`checkRules` in `evaluate`), so
   an error names `r`, never `r\x00/bf` or a factored relation. A new rewrite gets this for free;
   a new check that names a relation belongs there too.

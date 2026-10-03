@@ -35,6 +35,7 @@ func (s SemiNaive) Eval(ctx context.Context, q Query, b *Base, opts ...Option) (
 	var rewrite func(*Base, Query) Query
 	if !s.WrittenOrder {
 		rewrite = func(b *Base, q Query) Query {
+			q = withoutUnreached(q)
 			if b.witnessing() {
 				return plan(b, magic(b, q)) // inlining would remove a relation's node from the witness
 			}

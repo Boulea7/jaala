@@ -417,7 +417,7 @@ func (g *generator) program() genProgram {
 			continue
 		}
 		for j := 1 + g.pick(3); j > 0; j-- {
-			recursive := j > 1 && g.chance(0.6)
+			recursive := (j > 1 || g.chance(0.05)) && g.chance(0.6)
 			if recursive {
 				g.shapes["recursion"] = true
 			}
@@ -586,6 +586,17 @@ func (c genCase) smaller() []genCase {
 	for i := range c.prog.rules {
 		with(func(p *genProgram, _ *genFacts) { p.rules = slices.Delete(p.rules, i, i+1) })
 	}
+	// A derived relation read in a body can become a graph relation of its arity, so a relation only
+	// read there can then be dropped. Only derived to graph, so every step makes the case smaller.
+	for i, r := range c.prog.rules {
+		for j, l := range r.body {
+			for _, base := range genGraphRels {
+				if l.rel != "" && !slices.ContainsFunc(genGraphRels, func(g genRel) bool { return g.name == l.rel }) && len(base.cols) == len(l.args) {
+					with(func(p *genProgram, _ *genFacts) { p.rules[i].body[j].rel = base.name })
+				}
+			}
+		}
+	}
 	heads := map[string]bool{}
 	for _, r := range c.prog.rules {
 		if !heads[r.head] {
@@ -667,17 +678,40 @@ func (p genProgram) clone() genProgram {
 
 // knownDisagreements are disagreements filed and not yet fixed, recognised by their message, so the
 // corpus counts them rather than failing on them. A program is classified by its first disagreement,
-// before shrinking, so #91 and #92 mostly surface behind #90 and show once it is fixed. Fixing one
-// means deleting its line here.
+// before shrinking, so one known disagreement can hide another. Fixing one means deleting its line
+// here.
 var knownDisagreements = []struct {
 	issue int
 	match *regexp.Regexp
+	repro genCase // a case that disagrees this way, so a wrong pattern or a fixed bug shows
 }{
-	{90, regexp.MustCompile(`rule "[^"]*" reads unknown relation`)},
-	{91, regexp.MustCompile(`unknown relation "[^"]*\x00answer`)},
-	{92, regexp.MustCompile(`\?\d+\.\w+ appears only inside`)},
-	{93, regexp.MustCompile(`not stratifiable`)},
-	{22, regexp.MustCompile(`^SemiNaive cites differently`)},
+	{91, regexp.MustCompile(`unknown relation "[^"]*\\x00answer`), genCase{prog: genProgram{
+		rules: []genRule{{head: "r", args: []string{"?x"}, body: []genLit{{rel: "r", args: []string{"?x"}}}}},
+		goal:  genGoal{body: []genLit{{rel: "r", args: []string{`"v0"`}}, {rel: "node", args: []string{"?y"}}}, sel: []string{"?y"}},
+	}, facts: genFacts{n: 1, weights: []int{5}}}},
+	// An inlined variable's name starts with a NUL (freshVar), which a terminal hides.
+	{92, regexp.MustCompile(`\?\x00\d+\.\w+ appears only inside`), genCase{prog: genProgram{
+		rules: []genRule{{head: "r", args: []string{"?x"}, body: []genLit{{rel: "weight", args: []string{"?x", "?w"}}, {neg: true, rel: "edge", args: []string{"?x", "?y"}}}}},
+		goal:  genGoal{body: []genLit{{rel: "r", args: []string{"?z"}}}, sel: []string{"?z"}, bind: map[string]string{"z": "v3"}},
+	}, facts: genFacts{n: 1, weights: []int{5}}}},
+	{93, regexp.MustCompile(`not stratifiable`), genCase{prog: genProgram{
+		rules: []genRule{
+			{head: "r1", args: []string{"?a", `"v0"`, "?c"}, body: []genLit{{rel: "r1", args: []string{"?a", "?b", "?c"}}}},
+			{head: "r1", args: []string{"?a", "?a", "3"}, body: []genLit{{rel: "r1", args: []string{"?a", "_", "?d"}}}},
+			{head: "r2", args: []string{"sum(?w)", "min(?w)"}, body: []genLit{{rel: "r1", args: []string{"?p", "?n", "5"}}, {rel: "weight", args: []string{"?n", "?w"}}}},
+			{head: "r3", args: []string{"?x"}, body: []genLit{{rel: "r3", args: []string{`"v4"`}}, {rel: "r1", args: []string{"_", "?x", "?y"}}}},
+			{head: "r3", args: []string{"?x"}, body: []genLit{{rel: "r2", args: []string{"_", "?v"}}, {rel: "node", args: []string{"?x"}}}},
+		},
+		goal: genGoal{body: []genLit{{rel: "r3", args: []string{`"v1"`}}, {rel: "node", args: []string{"?z"}}}, sel: []string{"?z"}},
+	}, facts: genFacts{n: 1, weights: []int{0}}, witnessed: true}},
+	{22, regexp.MustCompile(`^SemiNaive cites differently`), genCase{prog: genProgram{
+		rules: []genRule{
+			{head: "r2", args: []string{"?a", "?a"}, body: []genLit{{rel: "r3", args: []string{"?a"}}}},
+			{head: "r2", args: []string{"?b", "?b"}, body: []genLit{{rel: "edge", args: []string{"?c", "?b"}}}},
+			{head: "r3", args: []string{"?d"}, body: []genLit{{rel: "edge", args: []string{"?d", "?e"}}}},
+		},
+		goal: genGoal{body: []genLit{{rel: "r2", args: []string{"?x", "?y"}}}, sel: []string{"?y"}},
+	}, facts: genFacts{n: 4, weights: []int{5, 8, 9, 5}, edges: [][2]int{{2, 1}, {3, 2}}}}},
 }
 
 func knownDisagreement(diff string) int {
@@ -794,4 +828,19 @@ func TestShrinkReachesTheSmallestFailingCase(t *testing.T) {
 		return
 	}
 	t.Fatal("control: no seed in 1..40 gave a program with a negating rule, three rules and an edge")
+}
+
+// Each known disagreement's repro must still disagree, and be recognised as that issue: a pattern
+// that matches nothing would let the bug through as known, and a fixed bug should leave the list.
+func TestKnownDisagreementsStillDisagree(t *testing.T) {
+	for _, k := range knownDisagreements {
+		out, diff := k.repro.check()
+		if out != genDisagreed {
+			t.Errorf("#%d: the repro no longer disagrees (outcome %d %s); if #%d is fixed, drop it from knownDisagreements\n%s", k.issue, out, diff, k.issue, k.repro)
+			continue
+		}
+		if got := knownDisagreement(diff); got != k.issue {
+			t.Errorf("#%d: the repro's disagreement is recognised as #%d\n%q", k.issue, got, diff)
+		}
+	}
 }

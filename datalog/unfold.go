@@ -189,9 +189,24 @@ func countsBindings(sel []Term, having []Compare) bool {
 	return false
 }
 
+// withoutUnreached drops the rules the goal never reaches, before any rewrite. They can't change the
+// answer, and a rewrite renames or removes what they read, which left them reading a relation with
+// no rules (#90). evaluate has already checked them as linked, so their mistakes are still reported.
+func withoutUnreached(q Query) Query {
+	is := reached(q)
+	kept := q.Rules[:0:0]
+	for _, r := range q.Rules {
+		if is[r.Head.Relation] {
+			kept = append(kept, r)
+		}
+	}
+	q.Rules = kept
+	return q
+}
+
 // dropUnreached removes the rules that the goal reached before unfolding and no longer does: a relation
-// whose every call was inlined, and anything only it read. Rules the goal never reached, such as a
-// query's own unused rule, are left as they were.
+// whose every call was inlined, and anything only it read. Rules the goal didn't reach before, which
+// are a rewrite's own relations, are left as they were.
 func dropUnreached(before, after Query) Query {
 	was, is := reached(before), reached(after)
 	kept := after.Rules[:0:0]
