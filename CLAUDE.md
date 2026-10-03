@@ -115,7 +115,11 @@ go list -deps ./... | grep '\.' | grep -v '^github.com/panyam/jaala' | grep -v '
   reuses the goal's `aggregate`, so grouping, `distinct`, citations and the one-row-over-nothing case
   match an answer's. `stratify` makes its body edges strict, as negation's are. Demand stops at it
   (`magician.aggregates`): a caller binding the count column names no value of the body, and a
-  supplementary relation in its body would make the bindings a count reduces a set.
+  supplementary relation in its body would make the bindings a count reduces a set. Its
+  signature reports the aggregate position as declared when the function fixes the type
+  (`aggregateFixes`, #78): `count`, `list`, and `sum`/`min`/`max` over a typed number. Over an
+  untyped column those stay `Inferred`. A constant in any head leaves its column untyped (#84), so
+  a default clause like `r(?n, 0)` needs the type declared on another clause (`?c: number`).
 - **Demand goes through negation and into it (#34).** If the rewritten program doesn't stratify
   (a recursive caller negating what it demands), `magic` redoes it with negated calls reading their
   relations in full, which always stratifies: demand and supplementary rules hold no negation, and
@@ -165,9 +169,9 @@ releases are patch bumps on v0.1.x, breaking changes included, pre-1.0. agni con
 ## Issues and missions
 
 Issues are ranked by the mission they serve (labels `P0`–`P3`, `waiting`, `mission`,
-`mission:active`). jaala's missions unblock a host's active mission. The active one is #81 (agni's
-audit workbook gets per-net test-point counts from a declared library member), and its tickets are
-linked as blocked-by. A new issue gets a priority and a mission link when filed, or `waiting` with
+`mission:active`). jaala's missions unblock a host's active mission, and its tickets are linked
+as blocked-by. A mission closes when the host's half of its exercise passes too, so it can stay open
+after jaala's tickets close (`queue.sh` prints the active one). A new issue gets a priority and a mission link when filed, or `waiting` with
 the trigger that would unpark it.
 
 ## Working with hosts

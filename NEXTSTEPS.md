@@ -5,8 +5,11 @@ Maintained by /checkpoint: one thread per branch, pruned when the branch merges.
 
 ## At a glance
 
-- Active mission: #81 (agni's audit workbook gets per-net test-point counts from a declared library
-  member). Next ready: #78 (a head aggregate's type cannot be declared).
-- No open threads.
-- This run: dropped main (v0.1.18 tagged on `68d262f`, upgrade note on #4, #72's leaning moved to
-  the issue); dropped the `demand-all-free` note (PR #74 merged); deleted merged branches.
+- Active mission: #81, 1/1 jaala tickets closed (#78 shipped in v0.1.19). Waiting on agni:
+  panyam/agni#819 adopts `net.test_point_count` (upgrade note posted, it needs `?c: number`), then
+  panyam/agni#843 runs the workbook. Exercise logged 2026-10-03: jaala half works, agni half not
+  yet runnable. Close #81 once agni's half passes.
+- No open threads. Nothing ready in jaala; next mission candidate is #80 (P2, unit-mixing
+  aggregates, currently an orphan), or demote it.
+- This run: dropped `head-aggregate-signature` (PR #83 merged, v0.1.19 tagged on `b147416`);
+  filed #82 (`waiting`) and #84 (P3).
