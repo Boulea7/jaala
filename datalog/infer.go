@@ -286,9 +286,23 @@ func (t *typer) signature(rel string) ([]ns.ArgSig, error) {
 			out[j] = ns.ArgSig{Name: name, ArgType: declared[j]}
 			continue
 		}
-		out[j] = ns.ArgSig{Name: name, ArgType: inferred, Inferred: true}
+		out[j] = ns.ArgSig{Name: name, ArgType: inferred, Inferred: !t.aggregateFixes(rel, j)}
 	}
 	return out, nil
+}
+
+// aggregateFixes reports whether a head aggregate at position j decides its column's type the way a
+// declaration would (#78): count and list always, sum, min and max only over a typed number, whose
+// unit they carry. Over an untyped column those three still yield numbers, but in a unit nobody stated.
+func (t *typer) aggregateFixes(rel string, j int) bool {
+	for _, r := range t.rules[rel] {
+		if j >= len(r.Head.Args) || r.Head.Args[j].Agg == nil {
+			continue
+		}
+		a := *r.Head.Args[j].Agg
+		return a.Func == "count" || a.Func == "list" || t.ofVar(a.Var, r.Body, map[string]bool{rel: true}).Type == ns.TypeNumber
+	}
+	return false
 }
 
 // contradicts reports how an inferred type rules out a declared one, or "". Only what inference
