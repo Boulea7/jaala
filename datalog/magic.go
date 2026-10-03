@@ -51,9 +51,11 @@ import (
 // nocov(?c) :- p(?c), not cov(?c), demand for nocov becomes demand for cov at the ?c that reach the
 // negation. Demand into a negation can make a stratified program unstratifiable (a recursive caller's
 // demand for cov would depend on the caller, which negates cov), so when the rewritten program does not
-// stratify, the rewrite is made again with negated calls reading their relations in full. That one is
-// always stratified: the rules it adds read the original relations only positively or as the program
-// already did, and no original relation reads a rewritten one.
+// stratify, the rewrite is made again with negated calls reading their relations in full. That one
+// usually stratifies, but not always (#93): demand flowing down from a rule above an aggregate can
+// reach the relation the aggregate reduces, and a negation can still sit in a cycle the demand closes.
+// When neither rewrite stratifies, the program runs without demand, as written, which stratify has
+// already accepted.
 //
 // Magic tuples record what was asked, not what produced an answer, so their citations must not reach
 // an answer: SemiNaive's fixpoint derives them without citations (see SemiNaive.materialize). A
@@ -61,10 +63,14 @@ import (
 // witnesses of the literals it stands for (see idbTuple.parts).
 func magic(b *Base, q Query) Query {
 	out := magicWith(b, q, true)
-	if _, err := stratify(out.Rules, derivedArity(out.Rules)); err != nil {
-		return magicWith(b, q, false)
+	if _, err := stratify(out.Rules, derivedArity(out.Rules)); err == nil {
+		return out
 	}
-	return out
+	out = magicWith(b, q, false)
+	if _, err := stratify(out.Rules, derivedArity(out.Rules)); err == nil {
+		return out
+	}
+	return q
 }
 
 // magicWith makes the rewrite, pushing demand into negated calls when intoNeg is set (see magic).

@@ -143,10 +143,12 @@ go list -deps ./... | grep '\.' | grep -v '^github.com/panyam/jaala' | grep -v '
   a default clause like `r(?n, 0)` needs the type declared on another clause (`?c: number`).
 - **Demand goes through negation and into it (#34).** If the rewritten program doesn't stratify
   (a recursive caller negating what it demands), `magic` redoes it with negated calls reading their
-  relations in full, which always stratifies: demand and supplementary rules hold no negation, and
-  no original relation reads a rewritten one. A rule evaluated in full also has its constant calls
-  rewritten (`fromConstants`, #57), adorned by the constants alone, so their demand rules are facts
-  and add no dependency; that keeps the fallback's guarantee.
+  relations in full. That usually stratifies, but the corpus found two cases where it doesn't (#93):
+  demand flowing from a rule above an aggregate down into the relation it reduces, and a negation
+  still in a cycle the demand closes. When neither rewrite stratifies, `magic` returns the program
+  unrewritten, which `checkRules` has already stratified. A rule evaluated in full also has its
+  constant calls rewritten (`fromConstants`, #57), adorned by the constants alone, so their demand
+  rules are facts and add no dependency.
 - **SemiNaive drops the rules the goal never reaches before rewriting** (`withoutUnreached`, #90).
   A rewrite renames or removes what they read, which left them reading a relation with no rules.
   They are checked first, as linked, so their mistakes are still reported.

@@ -578,3 +578,43 @@ func TestAnUnreachedRuleDoesNotBreakTheRewrites(t *testing.T) {
 		t.Errorf("an unreached rule with an unbound head variable: %v\n%s", err, diff)
 	}
 }
+
+// When demand makes a stratified program unstratifiable even with negated calls read in full, the
+// program runs without demand (#93): through an aggregate whose body a demanded relation feeds, or
+// through a negation the #34 fallback still leaves in a cycle. control: a program whose rewrite
+// stratifies keeps it.
+func TestDemandFallsBackWhenNoRewriteStratifies(t *testing.T) {
+	for _, c := range []struct {
+		why, text string
+		opts      []Option
+		want      string
+	}{
+		{"through an aggregate", `r1(?a, "a", ?c) :- r1(?a, ?b, ?c); r1(?a, ?a, 3) :- r1(?a, _, ?d); ` +
+			`r2(sum(?w), min(?w)) :- r1(?p, ?n, 5), weight(?n, ?w); ` +
+			`r3(?x) :- r3("d"), r1(_, ?x, ?y); r3(?x) :- r2(_, ?v), node(?x); r3("b"), node(?z) => ?z`, []Option{Witnesses()}, "a,b,c,d,x"},
+		{"through a negation", `r0(?x, ?x) :- edge(_, ?x); ` +
+			`r1(?w, ?y) :- node(?y), weight("c", ?w), not r0(?y, "b"); r1(?w, ?y) :- r0(?n, ?y), weight(?n, ?w); ` +
+			`r2(?y, ?y) :- r1(?v, ?y); r1(?w, ?y), r2(_, ?y) => min(?w)`, nil, "2"},
+	} {
+		rows, diff, err := agree(mustParse(t, c.text), baseFor(std(graph())), c.opts...)
+		if diff != "" || err != nil {
+			t.Errorf("%s: %v\n%s", c.why, err, diff)
+			continue
+		}
+		var got []string
+		for _, r := range rows {
+			for _, v := range r.Bind {
+				got = append(got, v.S)
+			}
+		}
+		if strings.Join(got, ",") != c.want {
+			t.Errorf("%s = %v, want %q", c.why, got, c.want)
+		}
+	}
+	b := baseFor(std(graph()))
+	q := mustParse(t, `reach(?a, ?b) :- edge(?a, ?b); reach(?a, ?c) :- reach(?a, ?b), edge(?b, ?c); `+
+		`nocov(?a) :- node(?a), not reach(?a, "d"); far(?a) :- nocov(?a); far(?b) :- far(?a), edge(?a, ?b); far("x") => `)
+	if out := magic(b, q); fmt.Sprint(out.Rules) == fmt.Sprint(q.Rules) {
+		t.Errorf("control: a program whose rewrite stratifies should keep it")
+	}
+}

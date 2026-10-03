@@ -694,16 +694,6 @@ var knownDisagreements = []struct {
 		rules: []genRule{{head: "r", args: []string{"?x"}, body: []genLit{{rel: "weight", args: []string{"?x", "?w"}}, {neg: true, rel: "edge", args: []string{"?x", "?y"}}}}},
 		goal:  genGoal{body: []genLit{{rel: "r", args: []string{"?z"}}}, sel: []string{"?z"}, bind: map[string]string{"z": "v3"}},
 	}, facts: genFacts{n: 1, weights: []int{5}}}},
-	{93, regexp.MustCompile(`not stratifiable`), genCase{prog: genProgram{
-		rules: []genRule{
-			{head: "r1", args: []string{"?a", `"v0"`, "?c"}, body: []genLit{{rel: "r1", args: []string{"?a", "?b", "?c"}}}},
-			{head: "r1", args: []string{"?a", "?a", "3"}, body: []genLit{{rel: "r1", args: []string{"?a", "_", "?d"}}}},
-			{head: "r2", args: []string{"sum(?w)", "min(?w)"}, body: []genLit{{rel: "r1", args: []string{"?p", "?n", "5"}}, {rel: "weight", args: []string{"?n", "?w"}}}},
-			{head: "r3", args: []string{"?x"}, body: []genLit{{rel: "r3", args: []string{`"v4"`}}, {rel: "r1", args: []string{"_", "?x", "?y"}}}},
-			{head: "r3", args: []string{"?x"}, body: []genLit{{rel: "r2", args: []string{"_", "?v"}}, {rel: "node", args: []string{"?x"}}}},
-		},
-		goal: genGoal{body: []genLit{{rel: "r3", args: []string{`"v1"`}}, {rel: "node", args: []string{"?z"}}}, sel: []string{"?z"}},
-	}, facts: genFacts{n: 1, weights: []int{0}}, witnessed: true}},
 	{22, regexp.MustCompile(`^SemiNaive cites differently`), genCase{prog: genProgram{
 		rules: []genRule{
 			{head: "r2", args: []string{"?a", "?a"}, body: []genLit{{rel: "r3", args: []string{"?a"}}}},
