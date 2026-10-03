@@ -193,6 +193,9 @@ func TestAnAggregateColumnsType(t *testing.T) {
 	if err != nil || e.Signature() != "g.degree(n, arg1: number)" {
 		t.Errorf("a module's aggregating member: %v, %v; want g.degree(n, arg1: number)", e.Signature(), err)
 	}
+	if e.Args[1].Inferred {
+		t.Error("g.degree's count is marked inferred, though count fixes its type")
+	}
 	if rows := evalReg(t, r, `g.degree(?n, 1) => ?n`); col(rows, "n") != "a,b,c" {
 		t.Errorf("a module's aggregating member answers %v, want a,b,c", col(rows, "n"))
 	}
@@ -214,5 +217,38 @@ func TestAnAggregatingRulePrintsAsWritten(t *testing.T) {
 	const text = `nets(?r, count(distinct ?n), list(?p)) :- pin(?r, ?n, ?p)`
 	if got := mustParse(t, text+`; nets(?r, ?c, ?l)`).Rules[0].String(); got != text {
 		t.Errorf("%q, want %q", got, text)
+	}
+}
+
+func TestHeadAggregateSignature(t *testing.T) {
+	r := circuit()
+	if err := r.AddModule("net", LanguageName, `
+covered(?n: net, count(distinct ?c)) :- component.net(?c, ?n);
+classes(?n: net, list(?k)) :- component.net(?c, ?n), component.class(?c, ?k);
+peak(?n: net, max(?v)) :- net.max_voltage(?n, ?v);
+mpns(?n: net, sum(?m)) :- component.net(?c, ?n), component.mpn(?c, ?m);
+`, ""); err != nil {
+		t.Fatal(err)
+	}
+	for path, want := range map[string]struct {
+		sig      string
+		inferred bool
+	}{
+		"net.covered": {"net.covered(n: net, arg1: number)", false},
+		"net.classes": {"net.classes(n: net, arg1: string)", false},
+		"net.peak":    {"net.peak(n: net, arg1: number[V])", false},
+		// control: sum over an untyped column is still a number, but in a unit nobody stated.
+		"net.mpns": {"net.mpns(n: net, arg1: number)", true},
+	} {
+		e, err := r.Lookup(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if e.Signature() != want.sig || e.Args[1].Inferred != want.inferred {
+			t.Errorf("%s = %s, inferred %v; want %s, inferred %v", path, e.Signature(), e.Args[1].Inferred, want.sig, want.inferred)
+		}
+		if e.Args[0].Inferred {
+			t.Errorf("%s's declared argument is marked inferred", path)
+		}
 	}
 }

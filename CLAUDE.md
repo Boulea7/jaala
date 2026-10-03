@@ -162,6 +162,14 @@ Merge the PR, then put an annotated tag on the merge commit and push it
 releases are patch bumps on v0.1.x, breaking changes included, pre-1.0. agni consumes tags only
 (`go get github.com/panyam/jaala@vX`), never a `replace`.
 
+## Issues and missions
+
+Issues are ranked by the mission they serve (labels `P0`–`P3`, `waiting`, `mission`,
+`mission:active`). jaala's missions unblock a host's active mission. The active one is #81 (agni's
+audit workbook gets per-net test-point counts from a declared library member), and its tickets are
+linked as blocked-by. A new issue gets a priority and a mission link when filed, or `waiting` with
+the trigger that would unpark it.
+
 ## Working with hosts
 
 agni (github.com/panyam/agni) is the first host and Declaire (github.com/panyam/declaire) the
