@@ -155,7 +155,8 @@ go list -deps ./... | grep '\.' | grep -v '^github.com/panyam/jaala' | grep -v '
   a new check that names a relation belongs there too.
 - **Inlining must not change multiplicity.** `unfold.go` inlines single-rule, non-recursive derived
   relations, but never into a goal or rule head whose aggregate counts bindings (`count`, `sum`,
-  `list` without `distinct`): a derived relation is a set, its inlined body is not. Modes are checked on the linked
+  `list` without `distinct`): a derived relation is a set, its inlined body is not. Nor into a recursive relation's
+  rules (#97): the fixpoint reruns that body every round, so an inlined join is redone each time. Modes are checked on the linked
   program before any rewrite, so inlining a rule away can't hide an unrunnable body.
 - **Generators declare `Modes`; `checkModes` is shared validation, the planner is SemiNaive's.** A
   body that can never satisfy a generator is refused by every evaluator and by `Validate` with one
