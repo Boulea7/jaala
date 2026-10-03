@@ -10,7 +10,9 @@ engine (#41).
 
 ## Commands
 
-CI (`.github/workflows/ci.yml`) runs exactly these, and all must pass:
+`./selfcheck.sh` runs the host-free checks at full size (the generated corpus at 5000 seeds; work
+baselines and Soufflé as #88 and #23 land). CI (`.github/workflows/ci.yml`) runs exactly these,
+and all must pass:
 
 ```sh
 gofmt -l .                      # must print nothing
@@ -99,6 +101,16 @@ go list -deps ./... | grep '\.' | grep -v '^github.com/panyam/jaala' | grep -v '
   path; #22 would make citations canonical) and the planned `SemiNaive{}` (same rows, and Naive's
   error whenever it errors). A new evaluator or option belongs in `both()` too. `seminaive_test.go` adds a
   seeded random-graph corpus, and `plan_test.go` a clause-order shuffle property.
+- **The generated corpus (`generate_test.go`, #87) runs random programs through `agree`**, the
+  comparison `both()` makes, without the panic. Each program runs plain and under `Witnesses()`, and a
+  disagreement is shrunk before it's reported (`JAALA_GEN_SEED=n` replays one). A disagreement that is
+  filed and unfixed goes in `knownDisagreements`, matched by its message, and is counted rather than
+  failed; fixing the issue means deleting its line. A program is classified by its first
+  disagreement, so a known one can mask another (#90 hides #91, #92 and a broken `withoutOrphans`).
+  Citations can differ without recursion too, when a relation's two rules reach one tuple at
+  different depths (#22), so the corpus counts a citation-only difference as #22. The planned
+  evaluator's rows are compared, never its citations. `./selfcheck.sh` runs the corpus at 5000
+  seeds (#86).
 - **Magic tuples carry no citations.** `magic.go` adds relations recording what a query demanded;
   `SemiNaive`'s `derive` clears their citations, or an answer would cite the facts that worked out
   someone else's demand. Two relations the rewrite adds are not demand and keep theirs on purpose:

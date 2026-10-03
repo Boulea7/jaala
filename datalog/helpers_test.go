@@ -72,23 +72,36 @@ func baseFor(v *ns.Vocabulary) *Base { return MustBase(v, sources[v]) }
 // Naive's error whenever it errors itself; it may succeed where Naive's written order stops on an
 // unbound check, which is what planning is for. It returns Naive's answer. opts go to every Eval.
 func both(q Query, b *Base, opts ...Option) ([]Row, error) {
+	rows, diff, err := agree(q, b, opts...)
+	if diff != "" {
+		panic(diff)
+	}
+	return rows, err
+}
+
+// agree is both without the panic: it returns Naive's answer and, when an evaluator disagrees with
+// it, what differed, so the generated corpus can shrink a disagreement instead of stopping on it.
+func agree(q Query, b *Base, opts ...Option) ([]Row, string, error) {
 	want, werr := Naive{}.Eval(bg, q, b, opts...)
 	got, gerr := SemiNaive{WrittenOrder: true}.Eval(bg, q, b, opts...)
 	same := reflect.DeepEqual(binds(want), binds(got))
 	if linked, err := Link(q, b.reg); err == nil && len(recursiveRelations(linked.Rules)) == 0 {
 		same = reflect.DeepEqual(want, got)
 	}
+	if fmt.Sprint(werr) == fmt.Sprint(gerr) && !same && reflect.DeepEqual(binds(want), binds(got)) {
+		return want, fmt.Sprintf("SemiNaive cites differently from Naive on %v\n naive:     %v\n seminaive: %v", q, want, got), werr
+	}
 	if fmt.Sprint(werr) != fmt.Sprint(gerr) || !same {
-		panic(fmt.Sprintf("SemiNaive disagrees with Naive on %v\n naive:     %v %v\n seminaive: %v %v", q, want, werr, got, gerr))
+		return want, fmt.Sprintf("SemiNaive disagrees with Naive on %v\n naive:     %v %v\n seminaive: %v %v", q, want, werr, got, gerr), werr
 	}
 	planned, perr := SemiNaive{}.Eval(bg, q, b, opts...)
 	switch {
 	case perr != nil && fmt.Sprint(perr) != fmt.Sprint(werr):
-		panic(fmt.Sprintf("planned SemiNaive fails where Naive does not on %v\n naive:   %v\n planned: %v", q, werr, perr))
+		return want, fmt.Sprintf("planned SemiNaive fails where Naive does not on %v\n naive:   %v\n planned: %v", q, werr, perr), werr
 	case perr == nil && werr == nil && !reflect.DeepEqual(binds(want), binds(planned)):
-		panic(fmt.Sprintf("planned SemiNaive answers differently on %v\n naive:   %v\n planned: %v", q, binds(want), binds(planned)))
+		return want, fmt.Sprintf("planned SemiNaive answers differently on %v\n naive:   %v\n planned: %v", q, binds(want), binds(planned)), werr
 	}
-	return want, werr
+	return want, "", werr
 }
 
 // binds is an answer's rows without their citations.

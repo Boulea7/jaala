@@ -1,0 +1,797 @@
+package datalog
+
+import (
+	"errors"
+	"fmt"
+	"math/rand"
+	"os"
+	"regexp"
+	"slices"
+	"strconv"
+	"strings"
+	"testing"
+
+	"github.com/panyam/jaala/ns"
+)
+
+// The generated corpus: random programs over random graphs, each answered by every evaluator through
+// agree, the comparison both makes. Hand-written tests only reach the shapes their authors thought
+// of; this reaches the rewrites (unfold, magic, plan, factor, supplementary relations) with ones
+// nobody wrote. A disagreement is shrunk to a small program and graph before it is reported.
+//
+// A program is built in the structures below and printed as text, rather than as a Query, so
+// shrinking edits a small tree and the Soufflé translator (#23) can print the same programs.
+//
+// JAALA_GEN_SEEDS sets how many seeds run (selfcheck.sh runs thousands), and JAALA_GEN_SEED=n
+// replays the one seed a failure names.
+
+// genType is a column's type. Node columns hold node names, number columns weights; a program keeps
+// them apart, so a constant is never refused for its type (#65) and a comparison never orders a
+// number against a word.
+type genType int
+
+const (
+	genNode genType = iota
+	genNum
+)
+
+// genRel is a relation a program reads: one of the graph's, or one it derives. Derived relations are
+// layered. A body reads its own layer only positively (recursion, mutual within a layer) and lower
+// layers freely, so every program stratifies. An aggregating relation sits alone in its layer, since
+// stratify makes its body edges strict.
+type genRel struct {
+	name  string
+	cols  []genType
+	layer int
+	agg   bool
+}
+
+var genGraphRels = []genRel{
+	{name: "edge", cols: []genType{genNode, genNode}, layer: -1},
+	{name: "node", cols: []genType{genNode}, layer: -1},
+	{name: "weight", cols: []genType{genNode, genNum}, layer: -1},
+}
+
+// genLit is a body literal: an atom, a negated atom, or (rel empty) the comparison args[0] op args[1].
+// Args are printed terms: "?x", "_", `"v1"`, "3".
+type genLit struct {
+	neg  bool
+	rel  string
+	args []string
+	op   string
+}
+
+func (l genLit) String() string {
+	if l.rel == "" {
+		return l.args[0] + " " + l.op + " " + l.args[1]
+	}
+	s := l.rel + "(" + strings.Join(l.args, ", ") + ")"
+	if l.neg {
+		s = "not " + s
+	}
+	return s
+}
+
+type genRule struct {
+	head string
+	args []string // terms or aggregates, "count(distinct ?b)"
+	body []genLit
+}
+
+func (r genRule) String() string {
+	return r.head + "(" + strings.Join(r.args, ", ") + ") :- " + joinLits(r.body)
+}
+
+type genGoal struct {
+	body   []genLit
+	sel    []string
+	having string
+	order  string
+	limit  int
+	bind   map[string]string // variable (no "?") -> node name the host binds it to
+}
+
+type genProgram struct {
+	rules  []genRule
+	goal   genGoal
+	shapes []string
+}
+
+func (p genProgram) String() string {
+	var b strings.Builder
+	for _, r := range p.rules {
+		b.WriteString(r.String() + "; ")
+	}
+	g := p.goal
+	b.WriteString(joinLits(g.body) + " => " + strings.Join(g.sel, ", "))
+	if g.having != "" {
+		b.WriteString(" having " + g.having)
+	}
+	if g.order != "" {
+		b.WriteString(" order by " + g.order)
+	}
+	if g.limit > 0 {
+		b.WriteString(" limit " + strconv.Itoa(g.limit))
+	}
+	return b.String()
+}
+
+func joinLits(lits []genLit) string {
+	out := make([]string, len(lits))
+	for i, l := range lits {
+		out[i] = l.String()
+	}
+	return strings.Join(out, ", ")
+}
+
+// genFacts is randomGraph's shape kept as data, so shrinking can drop an edge or a node.
+type genFacts struct {
+	n       int
+	edges   [][2]int
+	weights []int
+}
+
+func genGraph(rnd *rand.Rand) genFacts {
+	f := genFacts{n: 3 + rnd.Intn(6)}
+	p := 0.1 + rnd.Float64()*0.25
+	for i := 0; i < f.n; i++ {
+		f.weights = append(f.weights, rnd.Intn(10))
+		for j := 0; j < f.n; j++ {
+			if rnd.Float64() < p {
+				f.edges = append(f.edges, [2]int{i, j})
+			}
+		}
+	}
+	return f
+}
+
+func (f genFacts) source() *ns.MemSource {
+	src := ns.NewMemSource().Declare("edge", "from", "to").Declare("node", "name").Declare("weight", "node", "w")
+	name := func(i int) ns.Value { return ns.S(fmt.Sprintf("v%d", i)) }
+	for i := 0; i < f.n; i++ {
+		src.Add("node", ns.Tuple{Vals: []ns.Value{name(i)}, Cites: []string{fmt.Sprintf("node:%d", i)}})
+		src.Add("weight", ns.Tuple{Vals: []ns.Value{name(i), ns.N(float64(f.weights[i]))}})
+	}
+	for _, e := range f.edges {
+		src.Add("edge", ns.Tuple{Vals: []ns.Value{name(e[0]), name(e[1])}, Cites: []string{fmt.Sprintf("edge:%d-%d", e[0], e[1])}})
+	}
+	return src
+}
+
+func (f genFacts) String() string {
+	var b strings.Builder
+	fmt.Fprintf(&b, "nodes v0..v%d, weights %v, edges", f.n-1, f.weights)
+	for _, e := range f.edges {
+		fmt.Fprintf(&b, " v%d->v%d", e[0], e[1])
+	}
+	return b.String()
+}
+
+type generator struct {
+	rnd    *rand.Rand
+	nodes  int
+	rels   []genRel
+	vars   int
+	shapes map[string]bool
+}
+
+func (g *generator) chance(p float64) bool { return g.rnd.Float64() < p }
+func (g *generator) pick(n int) int        { return g.rnd.Intn(n) }
+
+// constant names a node one past the graph now and then, so a constant can match nothing.
+func (g *generator) constant(t genType) string {
+	if t == genNum {
+		return strconv.Itoa(g.pick(10))
+	}
+	return fmt.Sprintf(`"v%d"`, g.pick(g.nodes+1))
+}
+
+func (g *generator) fresh() string {
+	g.vars++
+	return fmt.Sprintf("?x%d", g.vars)
+}
+
+// genBody is a body being built and the variables its positive literals have bound so far, by type.
+// Literals are added in an order Naive can run as written: a comparison or a negation only reads
+// variables already bound.
+type genBody struct {
+	lits  []genLit
+	bound map[genType][]string
+}
+
+func newBody() *genBody { return &genBody{bound: map[genType][]string{}} }
+
+func (b *genBody) all() []string { return append(slices.Clone(b.bound[genNode]), b.bound[genNum]...) }
+
+// bind puts constant c in place of literal i's argument j, so a demand rewrite sees a bound call. A
+// variable that appeared only there is no longer bound.
+func (b *genBody) bind(i, j int, c string) {
+	old := b.lits[i].args[j]
+	b.lits[i].args[j] = c
+	for _, l := range b.lits {
+		if !l.neg && slices.Contains(l.args, old) {
+			return
+		}
+	}
+	for t, vars := range b.bound {
+		b.bound[t] = slices.DeleteFunc(vars, func(v string) bool { return v == old })
+	}
+}
+
+func (g *generator) atom(b *genBody, r genRel, neg bool) {
+	args := make([]string, len(r.cols))
+	type binding struct {
+		t genType
+		v string
+	}
+	var fresh []binding
+	for i, t := range r.cols {
+		vars := b.bound[t]
+		switch {
+		case g.chance(0.1):
+			args[i] = g.constant(t)
+		case g.chance(0.08):
+			args[i] = "_"
+		case len(vars) > 0 && (neg || g.chance(0.6)):
+			args[i] = vars[g.pick(len(vars))]
+		case neg:
+			args[i] = "_"
+		default:
+			args[i] = g.fresh()
+			fresh = append(fresh, binding{t, args[i]})
+		}
+	}
+	b.lits = append(b.lits, genLit{neg: neg, rel: r.name, args: args})
+	for _, f := range fresh {
+		b.bound[f.t] = append(b.bound[f.t], f.v)
+	}
+	if neg {
+		g.shapes["negation"] = true
+	}
+}
+
+// binding makes sure a variable of type t is bound, adding node(?x) or weight(?n, ?w) when none is.
+func (g *generator) binding(b *genBody, t genType) string {
+	if vars := b.bound[t]; len(vars) > 0 {
+		return vars[g.pick(len(vars))]
+	}
+	v := g.fresh()
+	if t == genNode {
+		b.lits = append(b.lits, genLit{rel: "node", args: []string{v}})
+	} else {
+		n := "_"
+		if nodes := b.bound[genNode]; len(nodes) > 0 {
+			n = nodes[g.pick(len(nodes))]
+		}
+		b.lits = append(b.lits, genLit{rel: "weight", args: []string{n, v}})
+	}
+	b.bound[t] = append(b.bound[t], v)
+	return v
+}
+
+func (g *generator) compare(b *genBody) {
+	t := genNode
+	if len(b.bound[genNum]) > 0 && g.chance(0.5) {
+		t = genNum
+	}
+	vars := b.bound[t]
+	if len(vars) == 0 {
+		return
+	}
+	l, r := vars[g.pick(len(vars))], g.constant(t)
+	if len(vars) > 1 && g.chance(0.5) {
+		r = vars[g.pick(len(vars))]
+	}
+	ops := []string{"=", "!=", "!=", "<"}
+	if t == genNum {
+		ops = []string{"=", "!=", "<", "<=", ">", ">="}
+	}
+	b.lits = append(b.lits, genLit{args: []string{l, r}, op: ops[g.pick(len(ops))]})
+}
+
+// readable is what a body in layer may read: the graph and lower layers always, its own layer only
+// positively and only when recursive.
+func (g *generator) readable(layer int, positive, recursive bool) []genRel {
+	out := slices.Clone(genGraphRels)
+	for _, r := range g.rels {
+		if r.layer < layer || (positive && recursive && r.layer == layer && !r.agg) {
+			out = append(out, r)
+		}
+	}
+	return out
+}
+
+func (g *generator) body(layer int, recursive bool) *genBody {
+	b := newBody()
+	n := 1 + g.pick(3)
+	same := -1
+	if recursive {
+		same = g.pick(n)
+	}
+	for i := 0; i < n; i++ {
+		from := g.readable(layer, true, false)
+		if i == same {
+			from = nil
+			for _, r := range g.rels {
+				if r.layer == layer {
+					from = append(from, r)
+				}
+			}
+		}
+		g.atom(b, from[g.pick(len(from))], false)
+	}
+	if len(b.all()) > 0 && g.chance(0.25) {
+		from := g.readable(layer, false, false)
+		g.atom(b, from[g.pick(len(from))], true)
+	}
+	if g.chance(0.3) {
+		g.compare(b)
+	}
+	return b
+}
+
+func (g *generator) rule(r genRel, recursive bool) genRule {
+	b := g.body(r.layer, recursive)
+	args := make([]string, len(r.cols))
+	for i, t := range r.cols {
+		if g.chance(0.05) {
+			args[i] = g.constant(t)
+		} else {
+			args[i] = g.binding(b, t)
+		}
+	}
+	return genRule{head: r.name, args: args, body: b.lits}
+}
+
+// aggRule is an aggregating relation's one rule: node group columns, then number columns reduced.
+func (g *generator) aggRule(r genRel) genRule {
+	b := g.body(r.layer, false)
+	args := make([]string, len(r.cols))
+	for i, t := range r.cols {
+		if t == genNode {
+			args[i] = g.binding(b, genNode)
+			continue
+		}
+		args[i] = g.aggregate(b, false)
+	}
+	g.shapes["head aggregate"] = true
+	return genRule{head: r.name, args: args, body: b.lits}
+}
+
+func (g *generator) aggregate(b *genBody, list bool) string {
+	fns := []string{"count", "count distinct", "sum", "min", "max"}
+	if list {
+		fns = append(fns, "list", "list distinct")
+	}
+	fn := fns[g.pick(len(fns))]
+	var v string
+	switch fn {
+	case "sum", "min", "max":
+		v = g.binding(b, genNum)
+	default:
+		all := b.all()
+		if len(all) == 0 {
+			v = g.binding(b, genNode)
+		} else {
+			v = all[g.pick(len(all))]
+		}
+	}
+	if f, ok := strings.CutSuffix(fn, " distinct"); ok {
+		return f + "(distinct " + v + ")"
+	}
+	return fn + "(" + v + ")"
+}
+
+func (g *generator) program() genProgram {
+	g.shapes = map[string]bool{}
+	layer, prevAgg, n := 0, false, 1+g.pick(4)
+	for i := 0; i < n; i++ {
+		agg := g.chance(0.2)
+		if i > 0 && (agg || prevAgg || !g.chance(0.3)) {
+			layer++
+		}
+		r := genRel{name: fmt.Sprintf("r%d", i), layer: layer, agg: agg}
+		if agg {
+			for j := g.pick(3); j > 0; j-- {
+				r.cols = append(r.cols, genNode)
+			}
+			for j := 1 + g.pick(2); j > 0; j-- {
+				r.cols = append(r.cols, genNum)
+			}
+		} else {
+			for j := 1 + g.pick(3); j > 0; j-- {
+				t := genNode
+				if g.chance(0.2) {
+					t = genNum
+				}
+				r.cols = append(r.cols, t)
+			}
+		}
+		g.rels = append(g.rels, r)
+		prevAgg = agg
+	}
+	var p genProgram
+	for _, r := range g.rels {
+		if r.agg {
+			p.rules = append(p.rules, g.aggRule(r))
+			continue
+		}
+		for j := 1 + g.pick(3); j > 0; j-- {
+			recursive := j > 1 && g.chance(0.6)
+			if recursive {
+				g.shapes["recursion"] = true
+			}
+			p.rules = append(p.rules, g.rule(r, recursive))
+		}
+	}
+	p.goal = g.goal()
+	for s := range g.shapes {
+		p.shapes = append(p.shapes, s)
+	}
+	slices.Sort(p.shapes)
+	return p
+}
+
+func (g *generator) goal() genGoal {
+	b := newBody()
+	for i := 1 + g.pick(2); i > 0; i-- {
+		r := g.rels[g.pick(len(g.rels))]
+		if g.chance(0.2) {
+			r = genGraphRels[g.pick(len(genGraphRels))]
+		}
+		g.atom(b, r, false)
+		if g.chance(0.3) {
+			b.bind(len(b.lits)-1, 0, g.constant(r.cols[0]))
+			g.shapes["bound goal"] = true
+		}
+	}
+	all := b.all()
+	if len(all) > 0 && g.chance(0.2) {
+		from := g.readable(len(g.rels)+1, false, false)
+		g.atom(b, from[g.pick(len(from))], true)
+	}
+	if g.chance(0.2) {
+		g.compare(b)
+	}
+	goal := genGoal{}
+	if g.chance(0.35) {
+		g.shapes["goal aggregate"] = true
+		if nodes := b.bound[genNode]; len(nodes) > 0 && g.chance(0.6) {
+			goal.sel = append(goal.sel, nodes[g.pick(len(nodes))])
+		}
+		for i := 1 + g.pick(2); i > 0; i-- {
+			goal.sel = append(goal.sel, g.aggregate(b, true))
+		}
+		if g.chance(0.2) {
+			goal.having = goal.sel[len(goal.sel)-1] + " >= " + strconv.Itoa(1+g.pick(2))
+		}
+	} else {
+		all := b.all()
+		if len(all) == 0 {
+			all = []string{g.binding(b, genNode)}
+		}
+		for _, v := range all {
+			if len(goal.sel) == 0 || (g.chance(0.5) && !slices.Contains(goal.sel, v)) {
+				goal.sel = append(goal.sel, v)
+			}
+		}
+	}
+	goal.body = b.lits
+	if g.chance(0.15) {
+		goal.order = goal.sel[g.pick(len(goal.sel))] + " desc"
+	}
+	if g.chance(0.1) {
+		goal.limit = 1 + g.pick(3)
+	}
+	if nodes := b.bound[genNode]; len(nodes) > 0 && g.chance(0.1) {
+		goal.bind = map[string]string{strings.TrimPrefix(nodes[g.pick(len(nodes))], "?"): fmt.Sprintf("v%d", g.pick(g.nodes))}
+		g.shapes["bound goal"] = true
+	}
+	return goal
+}
+
+// genCase is one program over one graph, evaluated plain or under Witnesses, which turns inlining
+// and factoring off, so the two runs take different rewrites.
+type genCase struct {
+	prog      genProgram
+	facts     genFacts
+	witnessed bool
+}
+
+type genOutcome int
+
+const (
+	genAgreed  genOutcome = iota
+	genSkipped            // Naive ran past genBudget
+	genInvalid            // the generator wrote something the engine refuses
+	genDisagreed
+)
+
+// genBudget bounds Naive's work, so an unlucky program over a dense graph is skipped rather than
+// slowing the corpus down. The evaluators' work differs, so the comparison itself runs unbudgeted.
+const genBudget = 200_000
+
+func (c genCase) String() string {
+	return fmt.Sprintf(" shrunk program: %s\n facts: %s\n bind: %v, witnessed: %v", c.prog, c.facts, c.prog.goal.bind, c.witnessed)
+}
+
+func (c genCase) opts() []Option {
+	var opts []Option
+	if len(c.prog.goal.bind) > 0 {
+		bind := map[Var]ns.Value{}
+		for v, n := range c.prog.goal.bind {
+			bind[Var(v)] = ns.S(n)
+		}
+		opts = append(opts, Bind(bind))
+	}
+	if c.witnessed {
+		opts = append(opts, Witnesses())
+	}
+	return opts
+}
+
+func (c genCase) check() (genOutcome, string) {
+	text := c.prog.String()
+	q, err := Parse(text)
+	if err != nil {
+		return genInvalid, err.Error()
+	}
+	b := baseFor(std(c.facts.source()))
+	if err := Validate(q, b.reg); err != nil {
+		return genInvalid, err.Error()
+	}
+	var over *BudgetExceeded
+	if _, err := (Naive{}).Eval(bg, q, b, append(c.opts(), Budget(genBudget))...); errors.As(err, &over) {
+		return genSkipped, ""
+	}
+	if _, diff, _ := agree(q, b, c.opts()...); diff != "" {
+		return genDisagreed, diff
+	}
+	return genAgreed, ""
+}
+
+// shrink drops rules, literals, goal clauses, edges and nodes one at a time while the case still
+// disagrees, and returns the smallest case it reached with its disagreement.
+func shrink(c genCase, diff string) (genCase, string) {
+	return shrinkWhile(c, diff, func(s genCase) (bool, string) {
+		out, d := s.check()
+		return out == genDisagreed, d
+	})
+}
+
+func shrinkWhile(c genCase, diff string, fails func(genCase) (bool, string)) (genCase, string) {
+	for {
+		smaller := false
+		for _, s := range c.smaller() {
+			if ok, d := fails(s); ok {
+				c, diff, smaller = s, d, true
+				break
+			}
+		}
+		if !smaller {
+			return c, diff
+		}
+	}
+}
+
+func (c genCase) smaller() []genCase {
+	var out []genCase
+	with := func(edit func(p *genProgram, f *genFacts)) {
+		s := c
+		s.prog = c.prog.clone()
+		s.facts = genFacts{n: c.facts.n, edges: slices.Clone(c.facts.edges), weights: slices.Clone(c.facts.weights)}
+		edit(&s.prog, &s.facts)
+		out = append(out, s)
+	}
+	for i := range c.prog.rules {
+		with(func(p *genProgram, _ *genFacts) { p.rules = slices.Delete(p.rules, i, i+1) })
+	}
+	heads := map[string]bool{}
+	for _, r := range c.prog.rules {
+		if !heads[r.head] {
+			heads[r.head] = true
+			with(func(p *genProgram, _ *genFacts) { p.drop(r.head) })
+		}
+	}
+	for i, r := range c.prog.rules {
+		for j := range r.body {
+			if len(r.body) > 1 {
+				with(func(p *genProgram, _ *genFacts) { p.rules[i].body = slices.Delete(p.rules[i].body, j, j+1) })
+			}
+		}
+	}
+	g := c.prog.goal
+	for j := range g.body {
+		if len(g.body) > 1 {
+			with(func(p *genProgram, _ *genFacts) { p.goal.body = slices.Delete(p.goal.body, j, j+1) })
+		}
+	}
+	for j := range g.sel {
+		if len(g.sel) > 1 {
+			with(func(p *genProgram, _ *genFacts) { p.goal.sel = slices.Delete(p.goal.sel, j, j+1) })
+		}
+	}
+	if g.having != "" {
+		with(func(p *genProgram, _ *genFacts) { p.goal.having = "" })
+	}
+	if g.order != "" {
+		with(func(p *genProgram, _ *genFacts) { p.goal.order = "" })
+	}
+	if g.limit > 0 {
+		with(func(p *genProgram, _ *genFacts) { p.goal.limit = 0 })
+	}
+	if len(g.bind) > 0 {
+		with(func(p *genProgram, _ *genFacts) { p.goal.bind = nil })
+	}
+	if c.witnessed {
+		with(func(*genProgram, *genFacts) {})
+		out[len(out)-1].witnessed = false
+	}
+	for i := range c.facts.edges {
+		with(func(_ *genProgram, f *genFacts) { f.edges = slices.Delete(f.edges, i, i+1) })
+	}
+	if c.facts.n > 1 {
+		with(func(_ *genProgram, f *genFacts) {
+			f.n--
+			f.weights = f.weights[:f.n]
+			f.edges = slices.DeleteFunc(f.edges, func(e [2]int) bool { return e[0] == f.n || e[1] == f.n })
+		})
+	}
+	return out
+}
+
+// drop removes relation rel: its rules and every literal that reads it. A goal left with nothing
+// asks for the nodes instead.
+func (p *genProgram) drop(rel string) {
+	reads := func(l genLit) bool { return l.rel == rel }
+	p.rules = slices.DeleteFunc(p.rules, func(r genRule) bool { return r.head == rel })
+	for i := range p.rules {
+		p.rules[i].body = slices.DeleteFunc(p.rules[i].body, reads)
+	}
+	p.goal.body = slices.DeleteFunc(p.goal.body, reads)
+	if len(p.goal.body) == 0 {
+		p.goal = genGoal{body: []genLit{{rel: "node", args: []string{"?g"}}}, sel: []string{"?g"}}
+	}
+}
+
+func (p genProgram) clone() genProgram {
+	c := p
+	c.rules = make([]genRule, len(p.rules))
+	for i, r := range p.rules {
+		c.rules[i] = genRule{head: r.head, args: slices.Clone(r.args), body: slices.Clone(r.body)}
+	}
+	c.goal.body = slices.Clone(p.goal.body)
+	c.goal.sel = slices.Clone(p.goal.sel)
+	return c
+}
+
+// knownDisagreements are disagreements filed and not yet fixed, recognised by their message, so the
+// corpus counts them rather than failing on them. A program is classified by its first disagreement,
+// before shrinking, so #91 and #92 mostly surface behind #90 and show once it is fixed. Fixing one
+// means deleting its line here.
+var knownDisagreements = []struct {
+	issue int
+	match *regexp.Regexp
+}{
+	{90, regexp.MustCompile(`rule "[^"]*" reads unknown relation`)},
+	{91, regexp.MustCompile(`unknown relation "[^"]*\x00answer`)},
+	{92, regexp.MustCompile(`\?\d+\.\w+ appears only inside`)},
+	{93, regexp.MustCompile(`not stratifiable`)},
+	{22, regexp.MustCompile(`^SemiNaive cites differently`)},
+}
+
+func knownDisagreement(diff string) int {
+	for _, k := range knownDisagreements {
+		if k.match.MatchString(diff) {
+			return k.issue
+		}
+	}
+	return 0
+}
+
+func envInt(name string, def int) int {
+	if n, err := strconv.Atoi(os.Getenv(name)); err == nil && n > 0 {
+		return n
+	}
+	return def
+}
+
+// Every evaluator must answer each generated program as Naive does, with the rules both enforces.
+// The control is the shape count: each shape the generator aims at has to have been compared, both
+// plain and under Witnesses, or the corpus is passing on programs that never reach the rewrites.
+func TestGeneratedProgramsAgree(t *testing.T) {
+	first, seeds := int64(1), envInt("JAALA_GEN_SEEDS", 300)
+	if s := envInt("JAALA_GEN_SEED", 0); s > 0 {
+		first, seeds = int64(s), 1
+	}
+	compared, known, skipped, failed := map[string]int{}, map[int]int{}, 0, 0
+	for seed := first; seed < first+int64(seeds); seed++ {
+		rnd := rand.New(rand.NewSource(seed))
+		facts := genGraph(rnd)
+		prog := (&generator{rnd: rnd, nodes: facts.n}).program()
+		for _, witnessed := range []bool{false, true} {
+			c := genCase{prog: prog, facts: facts, witnessed: witnessed}
+			switch out, diff := c.check(); out {
+			case genSkipped:
+				skipped++
+			case genInvalid:
+				t.Errorf("seed %d: the generator wrote a program the engine refuses: %v\n %s", seed, diff, prog)
+			case genDisagreed:
+				if issue := knownDisagreement(diff); issue != 0 {
+					known[issue]++
+					continue
+				}
+				failed++
+				small, d := shrink(c, diff)
+				t.Errorf("seed %d (witnessed %v) disagrees; replay with JAALA_GEN_SEED=%d\n%s\n %s", seed, witnessed, seed, small, d)
+			default:
+				mode := "plain"
+				if witnessed {
+					mode = "witnessed"
+				}
+				compared["program/"+mode]++
+				for _, s := range prog.shapes {
+					compared[s+"/"+mode]++
+				}
+			}
+			if failed >= envInt("JAALA_GEN_MAX_FAILURES", 5) {
+				t.Fatalf("stopping after %d disagreements", failed)
+			}
+		}
+	}
+	shapes := []string{"program", "recursion", "negation", "head aggregate", "goal aggregate", "bound goal"}
+	var counts, issues []string
+	for _, sh := range shapes {
+		counts = append(counts, fmt.Sprintf("%s %d/%d", sh, compared[sh+"/plain"], compared[sh+"/witnessed"]))
+	}
+	for _, k := range knownDisagreements {
+		if known[k.issue] > 0 {
+			issues = append(issues, fmt.Sprintf("#%d %d", k.issue, known[k.issue]))
+		}
+	}
+	t.Logf("%d seeds\n compared (plain/witnessed): %s\n skipped over budget: %d\n known disagreements, counted not failed: %s",
+		seeds, strings.Join(counts, ", "), skipped, strings.Join(issues, ", "))
+	if seeds < 50 {
+		return
+	}
+	for _, s := range shapes {
+		for _, mode := range []string{"plain", "witnessed"} {
+			if compared[s+"/"+mode] == 0 {
+				t.Errorf("control: no %s program was compared %s", s, mode)
+			}
+		}
+	}
+}
+
+// The shrinker has to reach the smallest case that still fails, or a reported disagreement buries
+// its cause in a dozen rules. Failing here means "a valid program with a rule that negates", whose
+// smallest form is one rule, a one-literal goal, and one node with no edges.
+func TestShrinkReachesTheSmallestFailingCase(t *testing.T) {
+	negates := func(c genCase) (bool, string) {
+		if out, _ := c.check(); out == genInvalid {
+			return false, ""
+		}
+		for _, r := range c.prog.rules {
+			for _, l := range r.body {
+				if l.neg {
+					return true, ""
+				}
+			}
+		}
+		return false, ""
+	}
+	for seed := int64(1); seed <= 40; seed++ {
+		rnd := rand.New(rand.NewSource(seed))
+		facts := genGraph(rnd)
+		c := genCase{prog: (&generator{rnd: rnd, nodes: facts.n}).program(), facts: facts, witnessed: true}
+		if ok, _ := negates(c); !ok || len(c.prog.rules) < 3 || len(c.facts.edges) == 0 {
+			continue
+		}
+		small, _ := shrinkWhile(c, "", negates)
+		if len(small.prog.rules) != 1 || len(small.prog.goal.body) != 1 || small.facts.n != 1 || len(small.facts.edges) != 0 || small.witnessed {
+			t.Errorf("seed %d shrank to\n%s\nwant one rule, one goal literal, one node, no edges, not witnessed", seed, small)
+		}
+		return
+	}
+	t.Fatal("control: no seed in 1..40 gave a program with a negating rule, three rules and an edge")
+}
