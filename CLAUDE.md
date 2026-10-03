@@ -10,8 +10,8 @@ engine (#41).
 
 ## Commands
 
-`./selfcheck.sh` runs the host-free checks at full size (the generated corpus at 5000 seeds; work
-baselines and Soufflé as #88 and #23 land). CI (`.github/workflows/ci.yml`) runs exactly these,
+`./selfcheck.sh` runs the host-free checks at full size: the generated corpus at 5000 seeds and the
+work baselines (Soufflé when #23 lands). CI (`.github/workflows/ci.yml`) runs exactly these,
 and all must pass:
 
 ```sh
@@ -114,6 +114,12 @@ go list -deps ./... | grep '\.' | grep -v '^github.com/panyam/jaala' | grep -v '
   different depths (#22), so the corpus counts a citation-only difference as #22. The planned
   evaluator's rows are compared, never its citations. `./selfcheck.sh` runs the corpus at 5000
   seeds (#86).
+- **Cost is checked against `testdata/work.golden`** (`bench_test.go`, #88): each workload's `Work()`
+  under the planned SemiNaive must stay within 10% of its baseline, and its answer keep its row count.
+  The corpus checks answers and can't see cost; the baseline is what catches a rewrite that stops
+  paying off. Work that drops past 10% fails too, so an improvement lowers the baseline
+  (`go test ./datalog -run TestWorkStaysWithinBaseline -update`), and a PR that moves it says why.
+  The baseline records today's costs, bad ones included (#96, #97).
 - **Magic tuples carry no citations.** `magic.go` adds relations recording what a query demanded;
   `SemiNaive`'s `derive` clears their citations, or an answer would cite the facts that worked out
   someone else's demand. Two relations the rewrite adds are not demand and keep theirs on purpose:
@@ -163,7 +169,8 @@ go list -deps ./... | grep '\.' | grep -v '^github.com/panyam/jaala' | grep -v '
   order). A stratum is a level, so it mixes recursion with plain dependencies; a relation that
   doesn't read itself, even through others, is derived once, and delta rounds run only inside a
   recursive component (#51). `stratify`'s strata, its errors, and `Naive` are unchanged.
-- Fixtures: `graph()` and the `eval`/`evalErr`/`col`/`std`/`baseFor` helpers in `helpers_test.go`;
+- Fixtures: `workloads`, `binaryTree`, `pointerProgram` and `netlistOf` (synthetic, agni-sized) in
+  `bench_test.go`; `graph()` and the `eval`/`evalErr`/`col`/`std`/`baseFor` helpers in `helpers_test.go`;
   `withModules`/`evalReg` in `module_test.go`; the agni-shaped `circuit()` in `signature_test.go`;
   `vocabulary()` (no Source) in `baseover_test.go`; the `stub` language in `ns/vocabulary_test.go`;
   `line`/`walker` (a two-mode generator recording what each call had bound) and `tested()` (line
