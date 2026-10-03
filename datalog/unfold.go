@@ -20,6 +20,9 @@ import "strconv"
 //     but its inlined body yields a net once per test point on it, and `=> count(?n)` would count
 //     those. Any other rule body is safe, since its head is a set, and min, max and distinct
 //     aggregates never count duplicates.
+//   - The rule holding the call isn't one of a recursive relation's (#97). The fixpoint runs such a
+//     body every round, so an inlined join would be redone each time, where the relation is derived
+//     once and read through an index.
 //   - The relation's rule doesn't aggregate (#4): its body yields what the aggregate reduces, not the
 //     relation's tuples. An aggregate head argument is no variable, so the head rule below refuses it.
 //
@@ -37,7 +40,7 @@ func unfold(b *Base, q Query) Query {
 	}
 	out.Rules = make([]Rule, 0, len(q.Rules))
 	for _, r := range q.Rules {
-		if !countsBindings(r.Head.Args, nil) {
+		if !countsBindings(r.Head.Args, nil) && !u.recursive[r.Head.Relation] {
 			r.Body = u.body(r.Body)
 		}
 		out.Rules = append(out.Rules, r)
