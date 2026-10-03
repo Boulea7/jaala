@@ -109,6 +109,22 @@ func TestWhatUnfoldLeavesAlone(t *testing.T) {
 	}
 }
 
+// A recursive rule's body runs every round of the fixpoint, so a join inlined into it is redone each
+// time, where the relation would be derived once and indexed (#97). control: the goal's call to the
+// same relation is still inlined.
+func TestUnfoldLeavesARecursiveBodyAlone(t *testing.T) {
+	q := unfold(baseFor(std(graph())), mustParse(t, `s(?a, ?b) :- edge(?a, ?b), node(?b); `+
+		`r(?a, ?b) :- s(?a, ?b); r(?a, ?c) :- r(?a, ?b), s(?b, ?c); r(?x, ?y), s(?y, ?z) => ?x, ?z`))
+	for _, r := range q.Rules {
+		if r.Head.Relation == "r" && !strings.Contains(r.Body.String(), "s(") {
+			t.Errorf("s was inlined into r's rule: %s", r)
+		}
+	}
+	if strings.Contains(q.Goal.String(), "s(") {
+		t.Errorf("control: the goal's call to s should be inlined: %s", q.Goal)
+	}
+}
+
 // Once every call to a relation is inlined it is not materialized, and nor is what only it read; a
 // rule the goal never reached stays, as a query's own rules always do.
 func TestUnfoldDropsWhatTheGoalNoLongerReaches(t *testing.T) {
