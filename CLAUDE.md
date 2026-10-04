@@ -212,8 +212,13 @@ Issues are ranked by the mission they serve (labels `P0`–`P3`, `waiting`, `mis
 missions unblock a host's active mission; such a mission closes when the host's half of its exercise
 passes too, so it can stay open after jaala's tickets close. `mission_selfcheck` (#86) is jaala's
 own: `./selfcheck.sh` checks the evaluators against generated programs and Soufflé, and cost against
-`Work()` baselines. Several missions can be active at once (`queue.sh` prints them). A new issue gets a priority and a mission link when filed, or `waiting` with
-the trigger that would unpark it.
+`Work()` baselines. `mission_docsite` (#104) is the documentation site, every example on it run by
+the engine. Several missions can be active at once (`queue.sh` prints them). A new issue gets a
+priority and a mission link when filed, or `waiting` with the trigger that would unpark it.
+
+A PR body closes only its own issue. GitHub reads any "fix", "fixes", "close", "closes" or "resolves"
+before `#N` as a closing keyword, even inside a phrase like "Engine fixes: #90", which closed #90 on
+merge (reopened). In "Out of scope" and "Related" write "left for #N".
 
 ## Working with hosts
 

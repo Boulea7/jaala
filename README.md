@@ -51,4 +51,7 @@ engine, and was extracted so other graph tools could share it.
 All three packages import only the Go standard library and each other, in that one direction, and
 build for `GOOS=js GOARCH=wasm`.
 
+The documentation site lives in `docsite/`, where every example is run on the engine when the
+site is built; `docsite/README.md` says how to build it and add to it.
+
 Licensed under Apache-2.0.
