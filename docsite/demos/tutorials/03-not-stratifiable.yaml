@@ -1,0 +1,5 @@
+fixture: deps
+program: |
+  odd(?p) :- package(?p), not odd(?p);
+query: odd(?p) => ?p
+expect_error: "not stratifiable"

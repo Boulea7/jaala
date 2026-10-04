@@ -1,0 +1,3 @@
+fixture: deps
+query: imports(?p, _) => ?p
+expect: [[api], [app], [auth], [cache], [config], [db], [legacy], [log], [metrics]]

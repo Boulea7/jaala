@@ -1,0 +1,5 @@
+fixture: deps
+program: |
+  same_team(?a, ?b) :- imports(?a, ?b), owner(?a, ?t), owner(?b, ?t);
+query: same_team(?a, ?b) => ?a, ?b
+expect: [[app, api], [log, util], [metrics, util]]

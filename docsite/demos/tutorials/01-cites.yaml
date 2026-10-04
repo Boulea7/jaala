@@ -1,0 +1,4 @@
+fixture: deps
+query: imports("auth", ?p) => ?p
+cites: true
+expect: [[config], [db], [log]]

@@ -1,0 +1,3 @@
+fixture: deps
+query: depends_on("app", ?p) => ?p
+expect_error: 'unknown relation "depends_on"'

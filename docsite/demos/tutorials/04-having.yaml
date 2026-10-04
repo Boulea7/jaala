@@ -1,0 +1,3 @@
+fixture: deps
+query: imports(?p, ?q) => ?q, count(?p) having count(?p) >= 3
+expect: [[config, "4"], [log, "5"], [util, "3"]]

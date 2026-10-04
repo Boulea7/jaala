@@ -1,0 +1,3 @@
+fixture: deps
+query: imports(?p) => ?p
+expect_error: 'relation "imports" takes 2 args, got 1'
