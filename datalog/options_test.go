@@ -212,6 +212,39 @@ func TestBindingsAtTheEdges(t *testing.T) {
 	}
 }
 
+// A variable the host binds still anchors a negation, as it does written in the goal: anchoring is
+// checked on the goal before Bind makes the variable a constant, and on the rules before a rewrite
+// inlines or renames them (#92). control: a negation anchored to nothing is still refused, naming the
+// variable as written, by every evaluator and by ValidateBound.
+func TestABoundVariableStillAnchorsANegation(t *testing.T) {
+	v := std(graph())
+	bind := Bind(map[Var]ns.Value{"n": ns.S("d")})
+	for _, text := range []string{
+		`node(?n), not edge(?n, ?y) => ?n`,
+		`r(?x) :- node(?x), not edge(?x, ?y); r(?n) => ?n`,
+	} {
+		rows, err := both(mustParse(t, text), baseFor(v), bind)
+		if err != nil || col(rows, "n") != "d" {
+			t.Errorf("%s with ?n = d: %v, %v; want d (it has no edge out)", text, col(rows, "n"), err)
+		}
+		if err := ValidateBound(mustParse(t, text), v, "n"); err != nil {
+			t.Errorf("%s: ValidateBound = %v, want nil", text, err)
+		}
+	}
+	for _, text := range []string{
+		`node(?n), not edge(?m, ?y) => ?n`,
+		`r(?x) :- node(?x), not edge(?m, ?y); r(?n) => ?n`,
+	} {
+		_, err := both(mustParse(t, text), baseFor(v), bind)
+		if err == nil || !strings.Contains(err.Error(), "(?m appears only inside") {
+			t.Errorf("control: %s = %v, want the unanchored refusal naming ?m", text, err)
+		}
+		if verr := ValidateBound(mustParse(t, text), v, "n"); fmt.Sprint(verr) != fmt.Sprint(err) {
+			t.Errorf("control: %s: ValidateBound = %v, want Eval's %v", text, verr, err)
+		}
+	}
+}
+
 // A variable the host binds is a constant to Validate as it is to Eval, so a goal that uses it only
 // inside a `not`, or as the input a generator's mode needs, validates when it is bound and is refused
 // when it isn't (#61).

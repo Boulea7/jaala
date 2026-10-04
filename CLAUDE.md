@@ -146,12 +146,18 @@ go list -deps ./... | grep '\.' | grep -v '^github.com/panyam/jaala' | grep -v '
   relations in full. That usually stratifies, but the corpus found two cases where it doesn't (#93):
   demand flowing from a rule above an aggregate down into the relation it reduces, and a negation
   still in a cycle the demand closes. When neither rewrite stratifies, `magic` returns the program
-  unrewritten, which `checkRules` has already stratified. A rule evaluated in full also has its
+  unrewritten, which `checkRules` has already stratified. It also returns it unrewritten when the rewrite would derive one
+  relation under two adornments (`severalAdornments`, #96): the copies can cover the whole relation
+  twice, which made demand for one points-to variable cost three times the whole analysis. A rule evaluated in full also has its
   constant calls rewritten (`fromConstants`, #57), adorned by the constants alone, so their demand
   rules are facts and add no dependency.
 - **SemiNaive drops the rules the goal never reaches before rewriting** (`withoutUnreached`, #90).
   A rewrite renames or removes what they read, which left them reading a relation with no rules.
   They are checked first, as linked, so their mistakes are still reported.
+- **A negation's anchor is checked on the program as written** (`checkWrittenAnchors`, #92): the goal
+  before `Bind` turns the host's variables into constants, with those variables counted as anchors,
+  and the rules before a rewrite inlines or renames them. Checks that run later (`applyRule`, the
+  rewritten goal) use `checkNegatedRelations`, which checks relations and arity only.
 - **Rules are checked as linked before any rewrite renames them** (`checkRules` in `evaluate`), so
   an error names `r`, never `r\x00/bf` or a factored relation. A new rewrite gets this for free;
   a new check that names a relation belongs there too.

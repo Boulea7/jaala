@@ -57,20 +57,44 @@ import (
 // When neither rewrite stratifies, the program runs without demand, as written, which stratify has
 // already accepted.
 //
+// Nor does it run with demand when the rewrite would derive one relation under two adornments (see
+// severalAdornments).
+//
 // Magic tuples record what was asked, not what produced an answer, so their citations must not reach
 // an answer: SemiNaive's fixpoint derives them without citations (see SemiNaive.materialize). A
 // supplementary tuple is a prefix's result, so it keeps its citations, and under Witnesses the
 // witnesses of the literals it stands for (see idbTuple.parts).
 func magic(b *Base, q Query) Query {
-	out := magicWith(b, q, true)
-	if _, err := stratify(out.Rules, derivedArity(out.Rules)); err == nil {
-		return out
-	}
-	out = magicWith(b, q, false)
-	if _, err := stratify(out.Rules, derivedArity(out.Rules)); err == nil {
-		return out
+	for _, intoNeg := range []bool{true, false} {
+		out := magicWith(b, q, intoNeg)
+		if severalAdornments(out.Rules) {
+			return q
+		}
+		if _, err := stratify(out.Rules, derivedArity(out.Rules)); err == nil {
+			return out
+		}
 	}
 	return q
+}
+
+// severalAdornments reports whether the rewrite derives some relation under more than one adornment.
+// Each adornment is a copy of the relation with its own demand, and when callers ask for it bound in
+// different places the copies between them can cover all of it, twice, plus the demand that drove
+// them: demand for one points-to variable cost three times the whole analysis (#96). Reading the
+// program as written is never worse than that.
+func severalAdornments(rules []Rule) bool {
+	seen := map[string]string{}
+	for _, r := range rules {
+		rel, adorn, ok := strings.Cut(r.Head.Relation, "\x00/")
+		if !ok {
+			continue
+		}
+		if prev, ok := seen[rel]; ok && prev != adorn {
+			return true
+		}
+		seen[rel] = adorn
+	}
+	return false
 }
 
 // magicWith makes the rewrite, pushing demand into negated calls when intoNeg is set (see magic).

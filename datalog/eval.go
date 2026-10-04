@@ -235,6 +235,9 @@ func evaluate(ctx context.Context, q Query, b *Base, opts []Option, rewrite func
 	if o.witness {
 		q = tagWritten(q)
 	}
+	if err := checkWrittenAnchors(written.Goal, q.Rules, o.bind); err != nil {
+		return nil, err
+	}
 	// Modes are checked on the program as linked, before any rewrite, so an evaluator that inlines a
 	// rule away still refuses what its body could never run, with the message Validate gives.
 	for _, r := range q.Rules {
@@ -270,7 +273,7 @@ func evaluate(ctx context.Context, q Query, b *Base, opts []Option, rewrite func
 		}
 	}
 	pos, negs := splitNegations(q.Goal.Literals)
-	if err := b.validateNegations(q.Goal, negs); err != nil {
+	if err := b.checkNegatedRelations(negs); err != nil {
 		return nil, err
 	}
 	if err := validateSelect(sel, q.Having, q.Goal); err != nil {
@@ -331,16 +334,22 @@ func splitNegations(lits []Literal) (pos, negs []Literal) {
 }
 
 // validateNegations rejects a negated literal over an unknown relation or with the wrong arity —
-// caught here so a bad `not` fails clearly instead of silently never matching. Negation ranges over
-// every callable relation uniformly: EDB, IDB, string filters, overlay predicates, AND reaches
-// (negation as failure — atomHolds runs the same extendAtom the positive solve uses). Stratification
-// (each evaluator's fixpoint) already guarantees a negated IDB relation is fully derived before the rule or goal
-// that negates it runs, so the filter is safe.
-func (b *Base) validateNegations(goal Body, negs []Literal) error {
-	bound := map[Var]bool{}
-	for _, v := range positiveVars(goal) {
-		bound[v] = true
+// caught here so a bad `not` fails clearly instead of silently never matching — or anchored to no
+// variable of the body (see checkNegationAnchored). Negation ranges over every callable relation
+// uniformly: EDB, IDB, string filters, overlay predicates, AND reaches (negation as failure —
+// atomHolds runs the same extendAtom the positive solve uses). Stratification (each evaluator's
+// fixpoint) already guarantees a negated IDB relation is fully derived before the rule or goal that
+// negates it runs, so the filter is safe.
+func (b *Base) validateNegations(body Body, negs []Literal) error {
+	if err := b.checkNegatedRelations(negs); err != nil {
+		return err
 	}
+	return checkAnchored(body, nil)
+}
+
+// checkNegatedRelations is validateNegations without the anchoring check, for a body a rewrite may
+// have changed: anchoring is a property of the program as written (see checkWrittenAnchors).
+func (b *Base) checkNegatedRelations(negs []Literal) error {
 	for _, lit := range negs {
 		rel := lit.Neg.Relation
 		ok, known := b.arityAccepts(rel, len(lit.Neg.Args))
@@ -350,11 +359,41 @@ func (b *Base) validateNegations(goal Body, negs []Literal) error {
 		if !ok {
 			return fmt.Errorf("query: negated relation %q takes %s args, got %d", rel, b.arityLabelOf(rel), len(lit.Neg.Args))
 		}
+	}
+	return nil
+}
+
+// checkAnchored applies checkNegationAnchored to each negated literal of body, counting as bound the
+// variables its positive literals bind and those in hostBound.
+func checkAnchored(body Body, hostBound map[Var]ns.Value) error {
+	bound := map[Var]bool{}
+	for _, v := range positiveVars(body) {
+		bound[v] = true
+	}
+	for v := range hostBound {
+		bound[v] = true
+	}
+	_, negs := splitNegations(body.Literals)
+	for _, lit := range negs {
 		if err := checkNegationAnchored(lit.Neg, bound); err != nil {
 			return err
 		}
 	}
 	return nil
+}
+
+// checkWrittenAnchors checks every negation's anchor once, on the program as the author wrote it: the
+// goal before Bind turns the host's variables into constants (a host-bound variable anchors, as one
+// written in the goal does), and the rules before a rewrite inlines or renames them (#92). Checked
+// after, a bound anchor became a constant and an inlined body's anchor a renamed variable, so a
+// negation anchored as written was refused, naming a variable nobody wrote.
+func checkWrittenAnchors(goal Body, rules []Rule, bind map[Var]ns.Value) error {
+	for _, r := range rules {
+		if err := checkAnchored(r.Body, nil); err != nil {
+			return err
+		}
+	}
+	return checkAnchored(goal, bind)
 }
 
 // checkNegationAnchored rejects a negated atom that shares NO variable with the positive body, which
