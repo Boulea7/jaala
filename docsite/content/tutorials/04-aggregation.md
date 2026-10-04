@@ -8,7 +8,7 @@ An aggregate in the projection reduces many rows to one per group. The plain var
 
 {{ demo "demos/tutorials/04-fan-out.yaml" }}
 
-`util` has no row because it imports nothing, so there's no group for it. Several aggregates can share a group. Here's each team's package count and total lines:
+`util` has no row because it imports nothing, so there's no group for it, which is worth remembering when a count you expected to be zero is just missing. Several aggregates can share a group, which is a fairly common shape of question. Here's each team's package count and total lines:
 
 {{ demo "demos/tutorials/04-by-team.yaml" }}
 
@@ -36,7 +36,7 @@ A rule's head can aggregate, which gives the result a name that other rules and 
 
 {{ demo "demos/tutorials/04-head-aggregate.yaml" }}
 
-A rule that aggregates has to be its relation's only rule, since two rules each producing a count for the same package would leave it with two counts. jaala derives everything the rule's body reads before it computes the aggregate, the same way it handles `not`, so the count is never taken over a relation that's still growing.
+A rule that aggregates has to be its relation's only rule. Two rules each producing a count for the same package would leave it with two counts, and it's not clear which one you'd want. jaala derives everything the rule's body reads before it computes the aggregate, the same way it handles `not`, so the count is never taken over a relation that's still growing.
 
 ## A group with no rows
 

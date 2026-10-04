@@ -8,11 +8,11 @@ A query asks which values make a pattern true over the facts. Our service's fact
 
 {{ demo "demos/tutorials/01-imports-of-api.yaml" }}
 
-`?p` is a variable, and `"api"` is a constant. Everything before `=>` is the goal, the pattern to match, and everything after it is the projection, the columns the answer should have. Turn the question around by moving the constant, and you get every package that imports `log`:
+`?p` is a variable, and `"api"` is a constant, which is pretty much the whole vocabulary of a goal. Everything before `=>` is the goal, the pattern to match, and everything after it is the projection, the columns the answer should have. Turn the question around by moving the constant, and you get every package that imports `log`:
 
 {{ demo "demos/tutorials/01-importers-of-log.yaml" }}
 
-When you don't care about a position, write `_`. It matches anything and binds nothing, so this asks for every package that imports something at all. `util` is missing because it imports nothing, and each package shows up once even though most import several things, since an answer is a set of rows.
+When you don't care about a position, write `_`. It matches anything and binds nothing, so this asks for every package that imports something at all. `util` is missing because it imports nothing. Each package shows up once, even though most import several things, since an answer is a set of rows.
 
 {{ demo "demos/tutorials/01-wildcard.yaml" }}
 
@@ -38,7 +38,7 @@ Every row carries citations, the facts that produced it. Here each row cites the
 
 ## When a query is wrong
 
-jaala checks a query against what it knows before running it, and refuses one that can't be right rather than quietly answering nothing. `imports` takes two arguments, so asking it with one is an error, and the message says so:
+jaala checks a query against what it knows before running it, and refuses one that can't be right rather than answering nothing without saying why. `imports` takes two arguments, so asking it with one is an error, and the message says so:
 
 {{ demo "demos/tutorials/01-arity.yaml" }}
 

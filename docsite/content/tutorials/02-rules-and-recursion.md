@@ -19,7 +19,7 @@ A rule ends with `;`, and a query is any number of rules followed by one goal. T
 
 {{ demo "demos/tutorials/02-depends-on.yaml" }}
 
-The first rule covers the direct imports. The second says that if `a` depends on `b`, and `b` imports `c`, then `a` depends on `c` too. jaala applies both rules until a round derives nothing new, which is the fixpoint, so it doesn't matter how deep the chain goes.
+The first rule covers the direct imports. The second says that if `a` depends on `b`, and `b` imports `c`, then `a` depends on `c` too. jaala applies both rules until a round derives nothing new, which is the fixpoint, so it doesn't really matter how deep the chain goes.
 
 ## Cycles
 
@@ -33,7 +33,7 @@ A goal with no variables asks whether something holds. When it does, the answer 
 
 {{ demo "demos/tutorials/02-why.yaml" }}
 
-`app` reaches `util` along several paths. A row cites one of them, the derivation that found it first, rather than all of them.
+`app` reaches `util` along several paths, and a row cites one of them, the derivation that found it first. That's mostly what you want from evidence: one path you can check, not every path there is.
 
 ## The other direction
 
