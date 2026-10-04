@@ -1,0 +1,50 @@
+name: docs
+
+# Builds and checks the documentation site in docsite/ and publishes it to GitHub Pages. The repo's
+# Pages source must be "GitHub Actions" (Settings, Pages, Build and deployment).
+
+on:
+  push:
+    branches: [main]
+  # The build and its checks run on every PR, since an engine change can change what an example
+  # answers once the docs run them (#106). Only main deploys.
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # The footer names the commit and the nearest tag (git describe), which needs the tags.
+          fetch-depth: 0
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: docsite/go.mod
+          cache-dependency-path: docsite/go.sum
+      # One definition of a build and its checks, in the Makefile.
+      - name: Build and check the site
+        run: make -C docsite check
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: docsite/dist
+
+  deploy:
+    needs: build
+    if: github.event_name != 'pull_request'
+    concurrency:
+      group: pages
+      cancel-in-progress: false
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4

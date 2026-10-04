@@ -1,0 +1,32 @@
+{{ define "Footer" }}
+<footer class="site-footer">
+    <div class="footer-container">
+        <div class="footer-section">
+            <h4>jaala</h4>
+            <p>{{ (json "SiteMetadata.json" "siteDescription") }}</p>
+            <p class="footer-version">Built from {{ siteVersion }}</p>
+        </div>
+
+        <div class="footer-section">
+            <h4>Docs</h4>
+            <ul>
+                <li><a href="{{.Site.PathPrefix}}/overview/">Overview</a></li>
+            </ul>
+        </div>
+
+        <div class="footer-section">
+            <h4>Project</h4>
+            <ul>
+                <li><a href="{{ (json "SiteMetadata.json" "repository") }}" target="_blank" rel="noopener">GitHub repository</a></li>
+                <li><a href="{{ (json "SiteMetadata.json" "issues") }}" target="_blank" rel="noopener">Report issues</a></li>
+            </ul>
+        </div>
+
+        <div class="footer-section">
+            <h4>License</h4>
+            <p>Licensed under <a href="{{ (json "SiteMetadata.json" "repository") }}/blob/main/LICENSE">{{ (json "SiteMetadata.json" "license") }}</a></p>
+            <p>&copy; {{ .Now.UTC.Year }} {{ (json "SiteMetadata.json" "author") }}</p>
+        </div>
+    </div>
+</footer>
+{{ end }}

@@ -1,0 +1,8 @@
+{
+  "siteName": "jaala",
+  "siteDescription": "A Datalog engine for graph-shaped data, with provenance on every answer.",
+  "author": "Sri Panyam",
+  "repository": "https://github.com/panyam/jaala",
+  "issues": "https://github.com/panyam/jaala/issues",
+  "license": "Apache-2.0"
+}
