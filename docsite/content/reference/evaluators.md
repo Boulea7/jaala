@@ -5,9 +5,9 @@ description: "Naive and SemiNaive: what each evaluator does, and what it guarant
 
 An evaluator answers a query over a `Base`. jaala has two, and three ways to run them, which all give the same answer and differ in how much work they do getting there.
 
-- **`SemiNaive{}`** is the one to use. In each round of a recursive fixpoint it only revisits what the last round added. It derives only what a query's constants ask for (magic sets), and it plans each rule body so the order a rule is written in doesn't change what it costs.
+- **`SemiNaive{}`** is the one you'll want. In each round of a recursive fixpoint it only revisits what the last round added. It derives only what a query's constants ask for (magic sets), and it plans each rule body so the order a rule is written in doesn't change what it costs.
 - **`SemiNaive{WrittenOrder: true}`** keeps the semi-naive fixpoint and turns the rewrites off, running each body in the order it's written.
-- **`Naive{}`** repeats every rule until a round adds nothing, in written order. It's slow on purpose and simple enough to trust, so it's the reference every faster strategy is checked against.
+- **`Naive{}`** repeats every rule until a round adds nothing, in written order. It's slow on purpose and fairly simple to trust, so it's the reference every faster strategy is checked against.
 
 ```go
 {{ includeFileText "examples/reference/evaluators_test.go" }}

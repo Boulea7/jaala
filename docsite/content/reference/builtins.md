@@ -7,7 +7,7 @@ description: "Everything the standard library adds to a vocabulary: string tests
 
 {{ builtins }}
 
-Each one is a test: it holds or it doesn't, and it binds nothing. So every argument needs a value from the rest of the goal, the way a comparison does. jaala's planner runs a test once its arguments are bound, wherever you wrote it in the goal, and refuses one whose arguments nothing binds:
+Each one is a test: it holds or it doesn't, and it binds nothing. So every argument needs a value from the rest of the goal, pretty much the way a comparison does. jaala's planner runs a test once its arguments are bound, wherever you wrote it in the goal, and refuses one whose arguments nothing binds:
 
 {{ demo "demos/reference/builtins-unbound.yaml" }}
 
@@ -35,7 +35,7 @@ A pattern that doesn't compile is refused before anything runs, with the compile
 
 {{ demo "demos/reference/builtins-bad-glob.yaml" }}
 
-Go code that has to agree with these (a host filtering the same names outside a query, say) can use `stdlib.CompileGlob` and `stdlib.CompilePattern`, the compilers the tests use.
+Go code that has to agree with these (a host filtering the same names outside a query, say) can mostly reuse them through `stdlib.CompileGlob` and `stdlib.CompilePattern`, the compilers the tests use.
 
 ## `absent`
 
