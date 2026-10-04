@@ -35,7 +35,7 @@ A pattern that doesn't compile is refused before anything runs, with the compile
 
 {{ demo "demos/reference/builtins-bad-glob.yaml" }}
 
-Go code that has to agree with these (a host filtering the same names outside a query, say) can mostly reuse them through `stdlib.CompileGlob` and `stdlib.CompilePattern`, the compilers the tests use.
+Go code that has to agree with these (a host filtering the same names outside a query, say) can use `stdlib.CompileGlob` and `stdlib.CompilePattern`, the compilers the tests use.
 
 ## `absent`
 
