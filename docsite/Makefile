@@ -23,9 +23,12 @@ wasm:
 	cp "$$(go env GOROOT)/lib/wasm/wasm_exec.js" static/wasm/
 
 # The demo package's tests compiled to wasm and run under Node, so the code the browser runs is
-# tested as wasm, not only as Go. Needs node on the PATH.
+# tested as wasm, not only as Go. Needs node on the PATH. wasm_exec.js refuses a program whose
+# arguments and environment pass about 12 KB, which a CI runner's environment does, so the tests run
+# with only what go needs.
 wasm-test:
-	GOOS=js GOARCH=wasm go test -count=1 -exec="$$(go env GOROOT)/lib/wasm/go_js_wasm_exec" ./demo
+	env -i PATH="$$PATH" HOME="$$HOME" GOPATH="$$(go env GOPATH)" GOCACHE="$$(go env GOCACHE)" \
+		GOOS=js GOARCH=wasm go test -count=1 -exec="$$(go env GOROOT)/lib/wasm/go_js_wasm_exec" ./demo
 
 # The docsite's tests: templates parse, navigation is wired, includes resolve, and every internal
 # link in the built site resolves (which needs the build first).
