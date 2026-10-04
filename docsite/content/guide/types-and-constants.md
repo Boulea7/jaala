@@ -17,11 +17,11 @@ And a constant that can't be read that way is refused, rather than answering not
 
 {{ demo "demos/guide/types-declared-refused.yaml" }}
 
-The difference matters most when a question comes from a person or a form, where `"big"` is a mistake worth reporting. Without the declaration, jaala has no type to check against, and the same question matches no rows without saying why:
+The difference matters most when a question comes from a person or a form, where `"big"` is a mistake you'd want reported. Without the declaration, jaala has no type to check against, and the same question matches no rows without saying why:
 
 {{ demo "demos/guide/types-undeclared.yaml" }}
 
-A host can declare types on the relations it serves, too, and a rule's undeclared arguments pick up types from what its body reads. The facts on this site declare none, which is why the rule here has to.
+A host can declare types on the relations it serves too, which mostly saves you writing them in rules, and a rule's undeclared arguments pick up types from what its body reads. The facts on this site declare none, which is why the rule here has to.
 
 ## Numbers and text
 

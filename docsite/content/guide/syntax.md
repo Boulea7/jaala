@@ -4,7 +4,7 @@ description: "Every form a query can take: terms, literals, comparisons, rules, 
 next: {url: "/jaala/guide/types-and-constants/", title: "Types and constants"}
 ---
 
-A query is zero or more rules, each ending in `;`, followed by one goal. Whitespace doesn't matter, so a query can sit on one line or many, and a `#` outside a string starts a comment that runs to the end of the line.
+A query is zero or more rules, each ending in `;`, followed by one goal. Whitespace doesn't matter, so you can write a query on one line or many, and a `#` outside a string starts a comment that runs to the end of the line.
 
 ## Terms
 
@@ -31,7 +31,7 @@ A goal or a rule body is a list of literals separated by commas, and all of them
 
 {{ demo "demos/guide/syntax-comparisons.yaml" }}
 
-A comparison only compares. `=` checks that two values are equal, and it doesn't give a value to a variable that has none, so a variable has to appear in an atom before a comparison can use it:
+A comparison only compares, which is a bit different from `=` in most programming languages. `=` checks that two values are equal, and it doesn't give a value to a variable that has none, so a variable has to appear in an atom before a comparison can use it:
 
 {{ demo "demos/guide/syntax-equals-compares.yaml" }}
 

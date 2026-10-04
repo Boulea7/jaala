@@ -21,7 +21,7 @@ At least one variable of the `not` has to be bound by the rest of the goal or th
 
 {{ demo "demos/guide/negation-unbound.yaml" }}
 
-A value the host binds with `Bind` counts as an anchor, the same as one the goal binds itself. That's the usual case for a host asking about one thing it already has in hand. Bound to `cache`, which no test covers, the same goal answers one row:
+A value the host binds with `Bind` counts as an anchor, the same as one the goal binds itself. That's pretty much the usual case for a host asking about one thing it already has in hand. Bound to `cache`, which no test covers, the same goal answers one row:
 
 {{ demo "demos/guide/negation-host-bound.yaml" }}
 

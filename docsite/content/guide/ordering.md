@@ -4,7 +4,7 @@ description: "The order every answer comes back in, and order by, limit and offs
 prev: {url: "/jaala/guide/aggregation/", title: "Aggregation"}
 ---
 
-Every answer comes back sorted, and the same facts and query always give the same order. That's a promise hosts lean on: two answers can be compared line by line, and a saved answer can be checked against a new one.
+Every answer comes back sorted, and the same facts and query always give the same order. Hosts lean on that quite a bit, since it lets them compare two answers line by line and check a saved answer against a new one.
 
 ## The default order
 
@@ -18,11 +18,11 @@ jaala sorts by the first column, then the second, and so on. Within a column, ab
 
 {{ demo "demos/guide/ordering-two-keys.yaml" }}
 
-An aggregate column can be named the way the projection writes it:
+You name an aggregate column the way the projection writes it:
 
 {{ demo "demos/guide/ordering-aggregate.yaml" }}
 
-Only columns of the answer can be named. A variable the projection leaves out isn't in the answer to sort by, so jaala refuses it rather than sorting by something you can't see:
+You can only name columns of the answer. A variable the projection leaves out isn't in the answer to sort by, so jaala refuses it rather than sorting by something you can't see:
 
 {{ demo "demos/guide/ordering-unselected.yaml" }}
 

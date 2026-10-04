@@ -17,7 +17,7 @@ A group exists only when some row has its key, so a package with no tests has no
 
 ## Counting rows or values
 
-`count(?t)` counts the group's rows, the bindings of the goal. `count(distinct ?t)` counts the different values `?t` takes. They differ whenever a value repeats, which a join makes common. `api` imports four packages, owned by three teams:
+`count(?t)` counts the group's rows, the bindings of the goal. `count(distinct ?t)` counts the different values `?t` takes. They differ whenever a value repeats, which a join makes pretty common. `api` imports four packages, owned by three teams:
 
 {{ demo "demos/guide/aggregation-bindings-vs-values.yaml" }}
 
@@ -52,6 +52,6 @@ With no plain variables in the projection, the whole answer is a single group, a
 A rule's head can aggregate, as in `fan_in(?q, count(?p)) :- imports(?p, ?q);`, which gives the result a name other rules can read. The [aggregation tutorial]({{.Site.PathPrefix}}/tutorials/04-aggregation/#an-aggregate-in-a-rule) shows one. Two things follow from how jaala evaluates it:
 
 - It has to be its relation's only rule, since two rules each producing a count for the same key would give the key two counts.
-- Its body sits in a lower stratum than anything that reads the relation, the same as for `not`, so the count is never taken over a relation that's still growing. A cycle through an aggregating rule is refused for the same reason a cycle through `not` is.
+- Its body sits in a lower stratum than anything that reads the relation, the same as for `not`, so the count is never taken over a relation that's still growing. jaala refuses a cycle through an aggregating rule for the same reason it refuses one through `not`.
 
 Its aggregate column reports a type whenever the function decides one: a number for `count`, text for `list`, and a number for `sum`, `min` and `max` over a column already typed as a number. Over an untyped column those three stay untyped.
