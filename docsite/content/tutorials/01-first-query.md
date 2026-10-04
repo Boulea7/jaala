@@ -4,7 +4,7 @@ description: "Facts, a goal, variables and constants, and the order jaala answer
 next: {url: "/jaala/tutorials/02-rules-and-recursion/", title: "Rules and recursion"}
 ---
 
-A query asks which values make a pattern true over the facts. Our service's facts include `imports("api", "auth")`, which says the `api` package imports `auth`. To ask what `api` imports, we write the same shape with a variable where the answer goes:
+A query asks which values make a pattern true over the facts. Our service's [facts]({{ datasetURL "deps" }}) include `imports("api", "auth")`, which says the `api` package imports `auth`. To ask what `api` imports, we write the same shape with a variable where the answer goes:
 
 {{ demo "demos/tutorials/01-imports-of-api.yaml" }}
 

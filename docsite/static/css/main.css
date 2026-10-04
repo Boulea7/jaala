@@ -1975,3 +1975,9 @@ body.search-open {
 .demo .demo-editor { padding: .75rem 1rem 0; }
 .demo .demo-text { display: block; width: 100%; box-sizing: border-box; font-family: 'Monaco', 'Menlo', 'Ubuntu Mono', monospace; font-size: .85rem; line-height: 1.6; tab-size: 4; padding: .6rem .75rem; border-radius: 6px; border: 1px solid var(--border-color); background: #21252b; color: #e6e6e6; resize: vertical; margin-bottom: .75rem; }
 .demo .demo-label { font-size: .85em; opacity: .8; margin: 0 0 .3rem; }
+
+/* Datasets (the `dataset` template function): each relation's table, and the facts as written. */
+.dataset h3 { margin: 1.5rem 0 .5rem; font-size: 1rem; }
+.dataset .demo-answer { padding: 0; }
+.dataset details { margin: 1.25rem 0; }
+.dataset summary { cursor: pointer; font-weight: 600; }

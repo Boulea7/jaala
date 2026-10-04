@@ -1,0 +1,3 @@
+fixture: deps
+query: package(?p), str.contains(?p, "ac") => ?p
+expect: [[cache], [legacy]]

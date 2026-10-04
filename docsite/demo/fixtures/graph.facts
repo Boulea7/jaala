@@ -1,4 +1,8 @@
-# A small directed graph: a path a -> b -> c -> d, and x on its own.
+# A small directed graph: a path a -> b -> c -> d, x on its own, and a
+# weight on every node.
+#: edge(from, to)
+#: node(name)
+#: weight(node, w)
 edge("a", "b")
 edge("b", "c")
 edge("c", "d")

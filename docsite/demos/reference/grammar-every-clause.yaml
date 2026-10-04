@@ -1,0 +1,11 @@
+fixture: deps
+program: |
+  # lines of code each team owns, from its packages' sizes
+  size(?p, ?n: number) :- loc(?p, ?n);
+query: |
+  owner(?p, ?t), size(?p, ?n), not test(_, ?p), ?n > 100
+    => ?t, count(?p), sum(?n)
+    having count(?p) >= 1
+    order by sum(?n) desc
+    limit 3 offset 1
+expect: [[platform, "3", "600"], [data, "1", "400"]]

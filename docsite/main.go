@@ -53,6 +53,10 @@ var Site = &s3.Site{
 		"includeFileText": includeFileText,
 		"siteVersion":     siteVersion,
 		"assetURL":        assetURL,
+		"dataset":         datasetHTML,
+		"datasetURL":      datasetURL,
+		"grammar":         grammar,
+		"builtins":        builtinsHTML,
 		"demo":            demoHTML,
 
 		// Helpers newer s3gen has in its default func map and the pinned version lacks.
