@@ -9,8 +9,7 @@ These tutorials teach jaala's query language one idea at a time, all against the
 2. [Rules and recursion](02-rules-and-recursion/) derives new relations and follows imports all the way down.
 3. [Negation](03-negation/) asks what isn't there, and explains the two rules that keep that well defined.
 4. [Aggregation](04-aggregation/) counts, sums and lists, in the answer and in a rule.
-
-A fifth tutorial, on embedding jaala in a Go program, is on its way.
+5. [Embedding jaala in Go](05-go-host/) serves facts from Go and runs the same queries from a program.
 
 ## The facts
 

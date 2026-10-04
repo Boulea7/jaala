@@ -128,3 +128,47 @@ func TestFiguresCarryNoBlankLines(t *testing.T) {
 		}
 	}
 }
+
+var includeFileTextRe = regexp.MustCompile(`\{\{-?\s*includeFileText\s+"([^"]+)"`)
+
+// Every Go example under examples/ is shown on some page, and every includeFileText path resolves.
+// An example's own test keeps its code honest, and this keeps the page showing it.
+func TestEveryExampleIsShown(t *testing.T) {
+	shown := map[string]bool{}
+	err := filepath.Walk(contentDir, func(path string, info os.FileInfo, err error) error {
+		if err != nil || info.IsDir() || !strings.HasSuffix(path, ".md") {
+			return err
+		}
+		b, err := os.ReadFile(path)
+		if err != nil {
+			return err
+		}
+		for _, m := range includeFileTextRe.FindAllStringSubmatch(string(b), -1) {
+			shown[m[1]] = true
+			if _, err := os.Stat(m[1]); err != nil {
+				t.Errorf("%s includes %q, which doesn't exist", path, m[1])
+			}
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("walk content: %v", err)
+	}
+	var examples int
+	err = filepath.Walk("examples", func(path string, info os.FileInfo, err error) error {
+		if err != nil || info.IsDir() || !strings.HasSuffix(path, ".go") {
+			return err
+		}
+		examples++
+		if !shown[path] {
+			t.Errorf("%s isn't shown on any page", path)
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("walk examples: %v", err)
+	}
+	if examples == 0 {
+		t.Fatal("no examples under examples/, so this asserted nothing")
+	}
+}
