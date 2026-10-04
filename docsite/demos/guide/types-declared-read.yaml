@@ -1,0 +1,5 @@
+fixture: deps
+program: |
+  size(?p, ?n: number) :- loc(?p, ?n);
+query: size(?p, "800") => ?p
+expect: [[auth]]

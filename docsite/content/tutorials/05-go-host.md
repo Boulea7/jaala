@@ -54,4 +54,4 @@ A query that can't be right fails with an error whose text starts with `query:`,
 {{ includeFileText "examples/host/errors_test.go" }}
 ```
 
-A host runs this loop for as long as it lives. Most of the work after this page is deciding which facts to serve and which rules belong in a module.
+A host runs this loop for as long as it lives. Most of the work after this page is deciding which facts to serve and which rules belong in a module. The [guide]({{.Site.PathPrefix}}/guide/) has the language's rules in full.

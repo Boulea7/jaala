@@ -1,0 +1,3 @@
+fixture: deps
+query: owner(?p, "nobody"), loc(?p, ?n) => count(?p), sum(?n)
+expect: [["0", ""]]

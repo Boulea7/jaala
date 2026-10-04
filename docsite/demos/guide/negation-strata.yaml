@@ -1,0 +1,6 @@
+fixture: deps
+program: |
+  covered(?p) :- test(_, ?p);
+  risky(?p) :- imports(_, ?p), not covered(?p);
+query: risky(?p) => ?p
+expect: [[cache], [config], [log]]

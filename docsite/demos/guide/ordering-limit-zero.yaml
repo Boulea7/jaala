@@ -1,0 +1,3 @@
+fixture: deps
+query: loc(?p, ?n) => ?p limit 0
+expect_error: 'limit "0" is not a positive whole number'

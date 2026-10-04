@@ -1,0 +1,5 @@
+fixture: deps
+query: |
+  # what api imports, without a projection
+  imports("api", ?p)
+expect: [[auth], [cache], [db], [log]]

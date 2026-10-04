@@ -1,0 +1,5 @@
+fixture: deps
+program: |
+  size(?p, ?n) :- loc(?p, ?n);
+query: size(?p, "big") => ?p
+expect: []

@@ -1,0 +1,3 @@
+fixture: deps
+query: package(?p), ?q = ?p => ?q
+expect_error: "projected ?q is not bound by a positive relation"

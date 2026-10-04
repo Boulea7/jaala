@@ -39,6 +39,6 @@ All three use only the Go standard library, and they build for `GOOS=js GOARCH=w
 
 `Naive` evaluates rules in the order they're written and repeats every rule until nothing changes. It's slow on purpose, and fairly easy to convince yourself is right, which is why every faster strategy is checked against it. `SemiNaive` is the one to use. It only revisits what changed in the last round, derives just what a query's constants ask for, and plans each rule body, so the order a rule is written in doesn't change what it costs.
 
-To learn the language one idea at a time, start with the [tutorials]({{.Site.PathPrefix}}/tutorials/).
+To learn the language one idea at a time, start with the [tutorials]({{.Site.PathPrefix}}/tutorials/), and look things up in the [guide]({{.Site.PathPrefix}}/guide/).
 
 This site documents jaala at the commit shown in the footer, which is usually a little ahead of the latest release.

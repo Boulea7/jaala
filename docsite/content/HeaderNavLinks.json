@@ -1,4 +1,5 @@
 [
   {"name": "Overview", "url": "overview/"},
-  {"name": "Tutorials", "url": "tutorials/"}
+  {"name": "Tutorials", "url": "tutorials/"},
+  {"name": "Guide", "url": "guide/"}
 ]

@@ -1,0 +1,3 @@
+fixture: deps
+query: loc(?p, ?n), ?n < "a" => ?p
+expect: []
