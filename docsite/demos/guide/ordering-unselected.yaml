@@ -1,0 +1,3 @@
+fixture: deps
+query: loc(?p, ?n) => ?p order by ?n
+expect_error: "order by ?n, which is not an answer column"

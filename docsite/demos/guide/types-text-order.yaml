@@ -1,0 +1,3 @@
+fixture: deps
+query: owner(?p, ?t), ?t < "p" => ?p, ?t
+expect: [[cache, data], [db, data]]

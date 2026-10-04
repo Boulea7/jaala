@@ -1,0 +1,3 @@
+fixture: deps
+query: owner(?p, ?t) => ?t, min(?p)
+expect: [[data, ""], [platform, ""], [security, ""], [web, ""]]

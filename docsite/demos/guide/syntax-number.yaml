@@ -1,0 +1,3 @@
+fixture: deps
+query: loc(?p, 300) => ?p
+expect: [[app]]

@@ -1,0 +1,3 @@
+fixture: deps
+query: not test(_, ?p) => ?p
+expect_error: "(?p appears only inside the `not`"

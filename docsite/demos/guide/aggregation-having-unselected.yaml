@@ -1,0 +1,3 @@
+fixture: deps
+query: imports(?p, ?q) => ?q having count(?p) >= 4
+expect: [[config], [log]]

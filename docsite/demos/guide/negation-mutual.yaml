@@ -1,0 +1,6 @@
+fixture: deps
+program: |
+  a(?p) :- package(?p), not b(?p);
+  b(?p) :- package(?p), not a(?p);
+query: a(?p) => ?p
+expect_error: "not stratifiable (recursion through negation: a, b)"

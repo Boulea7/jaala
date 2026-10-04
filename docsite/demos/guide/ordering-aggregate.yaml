@@ -1,0 +1,3 @@
+fixture: deps
+query: owner(?p, ?t), loc(?p, ?n) => ?t, sum(?n) order by sum(?n) desc
+expect: [[web, "2400"], [data, "1900"], [security, "800"], [platform, "700"]]

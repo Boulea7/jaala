@@ -1,0 +1,3 @@
+fixture: deps
+query: loc(?p, ?n), ?n >= 800, ?n != 1500 => ?p, ?n
+expect: [[api, "1200"], [auth, "800"], [legacy, "900"]]

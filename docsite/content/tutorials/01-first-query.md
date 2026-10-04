@@ -28,7 +28,7 @@ jaala sorts every answer the same way, column by column, so the same question ov
 
 {{ demo "demos/tutorials/01-order.yaml" }}
 
-In a column holding both, numbers come before text. `order by` and `limit` choose a different order when you want one, and the guide covers them.
+In a column holding both, numbers come before text. `order by` and `limit` choose a different order when you want one, and the [guide]({{.Site.PathPrefix}}/guide/ordering/) covers them.
 
 ## Where an answer came from
 

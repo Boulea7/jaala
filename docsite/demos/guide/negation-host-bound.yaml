@@ -1,0 +1,4 @@
+fixture: deps
+query: not test(_, ?p) => ?p
+bind: {p: cache}
+expect: [[cache]]

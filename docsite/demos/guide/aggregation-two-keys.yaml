@@ -1,0 +1,3 @@
+fixture: deps
+query: owner(?p, ?t), test(?x, ?p) => ?t, ?p, count(?x)
+expect: [[data, db, "1"], [platform, util, "1"], [security, auth, "2"], [web, api, "1"]]

@@ -1,0 +1,3 @@
+fixture: deps
+query: owner(?p, ?t), loc(?p, ?n) => ?t, ?p, ?n
+expect: [[data, cache, "400"], [data, db, "1500"], [platform, config, "250"], [platform, log, "150"], [platform, metrics, "200"], [platform, util, "100"], [security, auth, "800"], [web, api, "1200"], [web, app, "300"], [web, legacy, "900"]]
