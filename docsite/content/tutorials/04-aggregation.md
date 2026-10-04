@@ -2,6 +2,7 @@
 title: "Aggregation"
 description: "count, sum and list over groups, filtering groups with having, and an aggregate in a rule's head."
 prev: {url: "/jaala/tutorials/03-negation/", title: "Negation"}
+next: {url: "/jaala/tutorials/05-go-host/", title: "Embedding jaala in Go"}
 ---
 
 An aggregate in the projection reduces many rows to one per group. The plain variables in the projection are the group, and the aggregate is computed over each group's rows. This counts what each package imports:
@@ -44,4 +45,4 @@ With no plain variables in the projection, the whole answer is one group, and an
 
 {{ demo "demos/tutorials/04-empty-group.yaml" }}
 
-That's the end of the language tutorials. Everything here also works from Go, which the next tutorial covers once it's written.
+That's the end of the language tutorials. Everything here also works from Go, which the [next tutorial]({{.Site.PathPrefix}}/tutorials/05-go-host/) covers.
