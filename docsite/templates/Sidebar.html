@@ -1,4 +1,5 @@
 {{# include "nav/OverviewNav.html" #}}
+{{# include "nav/TutorialNav.html" #}}
 
 {{ define "Sidebar" }}
 <aside class="sidebar">
@@ -14,11 +15,14 @@
         <nav class="section-nav">
             {{ if (Contains $currentPath "/overview/") }}
                 {{ template "OverviewNav" . }}
+            {{ else if (Contains $currentPath "/tutorials/") }}
+                {{ template "TutorialNav" . }}
             {{ else }}
                 <div class="section-nav-content">
                     <h3>Start here</h3>
                     <ul>
                         <li><a href="{{.Site.PathPrefix}}/overview/">Overview</a></li>
+                        <li><a href="{{.Site.PathPrefix}}/tutorials/">Tutorials</a></li>
                     </ul>
                 </div>
             {{ end }}

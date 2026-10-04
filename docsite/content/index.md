@@ -8,7 +8,8 @@ hideTitle: true
 <h1>jaala</h1>
 <p class="hero-subtitle">A Datalog engine for graph-shaped data. You describe what you want to know as rules over your facts, and every answer comes back with the facts that produced it.</p>
 <div class="hero-actions">
-<a href="{{.Site.PathPrefix}}/overview/" class="btn btn-primary">What jaala is</a>
+<a href="{{.Site.PathPrefix}}/tutorials/" class="btn btn-primary">Start the tutorials</a>
+<a href="{{.Site.PathPrefix}}/overview/" class="btn btn-secondary">What jaala is</a>
 <a href="https://github.com/panyam/jaala" class="btn btn-outline">GitHub</a>
 </div>
 </div>

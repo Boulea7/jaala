@@ -1,0 +1,6 @@
+fixture: deps
+program: |
+  depends_on(?a, ?b) :- imports(?a, ?b);
+  depends_on(?a, ?c) :- depends_on(?a, ?b), imports(?b, ?c);
+query: depends_on("cache", ?p) => ?p
+expect: [[cache], [config], [log], [util]]

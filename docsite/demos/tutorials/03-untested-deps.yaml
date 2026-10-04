@@ -1,0 +1,7 @@
+fixture: deps
+program: |
+  depends_on(?a, ?b) :- imports(?a, ?b);
+  depends_on(?a, ?c) :- depends_on(?a, ?b), imports(?b, ?c);
+  untested(?p) :- package(?p), not test(_, ?p);
+query: depends_on("app", ?p), untested(?p) => ?p
+expect: [[cache], [config], [log]]

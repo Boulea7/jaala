@@ -1,0 +1,3 @@
+fixture: deps
+query: imports("legacy", ?q), owner(?q, "security") => count(?q)
+expect: [["0"]]

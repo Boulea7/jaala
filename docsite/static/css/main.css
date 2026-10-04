@@ -1511,6 +1511,9 @@ pre code {
 .code-content pre code {
     background: none;
     padding: 0;
+    /* A <code> inside a plain (unhighlighted) block would take the inline-code size, 0.9em, and
+       its taller lines drift away from the gutter's numbers. */
+    font-size: inherit;
 }
 
 /* Force one shared line box so the gutter numbers line up with chroma's per-line flex spans. */
@@ -1966,3 +1969,8 @@ body.search-open {
 .demo .demo-error { color: var(--error-color, #d9534f); font-family: var(--font-mono, monospace); margin: 0; white-space: pre-wrap; }
 .demo .demo-empty { opacity: .7; margin: 0; }
 .demo figcaption { padding: .4rem 1rem; font-size: .85em; opacity: .75; border-top: 1px solid var(--border-color, rgba(127,127,127,.2)); }
+
+/* The reset at the top zeroes every padding, which leaves a content list's markers outside the
+   page. Lists in page content get their indent back. */
+.content-body ul, .content-body ol { padding-left: 1.5rem; margin: 0 0 1rem; }
+.content-body li { margin: 0.2rem 0; }

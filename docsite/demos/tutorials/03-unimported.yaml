@@ -1,0 +1,3 @@
+fixture: deps
+query: package(?p), not imports(_, ?p) => ?p
+expect: [[app], [legacy], [metrics]]

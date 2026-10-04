@@ -1,0 +1,3 @@
+fixture: deps
+query: package(?p), not test(?t, ?q) => ?p
+expect_error: 'negated relation "test" shares no variable with the rest of the query'

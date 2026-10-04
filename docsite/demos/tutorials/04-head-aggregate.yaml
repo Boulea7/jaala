@@ -1,0 +1,5 @@
+fixture: deps
+program: |
+  fan_in(?q, count(?p)) :- imports(?p, ?q);
+query: fan_in(?q, ?n), ?n >= 3 => ?q, ?n
+expect: [[config, "4"], [log, "5"], [util, "3"]]

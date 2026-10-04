@@ -1,0 +1,35 @@
+# A small Go-style service: its packages, what each imports, its
+# tests, who owns each package, and how many lines each has.
+# cache and config import each other.
+package("app"); package("api"); package("auth"); package("db")
+package("cache"); package("config"); package("log")
+package("metrics"); package("util"); package("legacy")
+
+imports("app", "api"); imports("app", "config")
+imports("app", "log")
+imports("api", "auth"); imports("api", "db")
+imports("api", "cache"); imports("api", "log")
+imports("auth", "db"); imports("auth", "config")
+imports("auth", "log")
+imports("db", "config"); imports("db", "log")
+imports("cache", "config"); imports("cache", "log")
+imports("config", "cache")
+imports("log", "util")
+imports("metrics", "util")
+imports("legacy", "util")
+
+test("api_test", "api")
+test("auth_test", "auth"); test("auth_fuzz", "auth")
+test("db_test", "db")
+test("util_test", "util")
+
+owner("app", "web"); owner("api", "web"); owner("legacy", "web")
+owner("auth", "security")
+owner("db", "data"); owner("cache", "data")
+owner("config", "platform"); owner("log", "platform")
+owner("metrics", "platform"); owner("util", "platform")
+
+loc("app", 300); loc("api", 1200); loc("auth", 800)
+loc("db", 1500); loc("cache", 400); loc("config", 250)
+loc("log", 150); loc("metrics", 200); loc("util", 100)
+loc("legacy", 900)
