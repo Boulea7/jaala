@@ -1,0 +1,3 @@
+# Fails without pinning the error, so rendering it must fail the build.
+fixture: graph
+query: nope(?x) => ?x

@@ -50,6 +50,7 @@ var Site = &s3.Site{
 		"includeFile":     includeFile,
 		"includeFileText": includeFileText,
 		"siteVersion":     siteVersion,
+		"demo":            demoHTML,
 
 		// Helpers newer s3gen has in its default func map and the pinned version lacks.
 		"Contains":      strings.Contains,
@@ -64,6 +65,7 @@ func main() {
 	flag.Parse()
 	// Build once, then serve. There is no file watcher, so restart the server after an edit.
 	Site.Rebuild(nil)
+	exitOnDemoFailures()
 	if !*build {
 		Site.Serve(*addr)
 	}

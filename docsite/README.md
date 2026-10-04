@@ -37,6 +37,38 @@ A new section also needs its nav template included at the top of `templates/Side
 `Contains $currentPath "/<section>/"` branch dispatching to it, plus an entry in the header nav.
 `nav_test.go` checks each of these, so a missed edit fails `make check`.
 
+## Examples
+
+Every example on the site runs. A page shows one with `{{ demo "demos/<section>/<name>.yaml" }}` on
+a line of its own, and the build runs it on jaala and writes the rules, the goal and the answer table
+into the page. A spec looks like this:
+
+```yaml
+fixture: graph                # a fact set in demo/fixtures/, or leave it out
+facts: |                      # more facts, added to the fixture's
+  edge("d", "a")
+program: |                    # the rules
+  reach(?a, ?b) :- edge(?a, ?b);
+  reach(?a, ?c) :- reach(?a, ?b), edge(?b, ?c);
+query: reach("a", ?x) => ?x   # the goal
+bind: {x: "c"}                # goal variables the host binds, as datalog.Bind does
+cites: true                   # show each row's citations
+expect: [[b], [c], [d]]       # the rows it must answer, in order
+expect_error: "not stratifiable"   # or: the error it must fail with
+```
+
+Facts are ground atoms, `rel("text", 3)`, one per line or separated by `;`. jaala has no fact syntax
+of its own, since hosts serve facts from Go, so `demo/facts.go` is the docsite's. A fact's text is its
+citation.
+
+An example that pins rows or an error must produce exactly that, and one that pins nothing must at
+least run without error. Otherwise the build and `demos_test.go` both fail, naming the spec.
+Pin whatever the prose around an example claims, so the two can't drift apart. Every spec has to
+be shown on some page.
+
+`demo.Run` is the one function that runs an example: the build, the tests and the in-page editor
+(#107) all call it, with a work budget so an edited example that runs away stops instead of hanging.
+
 ## Things that publish a broken page without failing the build
 
 - **A stray `{{`.** Pages are run through Go's `text/template` before Markdown, so `{{` anywhere,

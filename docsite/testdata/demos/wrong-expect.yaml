@@ -1,0 +1,4 @@
+# Pins an answer the engine doesn't give, so rendering it must fail the build.
+fixture: graph
+query: edge("a", ?x) => ?x
+expect: [[c]]

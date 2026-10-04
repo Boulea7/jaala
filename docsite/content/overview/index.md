@@ -9,13 +9,9 @@ jaala is a Datalog engine for graph-shaped data. A host program, written in Go, 
 
 Here's a reachability question over a directed graph. The two rules define `reach`, and the line after `=>` is the goal: everything `a` reaches.
 
-```datalog
-reach(?a, ?b) :- edge(?a, ?b);
-reach(?a, ?c) :- reach(?a, ?b), edge(?b, ?c);
-reach("a", ?x) => ?x
-```
+{{ demo "demos/overview/reach.yaml" }}
 
-Over the edges a→b, b→c and c→d, the answer is `b`, `c` and `d`, and the row for `d` cites the three edges on the way there.
+The graph has the edges a→b, b→c and c→d, so the answer is `b`, `c` and `d`, and the row for `d` cites the three edges on the way there. The site works that answer out when it's built, by running the query on jaala, so what you see is what the engine says.
 
 ## What the language has
 

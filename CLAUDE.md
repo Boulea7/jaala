@@ -9,8 +9,9 @@ path is a generator (its own Go running inside a query), not a jaala function ca
 engine (#41).
 
 `docsite/` is the documentation site (#104), an s3gen site in its own Go module so its dependencies
-never reach jaala's. `docsite/README.md` says how to add a page; `make -C docsite check` builds it and
-runs its tests, and `.github/workflows/docs.yml` runs that on every PR and deploys `main` to Pages.
+never reach jaala's. `docsite/README.md` says how to add a page and an example; every example runs on the engine at build
+time and in `docsite`'s tests (`demo.Run`, #106), so an engine change that changes an answer the docs
+pin fails the docs workflow. `make -C docsite check` builds it and runs its tests, and `.github/workflows/docs.yml` runs that on every PR and deploys `main` to Pages.
 
 ## Commands
 

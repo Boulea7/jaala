@@ -1953,3 +1953,14 @@ body.search-open {
     left: auto;
     right: 0;
 }
+
+/* Examples rendered by the `demo` template function (docsite/demos.go). */
+.demo { margin: 1.5rem 0; border: 1px solid var(--border-color, rgba(127,127,127,.3)); border-radius: 8px; overflow: hidden; }
+.demo .demo-source { margin: 0; border-radius: 0; border-bottom: 1px solid var(--border-color, rgba(127,127,127,.3)); }
+.demo .demo-answer { padding: .5rem 1rem; overflow-x: auto; }
+.demo .demo-answer table { margin: 0; border-collapse: collapse; font-family: var(--font-mono, monospace); font-size: .9em; }
+.demo .demo-answer th, .demo .demo-answer td { padding: .25rem .75rem; text-align: left; border-bottom: 1px solid var(--border-color, rgba(127,127,127,.2)); }
+.demo .demo-cites { opacity: .7; }
+.demo .demo-error { color: var(--error-color, #d9534f); font-family: var(--font-mono, monospace); margin: 0; white-space: pre-wrap; }
+.demo .demo-empty { opacity: .7; margin: 0; }
+.demo figcaption { padding: .4rem 1rem; font-size: .85em; opacity: .75; border-top: 1px solid var(--border-color, rgba(127,127,127,.2)); }
