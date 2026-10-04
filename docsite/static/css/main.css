@@ -1964,3 +1964,14 @@ body.search-open {
    page. Lists in page content get their indent back. */
 .content-body ul, .content-body ol { padding-left: 1.5rem; margin: 0 0 1rem; }
 .content-body li { margin: 0.2rem 0; }
+
+/* The in-page editor (static/js/demos.js). */
+.demo .demo-bar { display: flex; align-items: center; gap: .5rem; padding: .4rem 1rem; border-bottom: 1px solid var(--border-color); }
+.demo .demo-button { font: inherit; font-size: .85em; padding: .2rem .8rem; border-radius: 4px; cursor: pointer; border: 1px solid var(--border-color); background: var(--bg-light); color: var(--text-color); }
+.demo .demo-button:hover { border-color: var(--primary-color); }
+.demo .demo-run { background: var(--primary-color); border-color: var(--primary-color); color: var(--bg-color); }
+.demo .demo-button:disabled { opacity: .6; cursor: wait; }
+.demo .demo-status { font-size: .85em; opacity: .8; }
+.demo .demo-editor { padding: .75rem 1rem 0; }
+.demo .demo-text { display: block; width: 100%; box-sizing: border-box; font-family: 'Monaco', 'Menlo', 'Ubuntu Mono', monospace; font-size: .85rem; line-height: 1.6; tab-size: 4; padding: .6rem .75rem; border-radius: 6px; border: 1px solid var(--border-color); background: #21252b; color: #e6e6e6; resize: vertical; margin-bottom: .75rem; }
+.demo .demo-label { font-size: .85em; opacity: .8; margin: 0 0 .3rem; }

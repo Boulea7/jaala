@@ -30,7 +30,7 @@
     <link rel="icon" type="image/svg+xml" href="{{.Site.PathPrefix}}/static/images/favicon.svg">
     <link rel="icon" type="image/png" href="{{.Site.PathPrefix}}/static/images/favicon.png">
 </head>
-<body class="{{ if .FrontMatter.bodyClass }}{{ .FrontMatter.bodyClass }}{{ end }}">
+<body class="{{ if .FrontMatter.bodyClass }}{{ .FrontMatter.bodyClass }}{{ end }}" data-jaala-wasm="{{ assetURL "static/wasm/jaala.wasm" }}" data-jaala-glue="{{ assetURL "static/wasm/wasm_exec.js" }}">
     {{ template "Header" . }}
 
     {{ if .FrontMatter.fullWidth }}
@@ -69,6 +69,9 @@
             });
         }
     </script>
+
+    <!-- Examples: Edit and Run on jaala compiled to wasm, loaded on the first Run (progressive enhancement) -->
+    <script src="{{.Site.PathPrefix}}/static/js/demos.js"></script>
 
     <!-- Code blocks: line-number gutter + copy button (progressive enhancement) -->
     <script src="{{.Site.PathPrefix}}/static/js/codeblocks.js"></script>

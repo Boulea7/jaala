@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/json"
 	"fmt"
 	"html"
 	"html/template"
@@ -61,7 +62,7 @@ func demoHTML(path string) template.HTML {
 // reason.
 func renderDemo(path string, s demo.Spec, t demo.Table, runErr error) string {
 	var b strings.Builder
-	fmt.Fprintf(&b, `<figure class="demo" data-demo="%s">`, html.EscapeString(path))
+	fmt.Fprintf(&b, `<figure class="demo" data-demo="%s" data-spec="%s">`, html.EscapeString(path), html.EscapeString(editableSpec(s)))
 	source := strings.TrimSpace(strings.TrimSpace(s.Program) + "\n" + strings.TrimSpace(s.Query))
 	b.WriteString(`<pre class="demo-source"><code>` + preText(source) + `</code></pre>`)
 	b.WriteString(`<div class="demo-answer">`)
@@ -97,6 +98,17 @@ func renderDemo(path string, s demo.Spec, t demo.Table, runErr error) string {
 	}
 	b.WriteString(`</figure>`)
 	return b.String()
+}
+
+// editableSpec is the spec the in-page editor starts from (static/js/demos.js): what the example runs,
+// without what it pins, since an edited example has no expectation to meet.
+func editableSpec(s demo.Spec) string {
+	s.Expect, s.ExpectError = nil, ""
+	b, err := json.Marshal(s)
+	if err != nil {
+		return "{}"
+	}
+	return string(b)
 }
 
 func factsCaption(s demo.Spec) string {
