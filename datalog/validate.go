@@ -61,7 +61,7 @@ func ValidateBound(q Query, reg *ns.Vocabulary, vars ...Var) error {
 		return err
 	}
 	if len(reg.BaseRelations()) == 0 {
-		return validateWithoutVocabulary(q, reg, written, sel, cols)
+		return validateWithoutVocabulary(q, reg, written, bind, sel, cols)
 	}
 	b := newValidationBase(reg)
 	if _, _, err := b.checkRules(q.Rules); err != nil {
@@ -81,7 +81,10 @@ func ValidateBound(q Query, reg *ns.Vocabulary, vars ...Var) error {
 		return err
 	}
 	_, negs := splitNegations(q.Goal.Literals)
-	if err := b.validateNegations(q.Goal, negs); err != nil {
+	if err := b.checkNegatedRelations(negs); err != nil {
+		return err
+	}
+	if err := checkWrittenAnchors(written.Goal, q.Rules, bind); err != nil {
 		return err
 	}
 	if err := validateSelect(sel, q.Having, q.Goal); err != nil {
@@ -95,13 +98,16 @@ func ValidateBound(q Query, reg *ns.Vocabulary, vars ...Var) error {
 // A rule built here is not left unvalidated forever: the query still has to run, and the evaluator
 // checks every atom it reaches against the real vocabulary. What is lost is only the EARLY report,
 // for a caller that built its rule before any relation was installed.
-func validateWithoutVocabulary(q Query, reg *ns.Vocabulary, written Query, sel, cols []Term) error {
+func validateWithoutVocabulary(q Query, reg *ns.Vocabulary, written Query, bind map[Var]ns.Value, sel, cols []Term) error {
 	b := newValidationBase(reg)
 	if _, _, err := b.checkRules(q.Rules); err != nil {
 		return err
 	}
 	_, negs := splitNegations(q.Goal.Literals)
-	if err := b.validateNegations(q.Goal, negs); err != nil {
+	if err := b.checkNegatedRelations(negs); err != nil {
+		return err
+	}
+	if err := checkWrittenAnchors(written.Goal, q.Rules, bind); err != nil {
 		return err
 	}
 	if err := validateSelect(sel, q.Having, q.Goal); err != nil {

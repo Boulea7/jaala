@@ -208,7 +208,7 @@ func (b *Base) knownRelation(rel string) bool {
 // expressiveness the goal has. Returns whether any new (deduplicated) tuple was added this pass.
 func (b *Base) applyRule(r Rule) (bool, error) {
 	pos, negs := splitNegations(r.Body.Literals)
-	if err := b.validateNegations(r.Body, negs); err != nil {
+	if err := b.checkNegatedRelations(negs); err != nil {
 		return false, err
 	}
 	if r.aggregates() {
