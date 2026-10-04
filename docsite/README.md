@@ -62,8 +62,8 @@ of its own, since hosts serve facts from Go, so `demo/facts.go` is the docsite's
 citation.
 
 An example that pins rows or an error must produce exactly that, and one that pins nothing must at
-least run without error. Otherwise the build fails and names the spec, and `demos_test.go` fails
-too. Pin whatever the prose around an example claims, so the two can't drift apart. Every spec has to
+least run without error. Otherwise the build and `demos_test.go` both fail, naming the spec.
+Pin whatever the prose around an example claims, so the two can't drift apart. Every spec has to
 be shown on some page.
 
 `demo.Run` is the one function that runs an example: the build, the tests and the in-page editor
