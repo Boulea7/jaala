@@ -685,10 +685,6 @@ var knownDisagreements = []struct {
 	match *regexp.Regexp
 	repro genCase // a case that disagrees this way, so a wrong pattern or a fixed bug shows
 }{
-	{91, regexp.MustCompile(`unknown relation "[^"]*\\x00answer`), genCase{prog: genProgram{
-		rules: []genRule{{head: "r", args: []string{"?x"}, body: []genLit{{rel: "r", args: []string{"?x"}}}}},
-		goal:  genGoal{body: []genLit{{rel: "r", args: []string{`"v0"`}}, {rel: "node", args: []string{"?y"}}}, sel: []string{"?y"}},
-	}, facts: genFacts{n: 1, weights: []int{5}}}},
 	{22, regexp.MustCompile(`^SemiNaive cites differently`), genCase{prog: genProgram{
 		rules: []genRule{
 			{head: "r2", args: []string{"?a", "?a"}, body: []genLit{{rel: "r3", args: []string{"?a"}}}},
