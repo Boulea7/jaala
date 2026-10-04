@@ -46,12 +46,19 @@ func (m *magician) factor(a Atom, bound map[Var]bool) (Atom, bool) {
 		}
 	}
 	calls := make([]int, len(m.byHead[a.Relation]))
+	base := false
 	for i, r := range m.byHead[a.Relation] {
 		call, ok := m.rightLinear(r, adorn)
 		if !ok {
 			return a, false
 		}
 		calls[i] = call
+		base = base || call < 0
+	}
+	// With no base rule nothing derives the answer relation, which would be read with no rules (#91).
+	// The relation is empty, and plain demand says so.
+	if !base {
+		return a, false
 	}
 	m.factored++
 	from := a.Relation + fromSep + strconv.Itoa(m.factored)

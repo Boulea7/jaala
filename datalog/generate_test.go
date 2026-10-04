@@ -685,10 +685,6 @@ var knownDisagreements = []struct {
 	match *regexp.Regexp
 	repro genCase // a case that disagrees this way, so a wrong pattern or a fixed bug shows
 }{
-	{91, regexp.MustCompile(`unknown relation "[^"]*\\x00answer`), genCase{prog: genProgram{
-		rules: []genRule{{head: "r", args: []string{"?x"}, body: []genLit{{rel: "r", args: []string{"?x"}}}}},
-		goal:  genGoal{body: []genLit{{rel: "r", args: []string{`"v0"`}}, {rel: "node", args: []string{"?y"}}}, sel: []string{"?y"}},
-	}, facts: genFacts{n: 1, weights: []int{5}}}},
 	// An inlined variable's name starts with a NUL (freshVar), which a terminal hides.
 	{92, regexp.MustCompile(`\?\x00\d+\.\w+ appears only inside`), genCase{prog: genProgram{
 		rules: []genRule{{head: "r", args: []string{"?x"}, body: []genLit{{rel: "weight", args: []string{"?x", "?w"}}, {neg: true, rel: "edge", args: []string{"?x", "?y"}}}}},

@@ -618,3 +618,22 @@ func TestDemandFallsBackWhenNoRewriteStratifies(t *testing.T) {
 		t.Errorf("control: a program whose rewrite stratifies should keep it")
 	}
 }
+
+// A relation whose every rule is recursive has no base rule to seed its answers, so it is empty and
+// isn't factored: factoring wrote no rule for the answer relation, and the goal read a relation with
+// none (#91). control: a closure with a base rule, called from a constant, is still factored.
+func TestARelationWithNoBaseRuleIsNotFactored(t *testing.T) {
+	for _, text := range []string{
+		`r(?x) :- r(?x); r("a"), node(?y) => ?y`,
+		`r(0) :- r(7); r(4), node(?y) => ?y`,
+		`r(?a, ?c) :- r(?a, ?b), edge(?b, ?c); r("a", ?y) => ?y`,
+	} {
+		if rows, diff, err := agree(mustParse(t, text), baseFor(std(graph()))); diff != "" || err != nil || len(rows) != 0 {
+			t.Errorf("%s: %d rows, %v\n%s", text, len(rows), err, diff)
+		}
+	}
+	b := baseFor(std(graph()))
+	if out := magic(b, mustParse(t, rightReach+`reach("a", ?y) => ?y`)); !strings.Contains(fmt.Sprint(out.Rules), "\x00answer") {
+		t.Errorf("control: a right-linear closure from a constant should be factored: %v", out.Rules)
+	}
+}
