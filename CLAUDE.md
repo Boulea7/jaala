@@ -146,7 +146,9 @@ go list -deps ./... | grep '\.' | grep -v '^github.com/panyam/jaala' | grep -v '
   relations in full. That usually stratifies, but the corpus found two cases where it doesn't (#93):
   demand flowing from a rule above an aggregate down into the relation it reduces, and a negation
   still in a cycle the demand closes. When neither rewrite stratifies, `magic` returns the program
-  unrewritten, which `checkRules` has already stratified. A rule evaluated in full also has its
+  unrewritten, which `checkRules` has already stratified. It also returns it unrewritten when the rewrite would derive one
+  relation under two adornments (`severalAdornments`, #96): the copies can cover the whole relation
+  twice, which made demand for one points-to variable cost three times the whole analysis. A rule evaluated in full also has its
   constant calls rewritten (`fromConstants`, #57), adorned by the constants alone, so their demand
   rules are facts and add no dependency.
 - **SemiNaive drops the rules the goal never reaches before rewriting** (`withoutUnreached`, #90).
