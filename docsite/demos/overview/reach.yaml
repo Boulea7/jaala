@@ -1,0 +1,8 @@
+# Everything a reaches in the graph fixture, each row with the edges that got it there.
+fixture: graph
+program: |
+  reach(?a, ?b) :- edge(?a, ?b);
+  reach(?a, ?c) :- reach(?a, ?b), edge(?b, ?c);
+query: reach("a", ?x) => ?x
+cites: true
+expect: [[b], [c], [d]]
