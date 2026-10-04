@@ -84,7 +84,16 @@ be shown on some page.
 
 The same rules as the rest of jaala's prose: plain declarative sentences, "we" for the project, no
 em-dashes, no colon-definitions ("The result: X"), no hype adjectives, no "not just X but Y". Say
-what a rule is and show it with an example. Before a docs PR is done, run `/ai-tell-sweep` and
-`/prose-pass` (technical register) over the pages it touches.
+what a rule is and show it with an example. Before a docs PR is done, run `/ai-tell-sweep` and then
+`/prose-pass` (technical register) over the pages it touches, and say in the PR what they changed.
+
+## Before and after screenshots
+
+A PR that changes how a page looks carries screenshots of the changed section, before and after,
+in both themes. The checks can't see layout: the first set caught a border drawn inside the code
+block's wrapper (#115). Serve the base commit from a worktree and the branch side by side, with
+`JAALA_DOCS_PORT=:8091 go run .` and `:8092`, then shoot each with Playwright (`fullPage: true`,
+clipped to the section, with `localStorage.theme` set to `dark` and to `light`). Stop the servers by
+port, `fuser -k 8091/tcp 8092/tcp`, since a `pkill -f` pattern also matches the shell running it.
 
 The site documents `main`, not a release, and the footer names the commit it was built from.
