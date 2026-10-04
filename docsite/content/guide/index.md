@@ -10,5 +10,8 @@ The [tutorials]({{.Site.PathPrefix}}/tutorials/) teach the language in order. Th
 3. [Negation](negation/) covers anchoring, existential variables, host-bound values and stratification.
 4. [Aggregation](aggregation/) covers groups, rows against values, `having`, and what an aggregate answers over nothing.
 5. [Ordering](ordering/) covers the default order, `order by`, `limit` and `offset`.
+6. [Host options](host-options/) covers `Bind`, `Budget` and the context, from Go.
+7. [Modules and the vocabulary](modules-and-vocabulary/) covers paths, private members, docs, signatures and module errors.
+8. [Absent values](absent-values/) covers a field the source didn't state.
 
-The host-facing topics (options such as `Bind` and `Budget`, modules and the vocabulary, absent values) are on their way, written as Go examples like the [Go tutorial]({{.Site.PathPrefix}}/tutorials/05-go-host/).
+The last three are written in Go, as `Example` functions that `go test` runs, like the [Go tutorial]({{.Site.PathPrefix}}/tutorials/05-go-host/).

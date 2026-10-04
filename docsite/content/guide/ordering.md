@@ -2,6 +2,7 @@
 title: "Ordering"
 description: "The order every answer comes back in, and order by, limit and offset for when you want another."
 prev: {url: "/jaala/guide/aggregation/", title: "Aggregation"}
+next: {url: "/jaala/guide/host-options/", title: "Host options"}
 ---
 
 Every answer comes back sorted, and the same facts and query always give the same order. Hosts lean on that quite a bit, since it lets them compare two answers line by line and check a saved answer against a new one.
