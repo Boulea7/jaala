@@ -5,7 +5,7 @@ prev: {url: "/jaala/guide/host-options/", title: "Host options"}
 next: {url: "/jaala/guide/absent-values/", title: "Absent values"}
 ---
 
-The vocabulary is the tree of names a query can call. Its leaves are the relations a source serves, the predicates a host computes (like `str.contains` from the standard library), and the members of modules, which are rules a host ships as a library. A query naming `deps.depends_on` pulls in the module that defines it, and whatever that module reads, so a library can be as big as you like without every query paying for all of it.
+The vocabulary is the tree of names a query can call. Its leaves are the relations a source serves, the predicates a host computes (like `str.contains` from the standard library), and the members of modules, which are rules a host ships as a library. A query naming `deps.depends_on` pulls in the module that defines it, and whatever that module reads, so a library can be fairly big without every query paying for all of it.
 
 These examples use the vocabulary from the [host options]({{.Site.PathPrefix}}/guide/host-options/) page, whose `deps` module defines `depends_on` with the help of a private `_step`.
 

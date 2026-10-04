@@ -19,7 +19,7 @@ The examples share a source and a vocabulary, built the same way as in the tutor
 {{ includeFileText "examples/guide/options_test.go" }}
 ```
 
-`Bind` gives a goal variable its value from Go, so the query text stays fixed and nobody builds queries out of strings. A bound variable behaves as if its value were written into the goal, and that includes counting as the anchor of a `not` (see [negation]({{.Site.PathPrefix}}/guide/negation/#a-not-has-to-be-anchored)). The answer still has the bound column, filled with the value. Binding a variable the goal doesn't use is an error, since it's almost always a typo, and a typo there would otherwise answer the unbound question without a word.
+`Bind` gives a goal variable its value from Go, so the query text stays fixed and nobody builds queries out of strings. A bound variable behaves as if its value were written into the goal, and that includes counting as the anchor of a `not` (see [negation]({{.Site.PathPrefix}}/guide/negation/#a-not-has-to-be-anchored)). The answer still has the bound column, filled with the value. Binding a variable the goal doesn't use is an error, since it's pretty much always a typo, and a typo there would otherwise answer the unbound question without a word.
 
 `Budget` caps the work one `Eval` does, counted the same way on every run, so a budget that passes once passes every time. `Base.Work` reports what a query used, which is how to size a budget from your real queries. The budget is what bounds memory too: a goal that aggregates holds its bindings until it reduces them, which can be a few kilobytes per unit of work ([#120](https://github.com/panyam/jaala/issues/120)), so size it with the memory you have in mind as well as the time.
 
@@ -27,4 +27,4 @@ The context reaches every `Eval`. When it's cancelled or its deadline passes, th
 
 ## Sharing a base
 
-A `Base` pairs a vocabulary with one source's facts, and caches and indexes what it reads. It's safe to share between `Eval`s running at the same time, since each `Eval` keeps its own state. Build one per dataset, and reuse it for every query over that dataset.
+A `Base` pairs a vocabulary with one source's facts, and caches and indexes what it reads. It's safe to share between `Eval`s running at the same time, since each `Eval` keeps its own state. Build one per dataset, and reuse it for every query over that dataset, which mostly comes free once the vocabulary is built at startup.
