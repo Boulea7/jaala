@@ -689,11 +689,6 @@ var knownDisagreements = []struct {
 		rules: []genRule{{head: "r", args: []string{"?x"}, body: []genLit{{rel: "r", args: []string{"?x"}}}}},
 		goal:  genGoal{body: []genLit{{rel: "r", args: []string{`"v0"`}}, {rel: "node", args: []string{"?y"}}}, sel: []string{"?y"}},
 	}, facts: genFacts{n: 1, weights: []int{5}}}},
-	// An inlined variable's name starts with a NUL (freshVar), which a terminal hides.
-	{92, regexp.MustCompile(`\?\x00\d+\.\w+ appears only inside`), genCase{prog: genProgram{
-		rules: []genRule{{head: "r", args: []string{"?x"}, body: []genLit{{rel: "weight", args: []string{"?x", "?w"}}, {neg: true, rel: "edge", args: []string{"?x", "?y"}}}}},
-		goal:  genGoal{body: []genLit{{rel: "r", args: []string{"?z"}}}, sel: []string{"?z"}, bind: map[string]string{"z": "v3"}},
-	}, facts: genFacts{n: 1, weights: []int{5}}}},
 	{22, regexp.MustCompile(`^SemiNaive cites differently`), genCase{prog: genProgram{
 		rules: []genRule{
 			{head: "r2", args: []string{"?a", "?a"}, body: []genLit{{rel: "r3", args: []string{"?a"}}}},
