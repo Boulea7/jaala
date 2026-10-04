@@ -1,49 +1,37 @@
-/* Notations Documentation Styles */
+/* jaala documentation styles, adapted from agni's docsite. */
 
 :root {
-    --primary-color: #991b1b;
-    --secondary-color: #57534e;
-    --accent-color: #ea580c;
-    --text-color: #1c1917;
-    --text-light: #78716c;
+    /* jaala's palette: blues for the brand, cyan for the accent, slate neutrals. Red is kept for
+       errors only (.demo-error), where it means error rather than brand. */
+    --primary-color: #1e40af;
+    --secondary-color: #475569;
+    --accent-color: #0891b2;
+    --text-color: #0f172a;
+    --text-light: #64748b;
     --bg-color: #ffffff;
-    --bg-light: #faf6f4;
-    --border-color: #eae4e0;
-    --code-bg: #292524;
-    --code-color: #f5f5f4;
-    --link-color: #b91c1c;
-    --link-hover: #7f1d1d;
-
-    /* Notation component variables (light mode) */
-    --notation-stroke-color: black;
-    --notation-fill-color: transparent;
-    --notation-text-color: #1a1a1a;
-    --notation-border-color: gray;
-    --notation-bg-color: #ffffff;
+    --bg-light: #f4f7fb;
+    --border-color: #e2e8f0;
+    --code-bg: #1e293b;
+    --code-color: #f1f5f9;
+    --link-color: #1d4ed8;
+    --link-hover: #1e3a8a;
 }
 
 /* Dark mode */
 :root.dark,
 [data-theme="dark"] {
-    --primary-color: #f87171;
-    --secondary-color: #b8ada6;
-    --accent-color: #fb923c;
-    --text-color: #f8f2ed;
-    --text-light: #b8ada6;
-    --bg-color: #0e0a08;
-    --bg-light: #1a130f;
-    --border-color: #33261f;
-    --code-bg: #0a0705;
-    --code-color: #f5f5f4;
-    --link-color: #fca5a5;
-    --link-hover: #fed7d7;
-
-    /* Notation component variables (dark mode) */
-    --notation-stroke-color: #e5e5e5;
-    --notation-fill-color: transparent;
-    --notation-text-color: #f0f0f0;
-    --notation-border-color: #555;
-    --notation-bg-color: #2d3748;
+    --primary-color: #60a5fa;
+    --secondary-color: #94a3b8;
+    --accent-color: #22d3ee;
+    --text-color: #e2e8f0;
+    --text-light: #94a3b8;
+    --bg-color: #0b1120;
+    --bg-light: #111a2e;
+    --border-color: #1f2a40;
+    --code-bg: #0a0f1c;
+    --code-color: #f1f5f9;
+    --link-color: #93c5fd;
+    --link-hover: #dbeafe;
 }
 
 * {
@@ -66,7 +54,7 @@ body {
 
 /* Header */
 .site-header {
-    background: linear-gradient(135deg, #7f1d1d 0%, #991b1b 100%);
+    background: linear-gradient(135deg, #172554 0%, #1e40af 100%);
     color: white;
     padding: 1rem 0;
     box-shadow: 0 2px 4px rgba(0,0,0,0.1);
@@ -381,13 +369,13 @@ pre code {
 
 .home-hero .btn-primary {
     background-color: #ffffff;
-    color: #7f1d1d;
+    color: #1e3a8a;
     border-color: #ffffff;
 }
 
 .home-hero .btn-primary:hover {
-    background-color: #fbe9e3;
-    color: #7f1d1d;
+    background-color: #e0f2fe;
+    color: #1e3a8a;
 }
 
 .home-hero .btn-secondary,
@@ -472,7 +460,7 @@ pre code {
 .home-hero {
     text-align: center;
     padding: 4rem 2rem;
-    background: linear-gradient(135deg, #7f1d1d 0%, #ea580c 100%);
+    background: linear-gradient(135deg, #1e3a8a 0%, #0891b2 100%);
     color: white;
     border-radius: 8px;
     margin-bottom: 3rem;
