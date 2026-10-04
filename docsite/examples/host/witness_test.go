@@ -8,8 +8,8 @@ import (
 	"github.com/panyam/jaala/datalog"
 )
 
-// Witnesses records how each answer was derived: a tree of the rules that fired and the facts at its
-// leaves, in the order the rules are written.
+// Witnesses records how each answer was derived, as a tree of the rules that
+// fired with the facts at its leaves, in written order.
 func Example_witnesses() {
 	b, err := base(source())
 	if err != nil {
@@ -17,7 +17,8 @@ func Example_witnesses() {
 		return
 	}
 	q := datalog.MustParse(`deps.depends_on("app", "util")`)
-	rows, err := datalog.SemiNaive{}.Eval(context.Background(), q, b, datalog.Witnesses())
+	ctx := context.Background()
+	rows, err := datalog.SemiNaive{}.Eval(ctx, q, b, datalog.Witnesses())
 	if err != nil {
 		fmt.Println(err)
 		return
@@ -39,7 +40,8 @@ func show(w *datalog.Witness, depth int) {
 	for i, v := range w.Values {
 		vals[i] = v.S
 	}
-	line := strings.Repeat("  ", depth) + w.Relation + "(" + strings.Join(vals, ", ") + ")"
+	line := strings.Repeat("  ", depth) +
+		w.Relation + "(" + strings.Join(vals, ", ") + ")"
 	if len(w.Cites) > 0 {
 		line += "  " + strings.Join(w.Cites, ", ")
 	}

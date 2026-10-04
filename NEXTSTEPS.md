@@ -15,11 +15,7 @@ Maintained by /checkpoint: one thread per branch, pruned when the branch merges.
 - Mission #81 looks done: agni#819 closed through agni#850 (`net.test_point_count`), and agni#843
   closed with its exercise passing at agni 173b859c. Waiting on the owner's go-ahead to log that on
   #81 and close it.
+- The site is live at https://panyam.github.io/jaala/ (Pages on since 2026-10-04); every merge to
+  main redeploys it.
 - No open threads. This run dropped every branch from the selfcheck and docsite work (PRs #94,
   #95, #98–#103, #113–#115 merged) and the old `checkpoint-v0.1.19` thread (#85 merged).
-
-## Across threads
-
-- GitHub Pages isn't enabled for the repo, so `docs.yml`'s deploy job fails on every push to main
-  while its build passes. The owner sets Settings, Pages, Source to "GitHub Actions"; the next
-  merge then publishes https://panyam.github.io/jaala/.

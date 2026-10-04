@@ -1506,6 +1506,8 @@ pre code {
     color: #e6e6e6;
     font-size: 0.85rem;
     line-height: 1.6;
+    /* Go is indented with tabs, which browsers draw 8 columns wide. */
+    tab-size: 4;
 }
 
 .code-content pre code {

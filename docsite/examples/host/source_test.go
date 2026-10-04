@@ -6,13 +6,15 @@ import (
 	"github.com/panyam/jaala/ns"
 )
 
-// source is the facts a host serves. A MemSource is the simplest Source: declare each relation with
-// its column labels, then add tuples, each carrying the citations an answer that uses it will show.
-// A real host implements ns.Source over its own data instead.
+// source is the facts a host serves. A MemSource is the simplest Source. You
+// declare each relation with its column labels, then add tuples, each with
+// the citations an answer that uses it will show. A real host implements
+// ns.Source over its own data instead.
 func source() *ns.MemSource {
 	src := ns.NewMemSource().Declare("imports", "from", "to")
 	edges := [][2]string{
-		{"app", "api"}, {"api", "auth"}, {"api", "log"}, {"auth", "log"}, {"log", "util"},
+		{"app", "api"}, {"api", "auth"}, {"api", "log"},
+		{"auth", "log"}, {"log", "util"},
 	}
 	for i, e := range edges {
 		src.Add("imports", ns.Tuple{

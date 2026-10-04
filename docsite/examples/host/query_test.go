@@ -8,9 +8,9 @@ import (
 	"github.com/panyam/jaala/ns"
 )
 
-// A query is parsed once and run as often as needed. Bind gives a goal variable its value from the
-// host, so the query text stays fixed while the package changes, and Budget caps the work one
-// evaluation may do.
+// A query is parsed once and run as often as needed. Bind gives a goal
+// variable its value from the host, so the query text stays fixed while the
+// package changes, and Budget caps the work one evaluation may do.
 func Example() {
 	b, err := base(source())
 	if err != nil {
