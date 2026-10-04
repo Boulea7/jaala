@@ -41,9 +41,11 @@ type Table struct {
 	Cites   [][]string `json:"cites"`
 }
 
-// Budget bounds an example's work, so a recursive typo in an edited example fails instead of hanging
-// the build or the browser tab.
-const Budget = 2_000_000
+// Budget bounds an example's work, so a runaway edit fails instead of hanging the browser tab or
+// using up its memory. It's also what bounds memory: a goal that aggregates holds every binding until
+// it reduces them, about 3.6 KB per unit of work on a cross product, so 2M units came to 7 GB and ran
+// a wasm build out of memory. The docs' own examples need at most a few hundred units.
+const Budget = 50_000
 
 //go:embed fixtures/*.facts
 var fixtures embed.FS

@@ -4,6 +4,8 @@
 package main
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"flag"
 	"html/template"
 	"log"
@@ -50,6 +52,7 @@ var Site = &s3.Site{
 		"includeFile":     includeFile,
 		"includeFileText": includeFileText,
 		"siteVersion":     siteVersion,
+		"assetURL":        assetURL,
 		"demo":            demoHTML,
 
 		// Helpers newer s3gen has in its default func map and the pinned version lacks.
@@ -136,4 +139,18 @@ func siteVersion() string {
 		return "an unknown commit"
 	}
 	return strings.TrimSpace(string(out))
+}
+
+// assetURL is a static file's URL with a hash of its content, "/jaala/static/wasm/jaala.wasm?v=…", so
+// a browser holding an older copy fetches the new one. The wasm module and wasm_exec.js have to come
+// from the same Go toolchain, and Pages caches for ten minutes, so a stale glue file next to a new
+// module would fail in ways that are hard to read. A file that isn't built gets no version.
+func assetURL(relativePath string) string {
+	url := PathPrefix + "/" + relativePath
+	data, ok := readDocsiteFile(relativePath)
+	if !ok {
+		return url
+	}
+	sum := sha256.Sum256(data)
+	return url + "?v=" + hex.EncodeToString(sum[:6])
 }

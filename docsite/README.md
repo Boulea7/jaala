@@ -69,6 +69,25 @@ be shown on some page.
 `demo.Run` is the one function that runs an example: the build, the tests and the in-page editor
 (#107) all call it, with a work budget so an edited example that runs away stops instead of hanging.
 
+## Live examples
+
+Every example has an Edit button (`static/js/demos.js`). It swaps the source for a textarea with the
+rules and goal, plus the example's own facts if it has any, and Run evaluates the edit in the
+browser on jaala compiled to wasm (`wasm/`), through the same `demo.Run` the build and the tests use.
+The build renders each example's spec into a `data-spec` attribute for the editor to start from.
+
+- `make wasm`, which `run` and `build` both depend on, compiles `wasm/` and copies `wasm_exec.js` from
+  the same Go toolchain into `static/wasm/` (ignored by git). Pages link both through `assetURL`,
+  which adds a hash of the file, so a cached glue file never meets a newer module.
+- The engine is about 4.8 MB, 1.3 MB gzipped, and loads on a page's first Run. A reader who never
+  edits never downloads it.
+- `make wasm-test` runs the `demo` package's tests compiled to wasm under Node (`go_js_wasm_exec`),
+  so the code the browser runs is tested as wasm. `make check` includes it, so Node has to be on the
+  PATH.
+- `demo.Budget` caps an edit at 50,000 units of work. It's what bounds memory too: a cross product
+  under an aggregate allocated about 3.6 KB per unit, and the old 2M cap ran a wasm build out of
+  memory (#120). The docs' own examples need a few hundred units.
+
 ## Things that publish a broken page without failing the build
 
 - **A stray `{{`.** Pages are run through Go's `text/template` before Markdown, so `{{` anywhere,
@@ -93,7 +112,10 @@ A PR that changes how a page looks carries screenshots of the changed section, b
 in both themes. The checks can't see layout: the first set caught a border drawn inside the code
 block's wrapper (#115). Serve the base commit from a worktree and the branch side by side, with
 `JAALA_DOCS_PORT=:8091 go run .` and `:8092`, then shoot each with Playwright (`fullPage: true`,
-clipped to the section, with `localStorage.theme` set to `dark` and to `light`). Stop the servers by
-port, `fuser -k 8091/tcp 8092/tcp`, since a `pkill -f` pattern also matches the shell running it.
+clipped to the section, with `localStorage.theme` set to `dark` and to `light`). Before starting a
+server, check its port is free (`ss -ltnp | grep :8092`): a server left running from earlier keeps
+the port, the new one fails to start, and you screenshot a stale build. Stop each by the PID `ss`
+shows, with `kill`. A `pkill -f` pattern also matches the shell running it, and `fuser` may not be
+installed, so a `fuser -k ... >/dev/null 2>&1` silently stops nothing.
 
 The site documents `main`, not a release, and the footer names the commit it was built from.

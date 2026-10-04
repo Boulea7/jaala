@@ -1,2 +1,4 @@
 # The built site (make build).
 dist/
+# jaala compiled to wasm and its glue (make wasm).
+static/wasm/

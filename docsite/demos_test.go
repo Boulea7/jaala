@@ -1,8 +1,11 @@
 package main
 
 import (
+	"encoding/json"
+	"html"
 	"os"
 	"path/filepath"
+	"reflect"
 	"regexp"
 	"strings"
 	"testing"
@@ -92,5 +95,50 @@ func TestABrokenDemoFailsTheBuild(t *testing.T) {
 	reset()
 	if out := string(demoHTML("demos/overview/reach.yaml")); len(demoFailures) != 0 || !strings.Contains(out, "<td>d</td>") {
 		t.Errorf("control: a correct demo recorded %q and rendered %s", demoFailures, out)
+	}
+}
+
+var dataSpecRe = regexp.MustCompile(`data-spec="([^"]*)"`)
+
+// Each rendered example carries the spec the in-page editor starts from: what it runs, without what
+// it pins.
+func TestEveryDemoCarriesItsSpec(t *testing.T) {
+	for _, path := range demoSpecs(t) {
+		want, err := loadSpec(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		m := dataSpecRe.FindStringSubmatch(string(demoHTML(path)))
+		if m == nil {
+			t.Errorf("%s renders no data-spec", path)
+			continue
+		}
+		var got demo.Spec
+		if err := json.Unmarshal([]byte(html.UnescapeString(m[1])), &got); err != nil {
+			t.Errorf("%s: data-spec isn't JSON: %v", path, err)
+			continue
+		}
+		want.Expect, want.ExpectError = nil, ""
+		if !reflect.DeepEqual(got, want) {
+			t.Errorf("%s: data-spec is %+v, want %+v", path, got, want)
+		}
+	}
+	demoFailures = nil
+}
+
+// The built site carries the engine the editor loads, and links it with a content version, so a
+// browser never pairs a cached wasm_exec.js with a newer module.
+func TestBuiltSiteCarriesTheEngine(t *testing.T) {
+	page := read(t, "dist/index.html")
+	for _, attr := range []string{"data-jaala-wasm", "data-jaala-glue"} {
+		m := regexp.MustCompile(attr + `="([^"?]*)\?v=[0-9a-f]{12}"`).FindStringSubmatch(page)
+		if m == nil {
+			t.Errorf("dist/index.html has no versioned %s; run make build", attr)
+			continue
+		}
+		file := filepath.Join("dist", strings.TrimPrefix(m[1], PathPrefix))
+		if info, err := os.Stat(file); err != nil || info.Size() == 0 {
+			t.Errorf("%s points at %s, which isn't built", attr, file)
+		}
 	}
 }
