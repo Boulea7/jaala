@@ -612,9 +612,25 @@ func TestDemandFallsBackWhenNoRewriteStratifies(t *testing.T) {
 		}
 	}
 	b := baseFor(std(graph()))
-	q := mustParse(t, `reach(?a, ?b) :- edge(?a, ?b); reach(?a, ?c) :- reach(?a, ?b), edge(?b, ?c); `+
-		`nocov(?a) :- node(?a), not reach(?a, "d"); far(?a) :- nocov(?a); far(?b) :- far(?a), edge(?a, ?b); far("x") => `)
+	q := mustParse(t, leftReach+`reach("a", ?y) => ?y`)
 	if out := magic(b, q); fmt.Sprint(out.Rules) == fmt.Sprint(q.Rules) {
 		t.Errorf("control: a program whose rewrite stratifies should keep it")
+	}
+}
+
+// Demand that would derive one relation under two adornments is skipped: for one points-to variable,
+// pt/bf and pt/fb between them covered all of pt, twice, at three times the whole analysis's work
+// (#96). control: a closure demanded one way keeps its rewrite.
+func TestDemandIsSkippedWhenARelationNeedsTwoAdornments(t *testing.T) {
+	b := baseFor(std(pointerProgram(1)))
+	q := mustParse(t, pointsTo+`pt("p7", ?o) => ?o`)
+	if out := magic(b, q); fmt.Sprint(out.Rules) != fmt.Sprint(q.Rules) {
+		t.Errorf("pt is demanded bf and fb, so the program should run as written: %d rules", len(out.Rules))
+	}
+	if _, diff, err := agree(q, b); diff != "" || err != nil {
+		t.Errorf("%v\n%s", err, diff)
+	}
+	if out := magic(b, mustParse(t, leftReach+`reach("a", ?y) => ?y`)); !strings.Contains(fmt.Sprint(out.Rules), magicPrefix) {
+		t.Errorf("control: a closure demanded one way should keep its rewrite")
 	}
 }
