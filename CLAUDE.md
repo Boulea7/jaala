@@ -8,6 +8,10 @@ A Datalog engine for graph-shaped data, extracted from agni. Three packages: `ns
 path is a generator (its own Go running inside a query), not a jaala function called around the
 engine (#41).
 
+`docsite/` is the documentation site (#104), an s3gen site in its own Go module so its dependencies
+never reach jaala's. `docsite/README.md` says how to add a page; `make -C docsite check` builds it and
+runs its tests, and `.github/workflows/docs.yml` runs that on every PR and deploys `main` to Pages.
+
 ## Commands
 
 `./selfcheck.sh` runs the host-free checks at full size: the generated corpus at 5000 seeds and the
