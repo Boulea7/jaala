@@ -113,9 +113,9 @@ func Run(s Spec) (Table, error) {
 	}
 	opts := []datalog.Option{datalog.Budget(Budget)}
 	if len(s.Bind) > 0 {
-		bind := map[datalog.Var]ns.Value{}
+		bind := map[datalog.Var][]ns.Value{}
 		for k, val := range s.Bind {
-			bind[datalog.Var(strings.TrimPrefix(k, "?"))] = ns.S(val)
+			bind[datalog.Var(strings.TrimPrefix(k, "?"))] = []ns.Value{ns.S(val)}
 		}
 		opts = append(opts, datalog.Bind(bind))
 	}

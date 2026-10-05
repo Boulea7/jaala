@@ -8,7 +8,7 @@ next: {url: "/jaala/architecture/rewrites/", title: "Rewrites"}
 Every evaluator runs a query through the same steps, and they differ only in the last one.
 
 1. **Parse** the text into rules and a goal.
-2. **Bind** the host's values into the goal (`Bind`), keeping the goal as written for the checks that need it.
+2. **Bind** the host's values into the goal (`Bind`), keeping the goal as written for the checks that need it. A variable bound to one value becomes a constant. One bound to several stays a variable, and after the checks in step 5 the goal is joined with a relation holding its values, which the demand rewrite starts from.
 3. **Link** the names. A name a query calls from a module pulls in that module's rules, and whatever those read, so a query only carries the rules it can reach.
 4. **Coerce** constants to their arguments' types, so `"800"` in a number argument is the number 800 (see [types]({{.Site.PathPrefix}}/guide/types-and-constants/)).
 5. **Check** the program as written: every call's arity and every goal name, generators' modes, every negation's anchor, and every rule (known relations, consistent arity, bound head variables, stratification). Everything is checked before any rewrite renames it, so an error names what you wrote.

@@ -51,7 +51,7 @@ type placed struct {
 
 // inWrittenOrder returns a binding's witness nodes ordered by the written position of their literals.
 // A magic guard has no node (magic tuples record what was asked, not evidence, and are never given
-// one), so it never appears.
+// one), so it never appears, and nor do the values a set-bound variable ranges over (see bindSets).
 func inWrittenOrder(ps []placed) []*Witness {
 	kept := make([]placed, 0, len(ps))
 	for _, p := range ps {

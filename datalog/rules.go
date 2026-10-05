@@ -234,7 +234,7 @@ func (b *Base) applyRule(r Rule) (bool, error) {
 		t := idbTuple{vals: vals, cites: dedupStrings(bnd.cites)}
 		if b.witnessing() && isSupplementary(r.Head.Relation) {
 			t.parts = append([]placed(nil), bnd.wit...)
-		} else if b.witnessing() && !isMagic(r.Head.Relation) {
+		} else if b.witnessing() && !isMagic(r.Head.Relation) && !isBindSet(r.Head.Relation) {
 			text := r.text
 			if text == "" {
 				text = r.String()

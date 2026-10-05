@@ -110,7 +110,7 @@ func magicWith(b *Base, q Query, intoNeg bool) Query {
 	// A supplementary relation is a set, so the goal keeps its own prefix when an aggregate counts
 	// its bindings (see countsBindings).
 	supply := !countsBindings(out.Select, q.Having)
-	out.Goal = Body{Literals: m.body(nil, planBody(b, q.Goal, nil).Literals, nil, supply)}
+	out.Goal = Body{Literals: m.body(nil, planGoal(b, q.Goal).Literals, nil, supply)}
 	m.drain()
 	originals := make([]Rule, len(q.Rules))
 	for i, r := range q.Rules {

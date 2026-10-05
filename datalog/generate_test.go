@@ -88,7 +88,7 @@ type genGoal struct {
 	having string
 	order  string
 	limit  int
-	bind   map[string]string // variable (no "?") -> node name the host binds it to
+	bind   map[string][]string // variable (no "?") -> node names the host binds it to
 }
 
 type genProgram struct {
@@ -484,7 +484,17 @@ func (g *generator) goal() genGoal {
 		goal.limit = 1 + g.pick(3)
 	}
 	if nodes := b.bound[genNode]; len(nodes) > 0 && g.chance(0.1) {
-		goal.bind = map[string]string{strings.TrimPrefix(nodes[g.pick(len(nodes))], "?"): fmt.Sprintf("v%d", g.pick(g.nodes))}
+		// Mostly one value, which is a constant in the goal; otherwise a set of none, two or three (#132).
+		n := 1
+		if g.chance(0.4) {
+			n = []int{0, 2, 3}[g.pick(3)]
+			g.shapes["set-bound goal"] = true
+		}
+		vals := []string{}
+		for range n {
+			vals = append(vals, fmt.Sprintf("v%d", g.pick(g.nodes)))
+		}
+		goal.bind = map[string][]string{strings.TrimPrefix(nodes[g.pick(len(nodes))], "?"): vals}
 		g.shapes["bound goal"] = true
 	}
 	return goal
@@ -518,9 +528,12 @@ func (c genCase) String() string {
 func (c genCase) opts() []Option {
 	var opts []Option
 	if len(c.prog.goal.bind) > 0 {
-		bind := map[Var]ns.Value{}
-		for v, n := range c.prog.goal.bind {
-			bind[Var(v)] = ns.S(n)
+		bind := map[Var][]ns.Value{}
+		for v, names := range c.prog.goal.bind {
+			bind[Var(v)] = []ns.Value{}
+			for _, n := range names {
+				bind[Var(v)] = append(bind[Var(v)], ns.S(n))
+			}
 		}
 		opts = append(opts, Bind(bind))
 	}
@@ -754,7 +767,7 @@ func TestGeneratedProgramsAgree(t *testing.T) {
 			}
 		}
 	}
-	shapes := []string{"program", "recursion", "negation", "head aggregate", "goal aggregate", "bound goal"}
+	shapes := []string{"program", "recursion", "negation", "head aggregate", "goal aggregate", "bound goal", "set-bound goal"}
 	var counts, issues []string
 	for _, sh := range shapes {
 		counts = append(counts, fmt.Sprintf("%s %d/%d", sh, compared[sh+"/plain"], compared[sh+"/witnessed"]))

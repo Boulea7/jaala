@@ -13,27 +13,37 @@ import (
 type Option func(*evalOptions)
 
 type evalOptions struct {
-	bind    map[Var]ns.Value
+	bind    map[Var][]ns.Value
 	budget  int64
 	witness bool
 }
 
 // Bind gives goal variables values from the host, so a parameterized query needs no program text built
-// per request: Eval(ctx, q, b, Bind(map[Var]ns.Value{"target": ns.S(id)})). A bound variable is exactly
-// a constant written in the goal, so inlining, demand (magic sets) and planning all start from it,
-// and it stays an answer column, holding its value in every row. Rules are not affected: their
-// variables are their own. Binding a variable the goal does not use is an error. Like a constant, a
-// bound value is read as the type of the argument it stands in (see ns.ArgType.Type), so a host
-// holding only text, such as an input box's, can bind ns.S("3") to a number argument; text that
-// argument cannot read is refused. The answer column still holds the value as bound. ValidateBound
-// checks a goal ahead of time knowing which variables the host will bind.
-func Bind(values map[Var]ns.Value) Option {
+// per request: Eval(ctx, q, b, Bind(map[Var][]ns.Value{"target": {ns.S(id)}})). Rules are not
+// affected: their variables are their own. Binding a variable the goal does not use is an error.
+//
+// A variable bound to one value is exactly a constant written in the goal, so inlining, demand (magic
+// sets) and planning all start from it, and it stays an answer column, holding its value in every row.
+// Like a constant, a bound value is read as the type of the argument it stands in (see
+// ns.ArgType.Type), so a host holding only text, such as an input box's, can bind ns.S("3") to a
+// number argument; text that argument cannot read is refused. The answer column still holds the value
+// as bound.
+//
+// A variable bound to several values ranges over them, as if the goal were joined with a relation
+// holding exactly those values (#132): the answer is the union over them, an aggregate reduces across
+// all of them, and demand starts from every one, so a derived relation is evaluated only for the values
+// asked. Each value is checked as a single bound value is, and an error names the one refused. Bound
+// to no values, the variable matches nothing, so the answer is empty, or the one row an aggregate
+// gives over nothing. The values carry no citations.
+//
+// ValidateBound checks a goal ahead of time knowing which variables the host will bind.
+func Bind(values map[Var][]ns.Value) Option {
 	return func(o *evalOptions) {
 		if o.bind == nil {
-			o.bind = map[Var]ns.Value{}
+			o.bind = map[Var][]ns.Value{}
 		}
-		for v, val := range values {
-			o.bind[v] = val
+		for v, vals := range values {
+			o.bind[v] = vals
 		}
 	}
 }
@@ -103,9 +113,10 @@ func (r *evalRun) context() context.Context {
 	return r.ctx
 }
 
-// bindGoal substitutes the host's values for goal variables, and returns the goal's answer columns as
-// written, so a bound variable is still a column. It refuses a variable the goal does not use.
-func bindGoal(q Query, bind map[Var]ns.Value) (Query, []Term, error) {
+// bindGoal substitutes the host's values for goal variables bound to one value, and returns the goal's
+// answer columns as written, so a bound variable is still a column. A variable bound to several values,
+// or none, stays a variable, for bindSets to range over. It refuses a variable the goal does not use.
+func bindGoal(q Query, bind map[Var][]ns.Value) (Query, []Term, error) {
 	sel := q.Select
 	if len(sel) == 0 {
 		sel = defaultSelect(q.Goal)
@@ -130,37 +141,43 @@ func bindGoal(q Query, bind map[Var]ns.Value) (Query, []Term, error) {
 		return q, nil, fmt.Errorf("query: cannot bind %s: the goal does not use it", strings.Join(unknown, ", "))
 	}
 	sub := func(t Term) Term {
-		if val, ok := bind[t.Var]; ok && t.Var != "" {
-			c := val
+		if vals := bind[t.Var]; len(vals) == 1 && t.Var != "" {
+			c := vals[0]
 			return Term{Const: &c}
 		}
 		return t
 	}
 	out := q
-	out.Goal = Body{Literals: make([]Literal, len(q.Goal.Literals))}
-	for i, l := range q.Goal.Literals {
-		switch {
-		case l.Pos != nil:
-			a := substAtom(*l.Pos, sub)
-			l = Literal{Pos: &a}
-		case l.Neg != nil:
-			a := substAtom(*l.Neg, sub)
-			l = Literal{Neg: &a}
-		case l.Compare != nil:
-			c := *l.Compare
-			c.Left, c.Right = sub(c.Left), sub(c.Right)
-			l = Literal{Compare: &c}
-		}
-		out.Goal.Literals[i] = l
-	}
+	out.Goal = substBody(q.Goal, sub)
 	out.Select = nil
 	for _, t := range sel {
-		if _, ok := bind[t.Var]; ok && t.Var != "" && t.Agg == nil {
+		if len(bind[t.Var]) == 1 && t.Var != "" && t.Agg == nil {
 			continue // filled in after evaluation: the same value in every row
 		}
 		out.Select = append(out.Select, t)
 	}
 	return out, sel, nil
+}
+
+// substBody rewrites every term of a body through sub. A rebuilt literal keeps its at.
+func substBody(body Body, sub func(Term) Term) Body {
+	out := Body{Literals: make([]Literal, len(body.Literals))}
+	for i, l := range body.Literals {
+		switch {
+		case l.Pos != nil:
+			a := substAtom(*l.Pos, sub)
+			l.Pos = &a
+		case l.Neg != nil:
+			a := substAtom(*l.Neg, sub)
+			l.Neg = &a
+		case l.Compare != nil:
+			c := *l.Compare
+			c.Left, c.Right = sub(c.Left), sub(c.Right)
+			l.Compare = &c
+		}
+		out.Literals[i] = l
+	}
+	return out
 }
 
 func substAtom(a Atom, sub func(Term) Term) Atom {

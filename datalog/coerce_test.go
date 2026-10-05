@@ -52,12 +52,12 @@ func TestTextInANumberPositionIsANumber(t *testing.T) {
 	answersAs(t, `net.pin_count(?n, ?c), "3" <= ?c => ?n`, `net.pin_count(?n, ?c), ?c >= 3 => ?n`)
 	answersAs(t, `net.pin_count(?n, "10.0") => ?n`, `net.pin_count(?n, 10) => ?n`)
 	answersAs(t, `net.pin_count(?n, ?c), ?c >= ?min => ?n`, `net.pin_count(?n, ?c), ?c >= 3 => ?n`,
-		Bind(map[Var]ns.Value{"min": ns.S("3")}))
+		Bind(map[Var][]ns.Value{"min": {ns.S("3")}}))
 }
 
 func TestANumberInAnEntityPositionMatchesByItsText(t *testing.T) {
 	answersAs(t, `component.net(3, ?n) => ?n`, `component.net("3", ?n) => ?n`)
-	answersAs(t, `component.net(?r, ?n) => ?n`, `component.net("3", ?n) => ?n`, Bind(map[Var]ns.Value{"r": ns.N(3)}))
+	answersAs(t, `component.net(?r, ?n) => ?n`, `component.net("3", ?n) => ?n`, Bind(map[Var][]ns.Value{"r": {ns.N(3)}}))
 	// Pin 3.0 is not pin 3, even when the Source stored the pin as a number.
 	if rows := eval(t, typedNets(), `component.pin(?r, 3.0) => ?r`); len(rows) != 0 {
 		t.Errorf("pin 3.0 matched pin 3: %v", binds(rows))
@@ -71,7 +71,7 @@ func TestTextANumberPositionCannotReadIsRefused(t *testing.T) {
 	src := typedNets()
 	for _, c := range []struct {
 		query string
-		bind  map[Var]ns.Value
+		bind  map[Var][]ns.Value
 		want  string
 	}{
 		{`net.pin_count(?n, ?c), ?c >= "abc" => ?n`, nil,
@@ -79,9 +79,9 @@ func TestTextANumberPositionCannotReadIsRefused(t *testing.T) {
 		{`net.pin_count(?n, "abc") => ?n`, nil, `query: net.pin_count's "count" argument cannot be "abc" (it holds a number)`},
 		{`net.pin_count(?n, ?c), not net.pin_count(?n, "abc") => ?n`, nil,
 			`query: net.pin_count's "count" argument cannot be "abc" (it holds a number)`},
-		{`net.pin_count(?n, ?c), ?c >= ?min => ?n`, map[Var]ns.Value{"min": ns.S("abc")},
+		{`net.pin_count(?n, ?c), ?c >= ?min => ?n`, map[Var][]ns.Value{"min": {ns.S("abc")}},
 			`query: ?c cannot be compared with "abc": it is a number (net.pin_count's "count" argument)`},
-		{`net.pin_count(?n, ?c) => ?n`, map[Var]ns.Value{"c": ns.S("abc")},
+		{`net.pin_count(?n, ?c) => ?n`, map[Var][]ns.Value{"c": {ns.S("abc")}},
 			`query: net.pin_count's "count" argument cannot be "abc" (it holds a number)`},
 	} {
 		_, err := both(mustParse(t, c.query), baseFor(std(src)), Bind(c.bind))
