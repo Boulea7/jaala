@@ -238,6 +238,9 @@ func evaluate(ctx context.Context, q Query, b *Base, opts []Option, rewrite func
 	if err := checkWrittenAnchors(written.Goal, q.Rules, o.bind); err != nil {
 		return nil, err
 	}
+	if err := b.checkWrittenArity(q); err != nil {
+		return nil, err
+	}
 	// Modes are checked on the program as linked, before any rewrite, so an evaluator that inlines a
 	// rule away still refuses what its body could never run, with the message Validate gives.
 	for _, r := range q.Rules {
@@ -380,6 +383,71 @@ func checkAnchored(body Body, hostBound map[Var]ns.Value) error {
 		}
 	}
 	return nil
+}
+
+// checkWrittenArity checks every call's argument count once, on the linked program before any
+// rewrite, so a wrong count is the same error from every evaluator and names the relation as written
+// (#127). The demand rewrite reads a call's arguments by its relation's arity, so a call it was handed
+// with too few panicked it (#133). It also refuses a goal atom naming nothing: solving checks an atom
+// only when it reaches it, so an unknown name after an atom that matched nothing went unreported, and
+// a rewrite reported it under its own relation's name. A relation whose rules disagree on its arity is
+// left to checkRules, which also reports the unknown names in rule bodies.
+func (b *Base) checkWrittenArity(q Query) error {
+	derived := map[string]int{}
+	mixed := map[string]bool{}
+	for _, r := range q.Rules {
+		if n, ok := derived[r.Head.Relation]; ok && n != len(r.Head.Args) {
+			mixed[r.Head.Relation] = true
+		}
+		derived[r.Head.Relation] = len(r.Head.Args)
+	}
+	check := func(lits []Literal, goal bool) error {
+		for _, l := range lits {
+			a, neg := l.Pos, false
+			if l.Neg != nil {
+				a, neg = l.Neg, true
+			}
+			if a == nil || mixed[a.Relation] {
+				continue
+			}
+			want, label := -1, ""
+			if n, ok := derived[a.Relation]; ok {
+				want, label = n, fmt.Sprint(n)
+			} else if ok, known := b.arityAccepts(a.Relation, len(a.Args)); !known {
+				switch {
+				case !goal:
+					continue
+				case neg:
+					return fmt.Errorf("query: negation over %s", b.reg.Unknown(a.Relation))
+				default:
+					return fmt.Errorf("query: %s", b.reg.Unknown(a.Relation))
+				}
+			} else if ok {
+				continue
+			} else {
+				label = b.arityLabelOf(a.Relation)
+			}
+			if want >= 0 && want == len(a.Args) {
+				continue
+			}
+			switch {
+			case neg:
+				return fmt.Errorf("query: negated relation %q takes %s args, got %d", a.Relation, label, len(a.Args))
+			case want < 0:
+				if _, isPred := b.reg.Predicate(a.Relation); isPred {
+					return fmt.Errorf("query: %s takes %s args, got %d", a.Relation, label, len(a.Args))
+				}
+			}
+			return fmt.Errorf("query: relation %q takes %s args, got %d", a.Relation, label, len(a.Args))
+		}
+		return nil
+	}
+	for _, r := range q.Rules {
+		if err := check(r.Body.Literals, false); err != nil {
+			return err
+		}
+	}
+	return check(q.Goal.Literals, true)
 }
 
 // checkWrittenAnchors checks every negation's anchor once, on the program as the author wrote it: the

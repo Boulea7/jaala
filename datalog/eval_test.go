@@ -266,3 +266,38 @@ func TestAddPredicateRefusesAndCloneIsIndependent(t *testing.T) {
 		t.Error("the clone lost the predicate added to it")
 	}
 }
+
+// A call's arity is checked on the program as written, before any rewrite, so a wrong one is the
+// same error from every evaluator and names the relation as written. The planned evaluator used to
+// panic on a derived relation called with too few arguments from a constant (#133), and to name the
+// demand rewrite's relation in a negated call's arity error (#127). An unknown name in the goal is
+// refused the same way, even after an atom that matches nothing. control: the right arity answers.
+func TestArityIsCheckedAsWritten(t *testing.T) {
+	const reach = `r(?a, ?b) :- edge(?a, ?b); r(?a, ?c) :- r(?a, ?b), edge(?b, ?c); `
+	for _, c := range []struct{ text, want string }{
+		{reach + `r("a") => ?x`, `query: relation "r" takes 2 args, got 1`},
+		{`r(?a, ?b) :- edge(?a, ?b); r("a") => ?x`, `query: relation "r" takes 2 args, got 1`},
+		{reach + `r("a", ?x, ?y) => ?x`, `query: relation "r" takes 2 args, got 3`},
+		{reach + `s(?x) :- r(?x); s(?x) => ?x`, `query: relation "r" takes 2 args, got 1`},
+		{`r(?x) :- node(?x); node(?x), not r(?x, ?y) => ?x`, `query: negated relation "r" takes 1 args, got 2`},
+		// An unknown name after an atom that matches nothing: solving never reaches it.
+		{`edge("zz", ?x), nothing(?x) => ?x`, `query: unknown relation "nothing"`},
+		{`edge("zz", ?x), not nothing(?x) => ?x`, `query: negation over unknown relation "nothing"`},
+	} {
+		var err error
+		func() {
+			defer func() {
+				if p := recover(); p != nil {
+					err = fmt.Errorf("panic: %v", p)
+				}
+			}()
+			err = evalErr(graph(), c.text)
+		}()
+		if err == nil || err.Error() != c.want {
+			t.Errorf("%s:\n got  %v\n want %s", c.text, err, c.want)
+		}
+	}
+	if got := col(eval(t, graph(), reach+`r("a", ?x) => ?x`), "x"); got != "b,c,d" {
+		t.Errorf("control: r from a = %s, want b,c,d", got)
+	}
+}

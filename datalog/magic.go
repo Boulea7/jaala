@@ -335,8 +335,8 @@ func (m *magician) body(guard *Atom, lits []Literal, entry map[Var]bool, supply 
 // wants reports whether a call can be rewritten for demand: it reads a derived relation and binds at
 // least one argument, or binds none from a body the rewrite guards (#60).
 func (m *magician) wants(a Atom, bound map[Var]bool, guarded bool) bool {
-	if _, derived := m.byHead[a.Relation]; !derived || m.aggregates(a.Relation) {
-		return false
+	if rules, derived := m.byHead[a.Relation]; !derived || m.aggregates(a.Relation) || len(rules[0].Head.Args) != len(a.Args) {
+		return false // a wrong arity is refused before any rewrite (checkWrittenArity); never index past it
 	}
 	adorn, _ := adornment(a, bound)
 	return guarded || strings.Contains(adorn, "b")

@@ -11,7 +11,7 @@ Every evaluator runs a query through the same steps, and they differ only in the
 2. **Bind** the host's values into the goal (`Bind`), keeping the goal as written for the checks that need it.
 3. **Link** the names. A name a query calls from a module pulls in that module's rules, and whatever those read, so a query only carries the rules it can reach.
 4. **Coerce** constants to their arguments' types, so `"800"` in a number argument is the number 800 (see [types]({{.Site.PathPrefix}}/guide/types-and-constants/)).
-5. **Check** the program as written: generators' modes, every negation's anchor, and every rule (known relations, consistent arity, bound head variables, stratification). Everything is checked before any rewrite renames it, so an error names what you wrote.
+5. **Check** the program as written: every call's arity and every goal name, generators' modes, every negation's anchor, and every rule (known relations, consistent arity, bound head variables, stratification). Everything is checked before any rewrite renames it, so an error names what you wrote.
 6. **Rewrite**, for the planned `SemiNaive` only (see [rewrites]({{.Site.PathPrefix}}/architecture/rewrites/)).
 7. **Derive** the rules to a fixpoint, then solve the goal over the result, then aggregate, order and limit.
 
