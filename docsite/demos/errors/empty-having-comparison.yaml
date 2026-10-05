@@ -1,0 +1,2 @@
+query: imports(?a, ?b) => ?a, count(?b) having count(?b) > 0,
+expect_error: 'query: having needs a comparison, as in "having count(?n) > 1"'

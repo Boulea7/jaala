@@ -63,7 +63,17 @@ A literal is an atom, a negated atom or a comparison.
 
 `query: empty term`
 
-An argument with nothing in it. Today the parser drops empty arguments before this check can fire ([#129](https://github.com/panyam/jaala/issues/129)).
+An argument is empty, as in `imports(?a,,?b)` or `imports(?a,)`.
+
+{{ demo "demos/errors/empty-term.yaml" }}
+
+`query: empty literal`
+
+A literal is empty, as in `imports(?a, ?b), , => ?a`. A query built in Go can hold one too.
+
+{{ demo "demos/errors/empty-literal.yaml" }}
+
+Before v0.1.24 the parser dropped empty arguments and literals and ran what was left, so a doubled comma could change a query's arity without a word. Remove the extra comma. A call with no arguments, like `flag()`, is still fine.
 
 `query: empty variable name`
 
@@ -88,6 +98,12 @@ A term is a `?variable`, a quoted string or a number. A word without quotes is n
 The columns after `=>` are variables or aggregates.
 
 {{ demo "demos/errors/projection-column.yaml" }}
+
+`query: the projection has an empty column, as in …`
+
+A column after `=>` is empty. Remove the extra comma.
+
+{{ demo "demos/errors/empty-projection-column.yaml" }}
 
 `query: malformed aggregate …`
 
@@ -140,6 +156,12 @@ Wraps an error in one of `order by`'s columns, with that error's own text.
 Wraps an error inside a `having` condition. Today it repeats the `query:` prefix ([#128](https://github.com/panyam/jaala/issues/128)).
 
 {{ demo "demos/errors/having-q-w.yaml" }}
+
+`query: having needs a comparison, as in …`
+
+A comparison in `having` is empty. Remove the extra comma.
+
+{{ demo "demos/errors/empty-having-comparison.yaml" }}
 
 `query: having … filters ?…, which is a group key rather than an aggregate — a comparison over plain variables belongs in the goal, before the …`
 
@@ -550,10 +572,6 @@ Should never happen. If you see it, it's a bug in jaala; please report it.
 `query: internal: … emitted … values for … arguments`
 
 A host generator emitted a row with the wrong number of values.
-
-`query: empty literal`
-
-An empty literal in a query built in Go. Today the parser drops empty literals ([#129](https://github.com/panyam/jaala/issues/129)).
 
 `query: stop`
 

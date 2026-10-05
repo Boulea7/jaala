@@ -1,0 +1,2 @@
+query: imports(?a, ?b) => ?a, , ?b
+expect_error: 'query: the projection has an empty column, as in "=> ?a, ?b"'
