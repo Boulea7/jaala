@@ -29,17 +29,38 @@ func Example_bind() {
 	b, ctx := base(), context.Background()
 	q := datalog.MustParse(`deps.depends_on(?p, ?d) => ?p, ?d`)
 	rows, err := datalog.SemiNaive{}.Eval(ctx, q, b,
-		datalog.Bind(map[datalog.Var]ns.Value{"p": ns.S("api")}))
+		datalog.Bind(map[datalog.Var][]ns.Value{"p": {ns.S("api")}}))
 	for _, r := range rows {
 		fmt.Println(r.Bind["p"].S, r.Bind["d"].S)
 	}
 	_, err = datalog.SemiNaive{}.Eval(ctx, q, b,
-		datalog.Bind(map[datalog.Var]ns.Value{"x": ns.S("api")}))
+		datalog.Bind(map[datalog.Var][]ns.Value{"x": {ns.S("api")}}))
 	fmt.Println(err)
 	// Output:
 	// api log
 	// api util
 	// query: cannot bind ?x: the goal does not use it
+}
+
+// Bound to several values, a variable ranges over them, so one Eval asks
+// about every package in the set, and an aggregate counts across all of
+// them. api and log both depend on util, and it's counted once.
+func Example_bindSet() {
+	b, ctx := base(), context.Background()
+	set := datalog.Bind(map[datalog.Var][]ns.Value{"p": {ns.S("api"), ns.S("log")}})
+	q := datalog.MustParse(`deps.depends_on(?p, ?d) => ?p, ?d`)
+	rows, _ := datalog.SemiNaive{}.Eval(ctx, q, b, set)
+	for _, r := range rows {
+		fmt.Println(r.Bind["p"].S, r.Bind["d"].S)
+	}
+	q = datalog.MustParse(`deps.depends_on(?p, ?d) => count(distinct ?d)`)
+	rows, _ = datalog.SemiNaive{}.Eval(ctx, q, b, set)
+	fmt.Println(rows[0].Bind["count(distinct d)"].S)
+	// Output:
+	// api log
+	// api util
+	// log util
+	// 2
 }
 
 // Budget caps the work one Eval may do, and Work says how much it did, so

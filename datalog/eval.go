@@ -220,7 +220,8 @@ func evaluate(ctx context.Context, q Query, b *Base, opts []Option, rewrite func
 		return nil, err
 	}
 	// The answer's columns are fixed here, before any rewrite reorders or inlines the goal; a variable
-	// the host bound is dropped from them while evaluating and filled back into every row after.
+	// the host bound to one value is dropped from them while evaluating and filled back into every row
+	// after.
 	sel := cols
 	if len(o.bind) > 0 {
 		sel = q.Select
@@ -239,6 +240,9 @@ func evaluate(ctx context.Context, q Query, b *Base, opts []Option, rewrite func
 		return nil, err
 	}
 	if err := b.checkWrittenArity(q); err != nil {
+		return nil, err
+	}
+	if q, err = b.bindSets(q, o.bind); err != nil {
 		return nil, err
 	}
 	// Modes are checked on the program as linked, before any rewrite, so an evaluator that inlines a
@@ -311,9 +315,9 @@ func evaluate(ctx context.Context, q Query, b *Base, opts []Option, rewrite func
 		rows = projectRows(sel, raw)
 	}
 	for _, c := range cols {
-		if val, ok := o.bind[c.Var]; ok && c.Var != "" && c.Agg == nil {
+		if vals := o.bind[c.Var]; len(vals) == 1 && c.Var != "" && c.Agg == nil {
 			for _, r := range rows {
-				r.Bind[c.Var] = val
+				r.Bind[c.Var] = vals[0]
 			}
 		}
 	}
@@ -368,7 +372,7 @@ func (b *Base) checkNegatedRelations(negs []Literal) error {
 
 // checkAnchored applies checkNegationAnchored to each negated literal of body, counting as bound the
 // variables its positive literals bind and those in hostBound.
-func checkAnchored(body Body, hostBound map[Var]ns.Value) error {
+func checkAnchored(body Body, hostBound map[Var][]ns.Value) error {
 	bound := map[Var]bool{}
 	for _, v := range positiveVars(body) {
 		bound[v] = true
@@ -455,7 +459,7 @@ func (b *Base) checkWrittenArity(q Query) error {
 // written in the goal does), and the rules before a rewrite inlines or renames them (#92). Checked
 // after, a bound anchor became a constant and an inlined body's anchor a renamed variable, so a
 // negation anchored as written was refused, naming a variable nobody wrote.
-func checkWrittenAnchors(goal Body, rules []Rule, bind map[Var]ns.Value) error {
+func checkWrittenAnchors(goal Body, rules []Rule, bind map[Var][]ns.Value) error {
 	for _, r := range rules {
 		if err := checkAnchored(r.Body, nil); err != nil {
 			return err

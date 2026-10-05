@@ -175,7 +175,7 @@ func TestABoundVariableIsAConstantInTheGoal(t *testing.T) {
 			t.Fatal(err)
 		}
 		bound := baseFor(std(line(60)))
-		got, err := ev.Eval(bg, mustParse(t, leftReach+`reach(?s, ?x) => ?s, ?x`), bound, Bind(map[Var]ns.Value{"s": ns.S("v0")}))
+		got, err := ev.Eval(bg, mustParse(t, leftReach+`reach(?s, ?x) => ?s, ?x`), bound, Bind(map[Var][]ns.Value{"s": {ns.S("v0")}}))
 		if err != nil || len(got) != len(want) {
 			t.Fatalf("%T: %d rows, %v; want %d", ev, len(got), err, len(want))
 		}
@@ -193,20 +193,20 @@ func TestABoundVariableIsAConstantInTheGoal(t *testing.T) {
 
 func TestBindingsAtTheEdges(t *testing.T) {
 	b := baseFor(std(graph()))
-	rows, err := SemiNaive{}.Eval(bg, mustParse(t, `edge(?a, ?b)`), b, Bind(map[Var]ns.Value{"a": ns.S("a"), "b": ns.S("b")}))
+	rows, err := SemiNaive{}.Eval(bg, mustParse(t, `edge(?a, ?b)`), b, Bind(map[Var][]ns.Value{"a": {ns.S("a")}, "b": {ns.S("b")}}))
 	if err != nil || len(rows) != 1 || rows[0].Bind["a"].S != "a" || rows[0].Bind["b"].S != "b" {
 		t.Errorf("every column bound, the fact present: %v, %v; want one row a=a, b=b", rows, err)
 	}
-	if rows, _ := (SemiNaive{}).Eval(bg, mustParse(t, `edge(?a, ?b)`), b, Bind(map[Var]ns.Value{"a": ns.S("a"), "b": ns.S("d")})); len(rows) != 0 {
+	if rows, _ := (SemiNaive{}).Eval(bg, mustParse(t, `edge(?a, ?b)`), b, Bind(map[Var][]ns.Value{"a": {ns.S("a")}, "b": {ns.S("d")}})); len(rows) != 0 {
 		t.Errorf("every column bound, the fact absent: %v, want no rows", rows)
 	}
-	if rows, err := (Naive{}).Eval(bg, mustParse(t, `node(?n), ?n != ?skip, not edge(?n, ?skip) => ?n`), b, Bind(map[Var]ns.Value{"skip": ns.S("b")})); err != nil || col(rows, "n") != "c,d,x" {
+	if rows, err := (Naive{}).Eval(bg, mustParse(t, `node(?n), ?n != ?skip, not edge(?n, ?skip) => ?n`), b, Bind(map[Var][]ns.Value{"skip": {ns.S("b")}})); err != nil || col(rows, "n") != "c,d,x" {
 		t.Errorf("bound in a comparison and a negation: %v, %v; want c,d,x", rows, err)
 	}
-	if _, err := (SemiNaive{}).Eval(bg, mustParse(t, `edge(?a, ?b)`), b, Bind(map[Var]ns.Value{"z": ns.S("a"), "y": ns.S("b")})); err == nil || err.Error() != "query: cannot bind ?y, ?z: the goal does not use it" {
+	if _, err := (SemiNaive{}).Eval(bg, mustParse(t, `edge(?a, ?b)`), b, Bind(map[Var][]ns.Value{"z": {ns.S("a")}, "y": {ns.S("b")}})); err == nil || err.Error() != "query: cannot bind ?y, ?z: the goal does not use it" {
 		t.Errorf("binding unused variables: err = %v", err)
 	}
-	rows, err = SemiNaive{}.Eval(bg, mustParse(t, `edge(?a, ?b) => ?a, count(?b)`), b, Bind(map[Var]ns.Value{"a": ns.S("b")}))
+	rows, err = SemiNaive{}.Eval(bg, mustParse(t, `edge(?a, ?b) => ?a, count(?b)`), b, Bind(map[Var][]ns.Value{"a": {ns.S("b")}}))
 	if err != nil || len(rows) != 1 || rows[0].Bind["a"].S != "b" || rows[0].Bind["count(b)"].S != "1" {
 		t.Errorf("a bound group key: %v, %v; want a=b, count 1", rows, err)
 	}
@@ -218,7 +218,7 @@ func TestBindingsAtTheEdges(t *testing.T) {
 // variable as written, by every evaluator and by ValidateBound.
 func TestABoundVariableStillAnchorsANegation(t *testing.T) {
 	v := std(graph())
-	bind := Bind(map[Var]ns.Value{"n": ns.S("d")})
+	bind := Bind(map[Var][]ns.Value{"n": {ns.S("d")}})
 	for _, text := range []string{
 		`node(?n), not edge(?n, ?y) => ?n`,
 		`r(?x) :- node(?x), not edge(?x, ?y); r(?n) => ?n`,
@@ -264,7 +264,7 @@ func TestValidatingAGoalTheHostBinds(t *testing.T) {
 			val  string
 			want int
 		}{{"a", 0}, {"zzz", 1}} {
-			rows, err := ev.Eval(bg, q, b, Bind(map[Var]ns.Value{"n": ns.S(c.val)}))
+			rows, err := ev.Eval(bg, q, b, Bind(map[Var][]ns.Value{"n": {ns.S(c.val)}}))
 			lit, lerr := ev.Eval(bg, mustParse(t, `not node("`+c.val+`")`), b)
 			if err != nil || lerr != nil || len(rows) != c.want || len(lit) != c.want {
 				t.Errorf("%T, ?n = %q: %d rows (%v), the constant written in %d (%v); want %d", ev, c.val, len(rows), err, len(lit), lerr, c.want)
@@ -272,7 +272,7 @@ func TestValidatingAGoalTheHostBinds(t *testing.T) {
 		}
 	}
 
-	_, eerr := SemiNaive{}.Eval(bg, q, b, Bind(map[Var]ns.Value{"z": ns.S("a"), "y": ns.S("b")}))
+	_, eerr := SemiNaive{}.Eval(bg, q, b, Bind(map[Var][]ns.Value{"z": {ns.S("a")}, "y": {ns.S("b")}}))
 	if err := ValidateBound(q, v, "z", "y"); eerr == nil || fmt.Sprint(err) != fmt.Sprint(eerr) {
 		t.Errorf("unused variables: ValidateBound = %v, Eval = %v; want Eval's refusal from both", err, eerr)
 	}
@@ -291,7 +291,7 @@ func TestValidatingAGoalTheHostBinds(t *testing.T) {
 	if err := ValidateBound(walk, gv, "s"); err != nil {
 		t.Errorf("walk with ?s bound: ValidateBound = %v, want nil", err)
 	}
-	rows, err := SemiNaive{}.Eval(bg, walk, baseFor(gv), Bind(map[Var]ns.Value{"s": ns.S("v1")}))
+	rows, err := SemiNaive{}.Eval(bg, walk, baseFor(gv), Bind(map[Var][]ns.Value{"s": {ns.S("v1")}}))
 	if err != nil || col(rows, "e") != "v2,v3" {
 		t.Errorf("walk with ?s bound: %v, %v; want v2,v3", col(rows, "e"), err)
 	}
@@ -311,10 +311,10 @@ func TestValidatingABoundClosedDomainArgument(t *testing.T) {
 	if err := ValidateBound(q, v, "r"); err != nil {
 		t.Errorf("?r bound: ValidateBound = %v, want nil", err)
 	}
-	if rows, err := both(q, baseFor(v), Bind(map[Var]ns.Value{"r": ns.S("sink")})); err != nil || col(rows, "n") != "a" {
+	if rows, err := both(q, baseFor(v), Bind(map[Var][]ns.Value{"r": {ns.S("sink")}})); err != nil || col(rows, "n") != "a" {
 		t.Errorf("?r bound to sink: %v, %v; want a", col(rows, "n"), err)
 	}
-	if rows, err := both(q, baseFor(v), Bind(map[Var]ns.Value{"r": ns.Absent()})); err != nil || col(rows, "n") != "b" {
+	if rows, err := both(q, baseFor(v), Bind(map[Var][]ns.Value{"r": {ns.Absent()}})); err != nil || col(rows, "n") != "b" {
 		t.Errorf("?r bound absent: %v, %v; want b, the one absent role", col(rows, "n"), err)
 	}
 	misspelled := mustParse(t, `role(?n, "sinkk") => ?n`)

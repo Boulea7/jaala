@@ -178,7 +178,7 @@ func TestPagesLaidEndToEndAreTheWholeAnswer(t *testing.T) {
 // column, so ordering by it is allowed.
 func TestOrderByAColumnTheHostBound(t *testing.T) {
 	q := mustParse(t, `part(?r, ?n) => ?r, ?n order by ?n, ?r desc limit 2`)
-	rows, err := SemiNaive{}.Eval(bg, q, baseFor(std(parts())), Bind(map[Var]ns.Value{"n": ns.S("VBUS")}))
+	rows, err := SemiNaive{}.Eval(bg, q, baseFor(std(parts())), Bind(map[Var][]ns.Value{"n": {ns.S("VBUS")}}))
 	if got, want := cols(rows, "r", "n"), []string{"R5 VBUS", "R2 VBUS"}; err != nil || !reflect.DeepEqual(got, want) {
 		t.Errorf("%v, %v; want %v", got, err, want)
 	}

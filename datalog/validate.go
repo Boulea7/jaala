@@ -27,9 +27,9 @@ func Validate(q Query, reg *ns.Vocabulary) error {
 // value, which neither coercion nor a closed Domain refuses (#68).
 // Naming a variable the goal does not use is the error Eval gives for binding one.
 func ValidateBound(q Query, reg *ns.Vocabulary, vars ...Var) error {
-	bind := make(map[Var]ns.Value, len(vars))
+	bind := make(map[Var][]ns.Value, len(vars))
 	for _, v := range vars {
-		bind[v] = ns.Absent()
+		bind[v] = []ns.Value{ns.Absent()}
 	}
 	written := q
 	q, cols, err := bindGoal(q, bind)
@@ -98,7 +98,7 @@ func ValidateBound(q Query, reg *ns.Vocabulary, vars ...Var) error {
 // A rule built here is not left unvalidated forever: the query still has to run, and the evaluator
 // checks every atom it reaches against the real vocabulary. What is lost is only the EARLY report,
 // for a caller that built its rule before any relation was installed.
-func validateWithoutVocabulary(q Query, reg *ns.Vocabulary, written Query, bind map[Var]ns.Value, sel, cols []Term) error {
+func validateWithoutVocabulary(q Query, reg *ns.Vocabulary, written Query, bind map[Var][]ns.Value, sel, cols []Term) error {
 	b := newValidationBase(reg)
 	if _, _, err := b.checkRules(q.Rules); err != nil {
 		return err

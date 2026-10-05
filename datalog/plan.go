@@ -125,6 +125,28 @@ func planRule(b *Base, body Body) Body {
 	return Body{Literals: append([]Literal{lits[0]}, rest.Literals...)}
 }
 
+// planGoal plans the goal for the demand rewrite. The relations set-bound variables range over (see
+// bindSets) stay first, and the rest is planned from what they bind, as planRule plans a guarded body:
+// ranked from nothing bound, they would fall behind a relation bound by constants, and a call would be
+// demanded from that relation's values instead of the host's. Once the rewrite has seeded demand from
+// them, plan orders the goal like any other, since the adorned relations hold only what was demanded.
+func planGoal(b *Base, goal Body) Body {
+	lits := goal.Literals
+	n := 0
+	for n < len(lits) && lits[n].Pos != nil && isBindSet(lits[n].Pos.Relation) {
+		n++
+	}
+	if n == 0 {
+		return planBody(b, goal, nil)
+	}
+	entry := map[Var]bool{}
+	for _, l := range lits[:n] {
+		bindAll(l.Pos, entry)
+	}
+	rest := planBody(b, Body{Literals: lits[n:]}, entry)
+	return Body{Literals: append(append([]Literal(nil), lits[:n]...), rest.Literals...)}
+}
+
 // planBody orders a body greedily. At each step it takes the first check whose arguments are all
 // bound, since checking early only discards: a comparison, a filter, or a relation whose arguments
 // are all bound, which only asks whether a tuple exists. Failing that, the first generator one of

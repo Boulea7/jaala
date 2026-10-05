@@ -43,7 +43,8 @@ A query naming `net.has_test_point` pulls in the module that defines it. Each me
 signature (argument names, entity kinds, scalar types and units), declared or inferred through its
 rules, which `v.Lookup(path)` returns for a host that lists and drills into what is available. A
 query constant, or a value bound with `datalog.Bind`, is read as its argument's type: `"3"` in a
-number argument is 3, and `"abc"` there is an error rather than an empty answer.
+number argument is 3, and `"abc"` there is an error rather than an empty answer. `Bind` takes a set
+of values per variable, so one query can ask about a whole selection.
 
 It started as the query engine inside [agni](https://github.com/panyam/agni), an EDA tooling
 engine, and was extracted so other graph tools could share it.

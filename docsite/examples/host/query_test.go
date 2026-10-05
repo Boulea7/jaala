@@ -20,7 +20,7 @@ func Example() {
 	q := datalog.MustParse(`deps.depends_on(?p, ?d) => ?d`)
 	for _, pkg := range []string{"api", "log"} {
 		rows, err := datalog.SemiNaive{}.Eval(context.Background(), q, b,
-			datalog.Bind(map[datalog.Var]ns.Value{"p": ns.S(pkg)}),
+			datalog.Bind(map[datalog.Var][]ns.Value{"p": {ns.S(pkg)}}),
 			datalog.Budget(100_000))
 		if err != nil {
 			fmt.Println(err)

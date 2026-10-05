@@ -64,6 +64,14 @@ go list -deps ./... | grep '\.' | grep -v '^github.com/panyam/jaala' | grep -v '
   (`checkArgValues`, #68) both leave alone, so a variable the host will bind is never refused for
   its type or its value. `checkArgValues` is the only validation that reads a constant's value, so
   a new placeholder or substitution has to pass it.
+- **A variable bound to several values ranges over a relation of them** (`bindSets`, #132). Bound to
+  one it is still a constant (`bindGoal`). A set, or none, stays a variable, and after the checks on
+  the written program the goal is joined with `\x00b:<var>`, a relation of facts (for none, a rule
+  reading only itself). `planGoal` keeps it first for the demand rewrite, so magic seeds from every
+  value; the final `plan` orders the goal freely, since the adorned relations hold only what was
+  demanded. Each value is checked as one constant would be (`checkBoundValue`: coerced, and against a
+  closed Domain), and stored as a number when any place reads it as one. Its tuples carry no
+  citations and no witness node.
 - **Nothing inside a module resolution may call `Vocabulary.Signature` or `Check`.** They run
   through the memo entry that is mid-computation, and `sync.Once` deadlocks on re-entry. That is
   why the validation base carries `sigs` while it checks module rules.
