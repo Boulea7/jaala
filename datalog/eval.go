@@ -214,7 +214,17 @@ func evaluate(ctx context.Context, q Query, b *Base, opts []Option, rewrite func
 	gen := b.refresh()
 	nb := *b
 	nb.run = &evalRun{ctx: ctx, budget: o.budget, witness: o.witness || o.canonical, canonical: o.canonical}
-	b = &nb
+	if o.explain == nil {
+		return evaluateOn(&nb, gen, q, o, rewrite, fixpoint)
+	}
+	nb.run.explain = newExplainer(o.explain, &nb)
+	rows, err := evaluateOn(&nb, gen, q, o, rewrite, fixpoint)
+	nb.run.explain.finish(&nb, rows, err, o.budget)
+	return rows, err
+}
+
+// evaluateOn answers q on b, an Eval's own copy of the Base (see evaluate).
+func evaluateOn(b *Base, gen int64, q Query, o evalOptions, rewrite func(*Base, Query) Query, fixpoint func(*Base, []Rule) error) ([]Row, error) {
 	if err := b.run.done(); err != nil {
 		return nil, err
 	}
@@ -265,6 +275,15 @@ func evaluate(ctx context.Context, q Query, b *Base, opts []Option, rewrite func
 	if err := checkComparisons(q.Goal); err != nil {
 		return nil, err
 	}
+	if e := b.run.explain; e != nil {
+		// A rewrite keeps a rule's text, so each body it runs can name the rule it came from.
+		for i, r := range q.Rules {
+			if r.text == "" {
+				q.Rules[i].text = r.String()
+			}
+		}
+		e.linked = q
+	}
 	if rewrite != nil {
 		// The rules are checked as linked too, before the rewrite renames them, so an error names
 		// the program's relations rather than an adorned or factored one.
@@ -286,6 +305,12 @@ func evaluate(ctx context.Context, q Query, b *Base, opts []Option, rewrite func
 		// whose positions point into another query's idb slice.
 		b.idbIdx = map[idxKey]*idbIndex{}
 		installHeld(b)
+		if e := b.run.explain; e != nil {
+			e.held = map[string]bool{}
+			for rel := range b.run.preload {
+				e.held[rel] = true
+			}
+		}
 		if err := fixpoint(b, q.Rules); err != nil {
 			return nil, err
 		}
@@ -303,6 +328,9 @@ func evaluate(ctx context.Context, q Query, b *Base, opts []Option, rewrite func
 	}
 
 	var raw []*binding
+	if e := b.run.explain; e != nil {
+		defer e.enter(nil, q.Goal)()
+	}
 	err = solve(deferComparisons(pos), 0, newBinding(), b, func(bnd *binding) error {
 		ok, err := passesNegations(bnd, negs, b)
 		if err != nil {
@@ -544,6 +572,9 @@ func (b *Base) isIDB(rel string) bool {
 // binding is kept iff NO param fact has subject == the bound ?m and symbol == "VIN" — i.e. "?m has
 // no VIN param at any value". A part whose ?m does have such a fact is dropped.
 func passesNegations(bnd *binding, negs []Literal, b *Base) (bool, error) {
+	if b.run != nil && b.run.explain != nil && b.run.explain.body != nil {
+		return passesNegationsExplained(bnd, negs, b, b.run.explain)
+	}
 	for _, lit := range negs {
 		matched, err := b.atomHolds(lit.Neg, bnd)
 		if err != nil {
@@ -551,6 +582,27 @@ func passesNegations(bnd *binding, negs []Literal, b *Base) (bool, error) {
 		}
 		if matched {
 			return false, nil // some solution exists, so the `not` is violated
+		}
+	}
+	return true, nil
+}
+
+// passesNegationsExplained is passesNegations counting each negated literal's work and what it let
+// through (see Explain). They are the body's last literals.
+func passesNegationsExplained(bnd *binding, negs []Literal, b *Base, e *explainer) (bool, error) {
+	prev := e.cur
+	defer func() { e.cur = prev }()
+	for k, lit := range negs {
+		lr, _ := e.literal(len(e.body.Literals) - len(negs) + k)
+		matched, err := b.atomHolds(lit.Neg, bnd)
+		if err != nil {
+			return false, err
+		}
+		if matched {
+			return false, nil
+		}
+		if lr != nil {
+			lr.Passed++
 		}
 	}
 	return true, nil
@@ -632,6 +684,28 @@ func deferComparisons(lits []Literal) []Literal {
 }
 
 func solve(lits []Literal, i int, bnd *binding, b *Base, emit func(*binding) error) error {
+	if b.run == nil || b.run.explain == nil {
+		return solveAt(lits, i, bnd, b, emit, nil)
+	}
+	// Explaining: the work from here is literal i's, and what a solution costs to keep (its
+	// negations, storing a derived tuple) is the body's. Kept out of solveAt, whose closure would
+	// otherwise capture the report and move it to the heap on every call.
+	e := b.run.explain
+	prev := e.cur
+	defer func() { e.cur = prev }()
+	if i == len(lits) {
+		e.cur = nil
+		return emit(bnd)
+	}
+	lr, _ := e.literal(i)
+	if lits[i].Compare != nil {
+		e.access("comparison")
+	}
+	return solveAt(lits, i, bnd, b, emit, lr)
+}
+
+// solveAt solves literal i on, counting in lr, when an Eval explains itself, the bindings it passes.
+func solveAt(lits []Literal, i int, bnd *binding, b *Base, emit func(*binding) error, lr *LiteralReport) error {
 	if i == len(lits) {
 		return emit(bnd)
 	}
@@ -643,6 +717,9 @@ func solve(lits []Literal, i int, bnd *binding, b *Base, emit func(*binding) err
 			return err
 		}
 		if ok {
+			if lr != nil {
+				lr.Passed++
+			}
 			return solve(lits, i+1, bnd, b, emit)
 		}
 		return nil
@@ -659,6 +736,9 @@ func solve(lits []Literal, i int, bnd *binding, b *Base, emit func(*binding) err
 					ext.wit = append(ext.wit[:len(ext.wit):len(ext.wit)], placed{at: lit.at, node: ext.last})
 				}
 				ext.last, ext.parts = nil, nil
+			}
+			if lr != nil {
+				lr.Passed++ // the next literal's solve puts lr back as current when it returns
 			}
 			return solve(lits, i+1, ext, b, emit)
 		})

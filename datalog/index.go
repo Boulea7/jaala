@@ -197,6 +197,31 @@ func (c *edbCache) tuples(ctx context.Context, rel string, src ns.Source) ([]ns.
 	return t, nil
 }
 
+// held lists the relations whose tuples the cache holds, and the indexes it has built, for Explain.
+// A relation another Eval is reading at this moment counts as not held.
+func (c *edbCache) held() (map[string]bool, map[idxKey]bool) {
+	c.mu.RLock()
+	reads := make(map[string]*edbRead, len(c.tup))
+	for rel, r := range c.tup {
+		reads[rel] = r
+	}
+	idx := make(map[idxKey]bool, len(c.idx))
+	for k := range c.idx {
+		idx[k] = true
+	}
+	c.mu.RUnlock()
+	tup := map[string]bool{}
+	for rel, r := range reads {
+		if r.mu.TryLock() {
+			if r.done {
+				tup[rel] = true
+			}
+			r.mu.Unlock()
+		}
+	}
+	return tup, idx
+}
+
 // get returns the index for a relation at a pattern, building it once on first use. Lazy because a
 // rule set probes a handful of the possible patterns, and eagerly indexing every relation at every
 // mask would cost more than the scans it saves on data nobody queries deeply.
