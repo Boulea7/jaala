@@ -124,6 +124,7 @@ func TestParseHeadDeclarations(t *testing.T) {
 		`x(?n: ?n) :- node(?n); x(?n)`:        "must name another variable of its head",
 		`x(?n: pin(?r)) :- node(?n); x(?n)`:   "must name another variable of its head",
 		`x("a": net) :- node(?n); x(?n)`:      "only a ?variable can declare a type",
+		`x(?_: net) :- node(?n); x(?n)`:       "only a ?variable can declare a type", // ?_ is "_", printed back as _: net (#89)
 		`x(?n: {source}) :- node(?n); x(?n)`:  "must be a \"string\"",
 		`x(?n: net thing) :- node(?n); x(?n)`: "bad type declaration",
 	} {

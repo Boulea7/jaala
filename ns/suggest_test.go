@@ -78,3 +78,47 @@ func TestAPathSpelledWithAnotherSeparatorIsSuggested(t *testing.T) {
 		}
 	}
 }
+
+// countingDistance swaps in an edit distance that adds up the cells it fills, for the test's duration.
+func countingDistance(t *testing.T) *int {
+	t.Helper()
+	cells := 0
+	distance = func(a, b string) int {
+		cells += (len([]rune(a)) + 1) * (len([]rune(b)) + 1)
+		return levenshtein(a, b)
+	}
+	t.Cleanup(func() { distance = levenshtein })
+	return &cells
+}
+
+// A long unknown name costs a suggestion about its length, not its length times itself: one
+// separator respelling per hyphen, each compared in full against every module path, took most of a
+// second per Eval at 2,000 hyphens (#89, found by FuzzEval). control: a short typo still compares,
+// and still gets its suggestion.
+func TestALongUnknownNameIsCheapToSuggestFor(t *testing.T) {
+	v := moved(t)
+	cells := countingDistance(t)
+	const n = 2000
+	for _, name := range []string{
+		strings.Repeat("-", n),
+		strings.Repeat("a_", n/2),
+		"net." + strings.Repeat("x", n),
+		strings.Repeat("q.", n/2) + "r",
+	} {
+		*cells = 0
+		if got := v.Hint(name); got != "" {
+			t.Errorf("Hint(%.20q...) = %q, want no suggestion", name, got)
+		}
+		if *cells > 100*n {
+			t.Errorf("Hint(%.20q...) filled %d edit-distance cells, want at most %d", name, *cells, 100*n)
+		}
+	}
+	*cells = 0
+	if got := DidYouMeanValue([]string{"resistor", "capacitor"}, strings.Repeat("r", n)); got != "" || *cells > 100*n {
+		t.Errorf("DidYouMeanValue on a long value: %q after %d cells", got, *cells)
+	}
+	*cells = 0
+	if got := v.Hint("net_pin_cout"); got != `; did you mean "net.pin_count"?` || *cells == 0 {
+		t.Errorf("control: Hint(net_pin_cout) = %q after %d cells, want net.pin_count found by comparing", got, *cells)
+	}
+}

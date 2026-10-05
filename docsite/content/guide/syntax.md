@@ -31,7 +31,7 @@ A goal or a rule body is a list of literals separated by commas, and all of them
 
 {{ demo "demos/guide/syntax-comparisons.yaml" }}
 
-A comparison only compares, which is a bit different from `=` in most programming languages. `=` checks that two values are equal, and it doesn't give a value to a variable that has none, so a variable has to appear in an atom before a comparison can use it:
+A comparison only compares, which is a bit different from `=` in most programming languages. `=` checks that two values are equal, and it doesn't give a value to a variable that has none, so a variable a comparison uses has to appear in an atom of the same goal or rule. Where the comparison is written doesn't matter, since it's checked once the atom has run:
 
 {{ demo "demos/guide/syntax-equals-compares.yaml" }}
 

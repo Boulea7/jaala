@@ -1,0 +1,4 @@
+fixture: "deps"
+program: "r(?x, _) :- package(?x);"
+query: "r(?x, ?y) => ?x"
+expect_error: "has _ in its head, which gives that place no value"

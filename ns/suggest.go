@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"sort"
 	"strings"
+	"unicode/utf8"
 )
 
 // Unknown describes a name the vocabulary does not hold, for an error that follows "query: ". It names
@@ -100,6 +101,16 @@ func (v *Vocabulary) endingIn(name string) []string {
 // `net_pin_count` spells net.pin_count exactly, and `component_on_net` comes nearest to
 // component.net.
 func (v *Vocabulary) bySeparator(name string) string {
+	near := false
+	for _, p := range v.candidates() {
+		if strings.Contains(p, ".") && !tooFar(name, p, typoThreshold(name)) {
+			near = true
+			break
+		}
+	}
+	if !near {
+		return "" // and no spellings built: there is one per separator, each as long as name
+	}
 	var spellings []string
 	for i, r := range name {
 		if r == '_' || r == '-' {
@@ -115,21 +126,22 @@ func (v *Vocabulary) bySeparator(name string) string {
 		}
 		return r
 	}, name))
+	threshold := typoThreshold(name)
 	var dotted []string
 	for _, p := range v.candidates() {
-		if strings.Contains(p, ".") {
+		if strings.Contains(p, ".") && !tooFar(name, p, threshold) {
 			dotted = append(dotted, p)
 		}
 	}
 	best, bestDist := "", 0
 	for _, sp := range spellings {
 		for _, p := range dotted {
-			if d := levenshtein(sp, p); best == "" || d < bestDist {
+			if d := distance(sp, p); best == "" || d < bestDist {
 				best, bestDist = p, d
 			}
 		}
 	}
-	if best != "" && bestDist <= typoThreshold(name) {
+	if best != "" && bestDist <= threshold {
 		return best
 	}
 	return ""
@@ -225,18 +237,33 @@ func closest(name string, cands []string) string {
 // token gets no misleading suggestion. On a tie the earlier candidate wins.
 func closestBy(name string, cands []string, key func(string) string) string {
 	best, bestDist := "", 0
+	threshold := typoThreshold(name)
 	for _, c := range cands {
-		d := levenshtein(name, key(c))
-		if best == "" || d < bestDist {
+		k := key(c)
+		if tooFar(name, k, threshold) {
+			continue
+		}
+		if d := distance(name, k); best == "" || d < bestDist {
 			best, bestDist = c, d
 		}
 	}
-	threshold := typoThreshold(name)
 	if best != "" && bestDist <= threshold {
 		return best
 	}
 	return ""
 }
+
+// tooFar reports whether a and b differ in length by more than limit, which puts their edit distance
+// over it without computing it. A suggestion only names a candidate within its typo threshold, so
+// skipping these changes no suggestion, and keeps a long name from costing its length times every
+// candidate's (#89: 2,000 hyphens took most of a second per Eval).
+func tooFar(a, b string, limit int) bool {
+	d := utf8.RuneCountInString(a) - utf8.RuneCountInString(b)
+	return d > limit || -d > limit
+}
+
+// distance is the edit distance suggestions rank by, a variable so a test can count what it costs.
+var distance = levenshtein
 
 // levenshtein is the edit distance (insert/delete/substitute) between two strings — the closeness
 // measure suggestRelation ranks candidates by.
@@ -266,13 +293,15 @@ func levenshtein(a, b string) int {
 // value is most of its worth; returns "" when nothing is close enough to be worth guessing.
 func DidYouMeanValue(allowed []string, got string) string {
 	best, bestDist := "", 0
+	threshold := typoThreshold(got)
 	for _, want := range allowed {
-		d := levenshtein(got, want)
-		if best == "" || d < bestDist {
+		if tooFar(got, want, threshold) {
+			continue
+		}
+		if d := distance(got, want); best == "" || d < bestDist {
 			best, bestDist = want, d
 		}
 	}
-	threshold := typoThreshold(got)
 	if bestDist > threshold {
 		best = ""
 	}

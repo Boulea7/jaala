@@ -126,6 +126,21 @@ go list -deps ./... | grep '\.' | grep -v '^github.com/panyam/jaala' | grep -v '
   disagreement, so a known one can mask another: #90 hid about a tenth of the planned comparisons
   until it was fixed.
   `./selfcheck.sh` runs the corpus at 5000 seeds (#86).
+- **The query text is fuzzed** (`fuzz_test.go`, #89). `FuzzParse`: any text parses or fails with a
+  `query:` error, and a parsed rule prints back as text that parses to the same rule. `FuzzEval`: a
+  program that parses is validated and evaluated without a panic, every error keeps `query:`, and when
+  Naive answers within `fuzzBudget` all three evaluators must `agree`. Plain `go test` (so CI) runs the
+  seeds and every input in `testdata/fuzz/`; `./selfcheck.sh` fuzzes each target for
+  `JAALA_FUZZ_TIME` (30s). A failing input is written to `testdata/fuzz/<Target>/`: fix it, rename the
+  file for what it caught, and commit it. #148 (a number spelled two ways) is counted, not failed,
+  through `spelledApart`, with its repro pinned in `TestANumberSpelledTwoWaysIsAKnownDisagreement`.
+  Its first hour found a quadratic did-you-mean, a parser panic, `?_: T` not printing back,
+  comparison and head-`_` cases the evaluators answered differently, and a `-0` the index missed.
+- **A comparison is checked where its body binds it, not where it is written** (#89). Every solve
+  runs `deferComparisons` first, which moves a comparison to just after the literal that binds its
+  operands, so `?a = "a", edge(?a, ?b)` answers in every evaluator. `checkComparisons` refuses a
+  comparison no positive literal binds, on every rule as linked and on the goal, before any rewrite
+  can copy it into a rule of its own.
 - **Cost is checked against `testdata/work.golden`** (`bench_test.go`, #88): each workload's `Work()`
   under the planned SemiNaive must stay within 10% of its baseline, and its answer keep its row count.
   The corpus checks answers and can't see cost; the baseline is what catches a rewrite that stops
@@ -140,7 +155,8 @@ go list -deps ./... | grep '\.' | grep -v '^github.com/panyam/jaala' | grep -v '
   new, and `applyRule` copies `r` before taking its address. A capture or `&param` there moved a
   value to the heap on every call and doubled points-to's time with Explain off; compare
   `-benchmem` allocations against main, which load doesn't skew. Rewritten names are made readable by
-  `ExplainName`, and `testdata/explain.golden` (`-update`) holds the text.
+  `ExplainName`, and `testdata/explain.golden` (`-update`) holds the text. `enter` lists a body's
+  literals in `deferComparisons` order, the order `solve` indexes them in (#89).
 - **`CanonicalCites()` keeps each tuple's shortest derivation** (`canonical.go`, #22): fewest rule
   steps (a witness node's `height`), then the rule's written text, then the body nodes in written
   order by relation, values and a leaf's citations. It records witnesses to compare (so `tagWritten`

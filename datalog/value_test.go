@@ -1,8 +1,12 @@
 package datalog
 
 import (
-	"github.com/panyam/jaala/ns"
+	"fmt"
+	"math"
+	"slices"
 	"testing"
+
+	"github.com/panyam/jaala/ns"
 )
 
 // v is a present scalar; absentV is a field the source did not state. Both are spelled out here
@@ -134,5 +138,26 @@ func TestAbsentDoesNotCollideInIndex(t *testing.T) {
 	}
 	if a[0] == e[0] {
 		t.Errorf("absent and empty-string share the index bucket %q", a[0])
+	}
+}
+
+// -0 equals 0, so the index files them under a shared key: a probe for one finds the other, as a scan
+// does (#89, found by FuzzEval, where a rule head's -0 never met the goal's 0 once the relation was
+// big enough to index). control: Unindexed finds it by scanning.
+func TestNegativeZeroSharesAnIndexKeyWithZero(t *testing.T) {
+	if !slices.ContainsFunc(valueKeys(ns.N(math.Copysign(0, -1))), func(k string) bool { return slices.Contains(valueKeys(ns.N(0)), k) }) {
+		t.Errorf("valueKeys(-0) = %v and valueKeys(0) = %v share no key", valueKeys(ns.N(math.Copysign(0, -1))), valueKeys(ns.N(0)))
+	}
+	src := ns.NewMemSource().Declare("w", "node", "n")
+	for i := 0; i < 2*IndexMinTuples; i++ {
+		src.Add("w", ns.Tuple{Vals: []ns.Value{ns.S(fmt.Sprintf("v%d", i)), ns.N(float64(i))}})
+	}
+	q := mustParse(t, `w(?n, -0) => ?n`)
+	b := baseFor(std(src))
+	for _, base := range []*Base{b.Unindexed(), b} {
+		rows, err := (SemiNaive{}).Eval(bg, q, base)
+		if err != nil || col(rows, "n") != "v0" {
+			t.Errorf("w(?n, -0) = %v, %v; want v0 (unindexed %v)", col(rows, "n"), err, base.noIndex)
+		}
 	}
 }

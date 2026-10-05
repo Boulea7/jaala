@@ -71,7 +71,11 @@ func valueKeys(v ns.Value) []string {
 	if v.Num == nil {
 		return []string{v.S}
 	}
-	if canon := ftoa(*v.Num); canon != v.S {
+	n := *v.Num
+	if n == 0 {
+		n = 0 // -0 equals 0, and ftoa writes it "-0" (#89)
+	}
+	if canon := ftoa(n); canon != v.S {
 		return []string{v.S, canon}
 	}
 	return []string{v.S}

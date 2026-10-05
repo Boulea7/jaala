@@ -297,6 +297,12 @@ Every variable of a rule's head has to be bound by a positive literal of its bod
 
 {{ demo "demos/errors/head-variable-s-is-not-bound.yaml" }}
 
+`query: rule … has _ in its head, which gives that place no value; use a variable its body binds, or a constant`
+
+A derived tuple needs a value in every place, so `_` can't stand in a rule's head. Write the variable the body binds there, or a constant.
+
+{{ demo "demos/errors/has-wildcard-in-its-head.yaml" }}
+
 `query: … uses … in a literal; an aggregate can only stand in a rule head or the answer`
 
 An aggregate stands in a rule head or the projection, not in a body. Raised for a query built in Go; in text the parser refuses it first.
@@ -363,7 +369,7 @@ These depend on the order variables get their values, so jaala checks them again
 
 `query: comparison operand is unbound (a variable must appear in a relation before it is compared)`
 
-A comparison needs both sides to have values, so a variable has to appear in an atom first.
+A comparison needs both sides to have values, so a variable it compares has to appear in an atom of the same goal or rule body. Where the comparison is written doesn't matter: it's checked once that atom has bound the variable. In a rule, this is refused before the query runs.
 
 {{ demo "demos/errors/comparison-operand-is-unbound.yaml" }}
 

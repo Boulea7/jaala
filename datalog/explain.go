@@ -163,6 +163,7 @@ func (e *explainer) enter(r *Rule, goal Body) func() {
 	br, ok := e.bodies[key]
 	if !ok {
 		pos, negs := splitNegations(body.Literals)
+		pos = deferComparisons(pos) // the order solve runs them in, which literal(i) indexes
 		br = &BodyReport{Rule: written, Ran: ExplainName(key), Relation: relation}
 		if r == nil {
 			br.Ran = ExplainName(goal.String())

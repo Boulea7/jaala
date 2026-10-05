@@ -223,3 +223,29 @@ func TestExplainHoldsItsShape(t *testing.T) {
 		t.Errorf("the report's text changed; if on purpose, rerun with -update\ngot:\n%s", text.String())
 	}
 }
+
+// A body written comparison-first runs its comparison after the literal that binds it (#89), and the
+// report lists the literals in that order, so each literal's counts are its own: the comparison is
+// reached once per edge and passes the one from a, and edge is reached once.
+func TestExplainListsADeferredComparisonWhereItRan(t *testing.T) {
+	var r Report
+	if _, err := (Naive{}).Eval(bg, mustParse(t, `?a = "a", edge(?a, ?b) => ?b`), baseFor(std(graph())), Explain(&r)); err != nil {
+		t.Fatal(err)
+	}
+	lits := r.Goal.Literals
+	if len(lits) != 2 || lits[0].Literal != "edge(?a, ?b)" || lits[1].Literal != `?a = "a"` {
+		t.Fatalf("goal literals = %v, want edge then the comparison", literalNames(lits))
+	}
+	if lits[0].Reached != 1 || lits[0].Passed != 3 || lits[1].Reached != 3 || lits[1].Passed != 1 {
+		t.Errorf("edge reached %d passed %d, comparison reached %d passed %d; want 1/3 and 3/1",
+			lits[0].Reached, lits[0].Passed, lits[1].Reached, lits[1].Passed)
+	}
+}
+
+func literalNames(lits []*LiteralReport) []string {
+	var out []string
+	for _, l := range lits {
+		out = append(out, l.Literal)
+	}
+	return out
+}
