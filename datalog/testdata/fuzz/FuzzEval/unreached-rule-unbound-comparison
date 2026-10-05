@@ -1,0 +1,2 @@
+go test fuzz v1
+string("00(0,?x7,min(?x7)):-edge(?0,?00),weight(?00,?x7),00=?1;0<00=>?00")

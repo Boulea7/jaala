@@ -1,0 +1,2 @@
+go test fuzz v1
+string("00(0) :-edge(0,0); r1(0,0) :-weight(0,0);000(count(?x22)) :- weight(0, ?x22); r1(0,?x24), not r1(0, ?x24),0>?0")

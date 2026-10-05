@@ -60,6 +60,9 @@ func ValidateBound(q Query, reg *ns.Vocabulary, vars ...Var) error {
 	if err := checkNoAggregates("the query", q.Goal); err != nil {
 		return err
 	}
+	if err := checkComparisons(q.Goal); err != nil {
+		return err
+	}
 	if len(reg.BaseRelations()) == 0 {
 		return validateWithoutVocabulary(q, reg, written, bind, sel, cols)
 	}

@@ -159,8 +159,35 @@ func (b *Base) validateRule(r Rule) error {
 			}
 			continue
 		}
-		if arg.Var != "" && arg.Var != "_" && !bound[arg.Var] {
+		if arg.Var == "_" {
+			// A tuple needs a value in every place, so a rule with _ in its head derived nothing, while
+			// the demand rewrite read the _ as matching anything (#89).
+			return fmt.Errorf("query: rule %q has _ in its head, which gives that place no value; use a variable its body binds, or a constant", r.Head.Relation)
+		}
+		if arg.Var != "" && !bound[arg.Var] {
 			return fmt.Errorf("query: rule %q head variable ?%s is not bound by a positive body relation", r.Head.Relation, arg.Var)
+		}
+	}
+	return checkComparisons(r.Body)
+}
+
+// checkComparisons refuses a comparison over a variable no positive literal of its body binds. Such a
+// comparison fails whenever a binding reaches it, so whether it failed used to depend on the data and
+// on the evaluator: SemiNaive drops a rule the goal never reaches, and its rewrites copy a goal's
+// comparisons into rules of their own (#89). Checked on every rule as linked and on the goal, as a
+// projected variable is (validateSelect), it fails the same way for every evaluator and for Validate.
+func checkComparisons(body Body) error {
+	bound := map[Var]bool{}
+	for _, v := range positiveVars(body) {
+		bound[v] = true
+	}
+	for _, lit := range body.Literals {
+		if c := lit.Compare; c != nil {
+			for _, t := range []Term{c.Left, c.Right} {
+				if t.Var != "" && !bound[t.Var] {
+					return fmt.Errorf("query: comparison operand is unbound (a variable must appear in a relation before it is compared)")
+				}
+			}
 		}
 	}
 	return nil
@@ -215,7 +242,7 @@ func (b *Base) applyRule(r Rule) (bool, error) {
 		return b.applyAggregate(r, pos, negs)
 	}
 	added := false
-	err := solve(pos, 0, newBinding(), b, func(bnd *binding) error {
+	err := solve(deferComparisons(pos), 0, newBinding(), b, func(bnd *binding) error {
 		ok, err := passesNegations(bnd, negs, b)
 		if err != nil {
 			return err
@@ -257,7 +284,7 @@ func (b *Base) applyRule(r Rule) (bool, error) {
 // names the rule without children, as an aggregate answer row has none.
 func (b *Base) applyAggregate(r Rule, pos, negs []Literal) (bool, error) {
 	var raw []*binding
-	err := solve(pos, 0, newBinding(), b, func(bnd *binding) error {
+	err := solve(deferComparisons(pos), 0, newBinding(), b, func(bnd *binding) error {
 		ok, err := passesNegations(bnd, negs, b)
 		if ok {
 			raw = append(raw, bnd.clone())

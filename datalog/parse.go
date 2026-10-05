@@ -417,7 +417,7 @@ func parseHead(s string) (Atom, []ns.ArgType, error) {
 			if t, err = parseArgType(parts[1]); err != nil {
 				return Atom{}, nil, err
 			}
-			if v := strings.TrimSpace(parts[0]); len(v) < 2 || v[0] != '?' {
+			if v := strings.TrimSpace(parts[0]); len(v) < 2 || v[0] != '?' || v == "?_" {
 				return Atom{}, nil, fmt.Errorf("query: only a ?variable can declare a type, not %q", v)
 			}
 			a, declared = parts[0], true
@@ -607,7 +607,7 @@ func parseSelItem(p string) (Term, error) {
 	if strings.IndexByte(p, '(') >= 0 {
 		return parseAggregate(p)
 	}
-	if p[0] != '?' || len(p) == 1 {
+	if p == "" || p[0] != '?' || len(p) == 1 {
 		return Term{}, fmt.Errorf("query: projection column %q must be a ?variable or an aggregate", p)
 	}
 	return Term{Var: Var(p[1:])}, nil

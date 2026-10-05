@@ -301,3 +301,67 @@ func TestArityIsCheckedAsWritten(t *testing.T) {
 		t.Errorf("control: r from a = %s, want b,c,d", got)
 	}
 }
+
+// A comparison holds wherever it is written in a body, compared once the literal that binds its
+// operand has run (#89): Naive solved it as written and failed on the unbound ?a, while the planned
+// SemiNaive answered. The rule form has two rules, so it isn't inlined into the goal. control: the
+// same body with ?a never bound is still refused.
+func TestAComparisonWaitsForTheLiteralThatBindsIt(t *testing.T) {
+	for q, want := range map[string]string{
+		`?a = "a", edge(?a, ?b) => ?b`:                                         "b",
+		`r(?b) :- ?a = "a", edge(?a, ?b); r(?b) :- edge("c", ?b); r(?b) => ?b`: "b,d",
+	} {
+		if got := col(eval(t, graph(), q), "b"); got != want {
+			t.Errorf("%s: b = %q, want %q", q, got, want)
+		}
+	}
+	if err := evalErr(graph(), `?c = "a", edge(?a, ?b) => ?b`); err == nil || !strings.Contains(err.Error(), "comparison operand is unbound") {
+		t.Errorf("control: a comparison nothing binds: err = %v", err)
+	}
+}
+
+// A rule comparing a variable its body never binds is refused by every evaluator alike, even when the
+// goal never reaches it (#89): the planned SemiNaive drops an unreached rule before solving, so it
+// reported the goal's next mistake where Naive reported the comparison.
+func TestAnUnboundComparisonIsRefusedInAnUnreachedRule(t *testing.T) {
+	q := mustParse(t, `r(?x) :- node(?x), ?y > 1; node(?n) => ?m`)
+	for _, ev := range []Evaluator{Naive{}, SemiNaive{WrittenOrder: true}, SemiNaive{}} {
+		if _, err := ev.Eval(bg, q, baseFor(std(graph()))); err == nil || !strings.Contains(err.Error(), "comparison operand is unbound") {
+			t.Errorf("%T%v: err = %v, want the unbound comparison", ev, ev, err)
+		}
+	}
+	if err := Validate(q, std(graph())); err == nil || !strings.Contains(err.Error(), "comparison operand is unbound") {
+		t.Errorf("Validate: err = %v, want the unbound comparison", err)
+	}
+}
+
+// So is a goal comparing a variable no positive literal of the goal binds, whether or not a binding
+// ever reaches it: over an empty relation Naive answered nothing, while the planned SemiNaive copied
+// the comparison into a demand rule and refused it (#89). As a projected variable is, it is refused
+// for the query, not for the data. control: bound by the goal, the comparison runs.
+func TestAnUnboundGoalComparisonIsRefusedWhateverTheData(t *testing.T) {
+	q := mustParse(t, `r(?a, ?b) :- edge(?a, ?b), node("nowhere"); r(?a, ?b), ?c > 1 => ?a`)
+	for _, ev := range []Evaluator{Naive{}, SemiNaive{WrittenOrder: true}, SemiNaive{}} {
+		if _, err := ev.Eval(bg, q, baseFor(std(graph()))); err == nil || !strings.Contains(err.Error(), "comparison operand is unbound") {
+			t.Errorf("%T%v: err = %v, want the unbound comparison", ev, ev, err)
+		}
+	}
+	if err := Validate(q, std(graph())); err == nil || !strings.Contains(err.Error(), "comparison operand is unbound") {
+		t.Errorf("Validate: err = %v, want the unbound comparison", err)
+	}
+	if rows := eval(t, graph(), `weight(?n, ?c), ?c > 4 => ?n`); col(rows, "n") != "x" {
+		t.Errorf("control: weight over 4 = %s, want x", col(rows, "n"))
+	}
+}
+
+// A rule with _ in its head is refused: it derived nothing under Naive, whose head needs a value in
+// every place, while the demand rewrite read the _ as matching anything and answered (#89).
+func TestARuleHeadCannotHoldAWildcard(t *testing.T) {
+	err := evalErr(graph(), `r(?a, _) :- edge(?a, ?b); r("a", "b") => ?x`)
+	if err == nil || !strings.Contains(err.Error(), `rule "r" has _ in its head`) {
+		t.Errorf("err = %v, want the head wildcard refused", err)
+	}
+	if rows := eval(t, graph(), `r(?a, "k") :- edge(?a, ?b); r(?x, "k") => ?x`); col(rows, "x") != "a,b,c" {
+		t.Errorf("control: a constant in the head still derives: %s", col(rows, "x"))
+	}
+}

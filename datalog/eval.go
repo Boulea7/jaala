@@ -262,6 +262,9 @@ func evaluate(ctx context.Context, q Query, b *Base, opts []Option, rewrite func
 	if err := checkNoAggregates("the query", q.Goal); err != nil {
 		return nil, err
 	}
+	if err := checkComparisons(q.Goal); err != nil {
+		return nil, err
+	}
 	if rewrite != nil {
 		// The rules are checked as linked too, before the rewrite renames them, so an error names
 		// the program's relations rather than an adorned or factored one.
@@ -300,7 +303,7 @@ func evaluate(ctx context.Context, q Query, b *Base, opts []Option, rewrite func
 	}
 
 	var raw []*binding
-	err = solve(pos, 0, newBinding(), b, func(bnd *binding) error {
+	err = solve(deferComparisons(pos), 0, newBinding(), b, func(bnd *binding) error {
 		ok, err := passesNegations(bnd, negs, b)
 		if err != nil {
 			return err
@@ -585,6 +588,49 @@ func (b *binding) clone() *binding {
 //	                          bind ?v -> recurse i=2
 //	i=2 ?v < 30:              keep the binding iff ?v < 30, else prune
 //	i=3 (past the end):       emit the binding (its accumulated cites travel with it)
+//
+// deferComparisons moves each comparison to just after the first literal that leaves its operands
+// bound, so a body's comparisons hold wherever they are written: `?a = "a", edge(?a, ?b)` compares
+// once edge has bound ?a, in every evaluator, where solving it as written failed on an unbound ?a under
+// Naive and answered under the planned SemiNaive (#89). A body already in a solvable order, as every
+// planned one is, comes back unchanged. A comparison nothing binds stays at the end and fails there,
+// as it did; validateRule refuses one in a rule before any evaluator runs it. A comparison adds no
+// citations and its witness position travels with it, so moving one changes no answer.
+func deferComparisons(lits []Literal) []Literal {
+	bound := map[Var]bool{}
+	ready := func(c *Compare) bool {
+		for _, t := range []Term{c.Left, c.Right} {
+			if t.Var != "" && !bound[t.Var] {
+				return false
+			}
+		}
+		return true
+	}
+	out := make([]Literal, 0, len(lits))
+	var waiting []Literal
+	for _, lit := range lits {
+		if lit.Compare != nil && !ready(lit.Compare) {
+			waiting = append(waiting, lit)
+			continue
+		}
+		out = append(out, lit)
+		if lit.Pos == nil {
+			continue
+		}
+		bindAll(lit.Pos, bound)
+		still := waiting[:0]
+		for _, w := range waiting {
+			if ready(w.Compare) {
+				out = append(out, w)
+			} else {
+				still = append(still, w)
+			}
+		}
+		waiting = still
+	}
+	return append(out, waiting...)
+}
+
 func solve(lits []Literal, i int, bnd *binding, b *Base, emit func(*binding) error) error {
 	if i == len(lits) {
 		return emit(bnd)
