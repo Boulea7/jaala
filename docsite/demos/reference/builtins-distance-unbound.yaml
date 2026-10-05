@@ -1,0 +1,3 @@
+fixture: deps
+query: str.distance(?p, ?q, ?d) => ?p, ?q, ?d
+expect_error: "nothing binds what str.distance needs first"

@@ -142,6 +142,43 @@ func TestFilterNeedsBoundArguments(t *testing.T) {
 	}
 }
 
+// nets holds names that differ by one character (#77): PMIC_EN and PMIC_EM, SDA0 and SDAO.
+func nets() *ns.MemSource {
+	src := ns.NewMemSource().Declare("net", "name")
+	for _, n := range []string{"PMIC_EN", "PMIC_EM", "SDA0", "SDAO", "GND"} {
+		src.Add("net", ns.Tuple{Vals: []ns.Value{ns.S(n)}})
+	}
+	return src
+}
+
+func TestDistanceFindsNearDuplicateNames(t *testing.T) {
+	if rows := eval(t, nets(), `str.distance("PMIC_EN", "PMIC_EM", ?d) => ?d`); len(rows) != 1 || rows[0].Bind["d"].Num == nil || *rows[0].Bind["d"].Num != 1 {
+		t.Errorf("str.distance(PMIC_EN, PMIC_EM, ?d) = %v, want d = 1", rows)
+	}
+	near := `net(?a), net(?b), ?a < ?b, str.distance(?a, ?b, ?d), ?d <= 1 => ?a, ?b`
+	if rows := eval(t, nets(), near); col(rows, "a")+" / "+col(rows, "b") != "PMIC_EM,SDA0 / PMIC_EN,SDAO" {
+		t.Errorf("near pairs = %v, want PMIC_EM~PMIC_EN and SDA0~SDAO", rows)
+	}
+	// Written distance-first, the planner runs it once its strings are bound; Naive runs it as written
+	// and is refused rather than measuring two empty strings.
+	first := mustParse(t, `str.distance(?a, ?b, 1), net(?a), net(?b), ?a < ?b => ?a`)
+	if rows, err := (SemiNaive{}).Eval(bg, first, baseFor(std(nets()))); err != nil || col(rows, "a") != "PMIC_EM,SDA0" {
+		t.Errorf("planned distance-first = %v, %v, want PMIC_EM,SDA0", rows, err)
+	}
+	if _, err := (Naive{}).Eval(bg, first, baseFor(std(nets()))); err == nil || !strings.Contains(err.Error(), "str.distance needs both strings bound") {
+		t.Errorf("Naive distance-first err = %v, want str.distance refused as written", err)
+	}
+	for d, want := range map[string]string{"0": "PMIC_EN", "1": "PMIC_EM", "01": "PMIC_EM", "2": ""} {
+		if rows := eval(t, nets(), `net(?a), str.distance(?a, "PMIC_EN", `+d+`) => ?a`); col(rows, "a") != want {
+			t.Errorf("distance %s from PMIC_EN = %v, want %q", d, rows, want)
+		}
+	}
+	err := evalErr(nets(), `str.distance(?a, "GND", ?d) => ?a, ?d`)
+	if err == nil || !strings.Contains(err.Error(), "nothing binds what str.distance needs first") {
+		t.Errorf("err = %v, want str.distance refused for an unbound string", err)
+	}
+}
+
 // succ is a host generator over the Source it is handed: succ(?a, ?b) enumerates edges out of ?a
 // (or out of every node when ?a is unbound). It exercises the path a host's own graph walk takes.
 func succRegistry() *ns.Vocabulary {

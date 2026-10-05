@@ -421,7 +421,13 @@ An aggregate's variable has to be bound by the goal.
 
 `query: … calls …, and nothing binds what … needs first: it needs …`
 
-A host generator whose required inputs nothing in the body binds. Raised for a host's generators.
+A generator whose required inputs nothing in the body binds, such as `str.distance` with a string no relation gives a value, or a host's own generator.
+
+{{ demo "demos/errors/nothing-binds-what-needs-first.yaml" }}
+
+`query: str.distance needs both strings bound (a variable must appear in a relation before str.distance measures it)`
+
+The same mistake caught while running rather than before: an evaluator that runs a goal in the order it's written reached `str.distance` before its strings had values. The planned evaluator hosts use moves it after them, so it reports the error above instead.
 
 `query: cannot bind …: the goal does not use it`
 
