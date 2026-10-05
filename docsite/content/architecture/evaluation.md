@@ -25,7 +25,7 @@ Rules that read a relation under `not`, or reduce it in an aggregate, can only r
 
 ## The fixpoint
 
-`Naive` evaluates every rule of a stratum, in written order, again and again until a round derives nothing new. It's simple enough to trust, which is why it's the reference.
+`Naive` evaluates every rule of a stratum, in written order, again and again until a round derives nothing new. It's simple enough to trust, which is pretty much the whole reason we keep it as the reference.
 
 `SemiNaive` splits each stratum into strongly connected components (Tarjan's algorithm) and derives them in dependency order. A relation that doesn't read itself, even through others, is derived once. Inside a recursive component, each round runs a variant of each recursive rule in which one recursive literal reads only the previous round's new tuples, the delta. Each tuple is then joined against once, rather than once per round. When the delta is smaller than the literal the plan would start from, the round starts from the delta.
 

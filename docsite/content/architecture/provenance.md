@@ -5,7 +5,7 @@ prev: {url: "/jaala/architecture/rewrites/", title: "Rewrites"}
 next: {url: "/jaala/architecture/testing/", title: "Testing"}
 ---
 
-Every answer row carries evidence: the citations of the facts that produced it, and on request a witness tree. That evidence is why jaala's hosts can point at a net or a line of a file and say "because of this".
+Every answer row carries evidence: the citations of the facts that produced it, and on request a witness tree. That evidence is why jaala's hosts can point at a net or a line of a file and say "because of this", and it's mostly what makes an answer worth acting on.
 
 ## Citations
 
