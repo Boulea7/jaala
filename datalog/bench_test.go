@@ -62,6 +62,7 @@ var workloads = []workload{
 	{"netlist/uncovered-nets", func() ns.Source { return netlistOf(1, 2000, 600) }, testPoints + `tpc(?n, 0) => count(?n)`},
 	{"netlist/series-from-a-net", func() ns.Source { return netlistOf(1, 2000, 600) }, series + `along("n0", ?b) => ?b`},
 	{"netlist/series-reach-count", func() ns.Source { return netlistOf(1, 2000, 600) }, series + `along(?a, ?b) => ?a, count(?b)`},
+	{"netlist/probed-both", func() ns.Source { return probedBoard(400) }, probed + `probed_both(?r) => count(?r)`},
 }
 
 // binaryTree is a complete binary tree of the given depth as parent->child edges, t0 the root and

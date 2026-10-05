@@ -72,6 +72,9 @@ type evalRun struct {
 	budget  int64
 	used    int64
 	witness bool // record witnesses (see Witnesses)
+	// readErr is the first Source read the planner made that failed (see fanOut). Planning can't
+	// return an error, so evaluate reports it once the rewrite is done.
+	readErr error
 }
 
 // ctxCheckEvery is how many units of work pass between checks of the context. Checking on every
