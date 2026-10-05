@@ -53,6 +53,15 @@ go list -deps ./... | grep '\.' | grep -v '^github.com/panyam/jaala' | grep -v '
   context; a new loop over candidates must call it and return its error. Host code gets the context
   (`Gen`'s first argument, `ns.ContextSource`), and every emitted generator row counts as work. A
   Source read that fails is not cached.
+- **A `LookupSource` is asked, never read whole, for a call with an argument bound** (`lookup.go`,
+  #126), unless the Base already holds the relation whole or is `Unindexed`. What it returns lives on
+  `evalRun.looked`, never the Base, so a probed relation never accumulates there. Anything that sizes
+  a base relation (`fanOut`, `scanSize`) checks `looksUp` first and reports "unknown" rather than
+  reading it. The corpus runs every program over a `looking` wrapper too (`agreeLookingUp`).
+- **`Report.Cold` reruns the query when the Eval was warm** (`coldCost`, #147): it reused a derived
+  relation, or probed a held relation a fresh Base would have looked up. The rerun is a copy with no
+  derived cache, no work counter, a fresh `edb` when the Source looks up, and `o.cold` set so it can't
+  start another (a cold run that could reuse recursed forever under mutation).
 - **A rewrite that rebuilds a `Literal` must keep its `at`, and one that rebuilds a `Rule` its
   `text`.** They carry the written position and form a witness follows (`witness.go`); dropping
   either makes that literal vanish from explanations or shows a rule in its rewritten form, with no

@@ -64,6 +64,26 @@ type ContextSource interface {
 	TuplesContext(ctx context.Context, rel string) ([]Tuple, error)
 }
 
+// LookupSource is optionally implemented by a Source that answers a relation's facts matching some
+// bound arguments from its own index, such as a database table indexed on a column (#126). When a
+// Source implements it, the engine asks Lookup for the facts a call with at least one argument bound
+// needs, instead of reading the relation whole and indexing it in memory. bound maps argument
+// positions, from 0, to the values the call binds them to.
+//
+// Lookup may return facts that don't match, since the engine checks every one, but it must not leave
+// out one that does, or the answer silently loses it. Two values match when both carry a number and
+// the numbers are equal, so a bound N(1) matches a stored number spelled 1.0; when both are absent; or
+// otherwise when their text is equal. A source unsure how its index compares can return more.
+//
+// What Lookup returns is kept for the one Eval that asked, so a relation the queries only ever probe
+// is never held whole by the Base. A call with nothing bound still reads the relation whole, through
+// Tuples or TuplesContext, and the Base keeps that read and answers later calls from its own index.
+// Unindexed never calls Lookup. Each call counts one unit of work against the Eval's Budget, and a
+// failed call is wrapped with the relation's name and not kept.
+type LookupSource interface {
+	Lookup(ctx context.Context, rel string, bound map[int]Value) ([]Tuple, error)
+}
+
 // Versioned is optionally implemented by a Source whose facts can change while a Base over it is
 // kept. A Base caches what it reads, the base relations and their indexes and the derived relations a
 // query evaluated in full, on the promise that a Source's facts are fixed for the Base's life. Version

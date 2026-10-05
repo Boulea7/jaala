@@ -56,6 +56,8 @@ type Base struct {
 	work *int64
 	// noIndex sends every base-relation probe down the full scan. See Unindexed.
 	noIndex bool
+	// looker is the Source when it answers bound lookups itself (ns.LookupSource), else nil.
+	looker ns.LookupSource
 	// run is one Eval's own state (its context and budget), set on that Eval's copy of the Base and
 	// nil on a Base no Eval is running on.
 	run *evalRun
@@ -101,7 +103,8 @@ func NewBase(v *ns.Vocabulary, src ns.Source) (*Base, error) {
 	if len(problems) > 0 {
 		return nil, fmt.Errorf("query: %s", strings.Join(problems, "; "))
 	}
-	return &Base{src: src, reg: v, edb: newEDBCache(), derived: newDerivedCache(), work: new(int64)}, nil
+	looker, _ := src.(ns.LookupSource)
+	return &Base{src: src, reg: v, looker: looker, edb: newEDBCache(), derived: newDerivedCache(), work: new(int64)}, nil
 }
 
 // MustBase is NewBase for a Source known to match its vocabulary, such as a test fixture. It panics
@@ -220,6 +223,9 @@ func evaluate(ctx context.Context, q Query, b *Base, opts []Option, rewrite func
 	nb.run.explain = newExplainer(o.explain, &nb)
 	rows, err := evaluateOn(&nb, gen, q, o, rewrite, fixpoint)
 	nb.run.explain.finish(&nb, rows, err, o.budget)
+	if err == nil && !o.cold && nb.run.explain.warm(&nb) {
+		o.explain.Cold = coldCost(ctx, q, b, opts, rewrite, fixpoint)
+	}
 	return rows, err
 }
 

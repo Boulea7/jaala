@@ -1,6 +1,6 @@
 ---
 title: "Host options"
-description: "Bind, Budget, Explain and the context: how a Go host gives a query its values, caps its work, sees where the work went, and stops it."
+description: "Bind, Budget, Explain and the context: how a Go host gives a query its values, caps its work, sees where the work went, and stops it. Then sharing a base, and a source that looks facts up from its own index."
 prev: {url: "/jaala/guide/ordering/", title: "Ordering"}
 next: {url: "/jaala/guide/modules-and-vocabulary/", title: "Modules and the vocabulary"}
 ---
@@ -35,7 +35,9 @@ The report lists each derived relation the query reached, and whether it was eva
 
 It then shows the goal and each rule body in the order it actually ran, after jaala's rewrites, labelled with the rule as you wrote it. Every literal says how it was read (an index on which arguments, a scan, a generator or a filter), how often solving reached it, how many bindings it passed on, and how many candidates it examined. A literal reached thousands of times is usually the place to look.
 
-Last come the base relations it read, whether the `Base` already held them, and the indexes it probed, with whether this `Eval` built them.
+Last come the base relations it read, whether the `Base` already held them, and the indexes it probed, with whether this `Eval` built them. For a source that looks facts up (below), each relation also says how many lookups it took, the tuples they fetched, and how many calls were answered again from what an earlier lookup in the same `Eval` returned. `Report.Fetched` totals the tuples the source handed this `Eval`, and `Report.Lookups` the calls.
+
+`Work` is what the `Eval` spent, which is what a `Budget` caps, so it depends on what ran on the `Base` before: a query reusing a relation an earlier one kept costs less. `Report.Cold` is the same query's cost on a base that kept nothing, which doesn't move from run to run, so it's the number to compare two queries or plans by, or to suggest a budget from. When the query reused something, `Explain` finds it by running the query again on a copy of the base that keeps nothing. That run doesn't count toward `Base.Work`, but it does read the source again.
 
 The report is filled even when the `Eval` fails, so a query its `Budget` stopped still shows what spent the budget. Asking for it costs time in proportion to the rules and literals a query runs. Not asking costs nothing measurable, which is why it's off by default.
 
@@ -46,3 +48,9 @@ A `Base` pairs a vocabulary with one source's facts, and caches and indexes what
 It also keeps the derived relations a query evaluated in full, so the next query calling the same relation reads it instead of deriving it again ([#140](https://github.com/panyam/jaala/issues/140)). A library member that three workbook tabs all call is derived once. The key is the relation's rules and everything they read, so a query that sends its own definition of a relation derives its own. A relation derived only for the values one query asked about isn't kept, since it's partial. Only `SemiNaive` uses the cache, and not under `Witnesses`. `Base.LimitDerivedCache` sets how many derived tuples the base keeps (about a million by default, and 0 turns it off), dropping the relations used least recently first.
 
 All of this assumes the source's facts don't change while the base is kept. If yours can, have the source implement `ns.Versioned`, whose `Version` string changes whenever the facts do. Each `Eval` reads it first, and when it has moved, the base drops everything it cached and reads the source again. A host that changes facts in place without a version calls `Base.Forget` instead. A generator whose answers can change while the facts don't (one reading the clock, say) sets `Volatile` on its `ns.Builtin`, and no relation reading it is kept.
+
+## A source with its own index
+
+A source reads a relation whole: the first query touching `pin` loads every `pin` fact into the base. A source backed by a database or an on-disk index can do better by implementing `ns.LookupSource` ([#126](https://github.com/panyam/jaala/issues/126)). Then a call with an argument bound, such as `pin(?r, "GND")`, or one that demand bound for a derived relation's body, asks the source's `Lookup` for just the facts it needs. Lookup gets the bound positions and their values. It may return facts that don't match, since the engine checks each one, but it must not leave out one that does: a stored number matches a bound number of the same value however it's spelled, and anything else matches on its text.
+
+What a lookup returns is kept for the one `Eval` that asked, never by the `Base`, so a relation the queries only probe is never held whole. A call with nothing bound still reads the relation whole, and the base then keeps it and answers later bound calls from its own index. Each lookup counts one unit of work against the `Budget`, and a failed one stops the query with an error naming the relation and isn't kept. `Unindexed` never looks anything up, so it stays the oracle a host compares against. Since the planner can't size a relation it hasn't read, it orders those calls by how many arguments they bind.

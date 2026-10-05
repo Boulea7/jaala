@@ -245,7 +245,7 @@ func (v variant) pick(b *Base, delta int) (Rule, error) {
 
 // scanSize is how many tuples a body's first literal yields candidates from, with nothing bound yet
 // but its constants. A comparison or a host predicate has no size to compare a delta with, so it
-// counts as unbounded and the delta goes first.
+// counts as unbounded and the delta goes first, as does a relation the Source looks up.
 func scanSize(b *Base, lit Literal) (int, error) {
 	if lit.Pos == nil {
 		return math.MaxInt, nil
@@ -254,6 +254,9 @@ func scanSize(b *Base, lit Literal) (int, error) {
 		return math.MaxInt, nil
 	}
 	if _, ok := b.schemaOf(lit.Pos.Relation); ok {
+		if b.looksUp(lit.Pos.Relation) {
+			return math.MaxInt, nil // not read whole to size it
+		}
 		rows, err := b.edbTuples(lit.Pos.Relation)
 		if err != nil {
 			return 0, err

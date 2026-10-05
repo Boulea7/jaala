@@ -223,7 +223,7 @@ func planBody(b *Base, body Body, entry map[Var]bool) Body {
 
 // fanOut estimates how many tuples a base relation yields per call with the given arguments bound,
 // or -1 when it can't tell: a derived relation, which isn't derived yet when a body is planned, a
-// predicate, or a Base that doesn't index. Bound only by constants, it is the exact bucket the call
+// predicate, a Base that doesn't index, or a relation the Source looks up (ns.LookupSource). Bound only by constants, it is the exact bucket the call
 // reads; bound by a variable too, the relation's size over the buckets at those positions, the
 // average a call reads. It breaks ties between relations with as many arguments bound (#139): in
 // tt(?r, ?a) :- part(?r, "capacitor"), pin(?r, ?a) with ?a bound, the constant would scan every
@@ -232,8 +232,8 @@ func fanOut(b *Base, a *Atom, flags []bool) int {
 	if b.edb == nil || b.noIndex {
 		return -1
 	}
-	if _, ok := b.schemaOf(a.Relation); !ok {
-		return -1
+	if _, ok := b.schemaOf(a.Relation); !ok || b.looksUp(a.Relation) {
+		return -1 // a relation the Source looks up isn't read whole to estimate it
 	}
 	rows, err := b.edbTuples(a.Relation)
 	if err != nil {

@@ -1,6 +1,7 @@
 package datalog
 
 import (
+	"context"
 	"fmt"
 	"sort"
 	"strings"
@@ -31,6 +32,14 @@ type Report struct {
 	Elapsed time.Duration `json:"elapsed_ns"`
 	Rows    int           `json:"rows"`
 	Error   string        `json:"error,omitempty"`
+	// Lookups are the calls the Eval made to the Source's Lookup (ns.LookupSource), and Fetched the
+	// tuples the Source returned to this Eval: those lookups', and those of each relation it read whole
+	// that the Base didn't already hold.
+	Lookups int64 `json:"lookups,omitempty"`
+	Fetched int64 `json:"fetched,omitempty"`
+	// Cold is what the Eval would have cost on a Base that kept nothing from earlier queries. Unset
+	// when the Eval failed.
+	Cold *ColdReport `json:"cold,omitempty"`
 	// Goal is the goal's body as it ran, after any rewrite reordered it.
 	Goal *BodyReport `json:"goal,omitempty"`
 	// Rules are the rule bodies that ran, in the order they first did. A rewrite can run one rule as
@@ -41,6 +50,21 @@ type Report struct {
 	Relations []*RelationReport `json:"relations,omitempty"`
 	// Sources are the base relations the Eval read, by name.
 	Sources []*SourceReport `json:"sources,omitempty"`
+}
+
+// A ColdReport is an Eval's cost with nothing kept from earlier queries: no derived relation reused
+// (#140), and every relation it read whole counted as fetched. Unlike Report's Work, which depends on
+// what ran on the Base before, it is the same for one query over one Base however often it runs, so
+// it is the number to compare queries or plans by, or to suggest a budget from. When the Eval did reuse
+// something (or the Base held whole a relation the Source would otherwise have been asked to look up),
+// Explain finds it by running the query again on a copy of the Base that keeps nothing, which doesn't
+// count toward Base.Work but does read the Source again; otherwise it is Report's own numbers.
+type ColdReport struct {
+	Work    int64 `json:"work"`
+	Lookups int64 `json:"lookups,omitempty"`
+	Fetched int64 `json:"fetched,omitempty"`
+	// Error is why the cold run stopped, such as the Eval's Budget, when it did.
+	Error string `json:"error,omitempty"`
 }
 
 // A BodyReport is one body as it ran: a rule's, or the goal's.
@@ -67,7 +91,8 @@ type LiteralReport struct {
 	Literal string `json:"literal"`
 	// Access says how it was read, each way it was: "index (from)" for a base relation probed on its
 	// from argument, "scan", "derived index (to)", "derived scan", "generator", "filter",
-	// "comparison", or "not" over one of those.
+	// "comparison", "lookup (from)" for a call the Source looked up (ns.LookupSource), or "not" over
+	// one of those.
 	Access []string `json:"access,omitempty"`
 	// Reached is how often solving got to it, Passed how many bindings it passed on (for a `not`,
 	// the ones it let through), and Work the candidates it examined.
@@ -95,12 +120,18 @@ type RelationReport struct {
 // A SourceReport is one base relation the Eval read.
 type SourceReport struct {
 	Relation string `json:"relation"`
-	Tuples   int    `json:"tuples"`
+	// Tuples is the relation's size when the Eval read it whole, and 0 when it only looked it up.
+	Tuples int `json:"tuples"`
 	// Cached is true when the Base already held the relation's tuples from an earlier query, false
 	// when this Eval read them from the Source.
 	Cached  bool           `json:"cached"`
 	Scans   int64          `json:"scans,omitempty"` // reads of every tuple
 	Indexes []*IndexReport `json:"indexes,omitempty"`
+	// Lookups are the calls made to the Source's Lookup for it, Fetched the tuples they returned, and
+	// Hits the calls this Eval answered from what an earlier lookup of the same values returned.
+	Lookups int64 `json:"lookups,omitempty"`
+	Fetched int64 `json:"fetched,omitempty"`
+	Hits    int64 `json:"hits,omitempty"`
 }
 
 // An IndexReport is one index of a base relation the Eval probed.
@@ -255,10 +286,55 @@ func (e *explainer) finish(b *Base, rows []Row, err error, budget int64) {
 		r.Error = err.Error()
 	}
 	r.Rules = e.order
+	var cold int64
 	for _, rel := range sortedKeys(e.sources) {
-		r.Sources = append(r.Sources, e.sources[rel])
+		s := e.sources[rel]
+		r.Sources = append(r.Sources, s)
+		r.Lookups += s.Lookups
+		r.Fetched += s.Fetched
+		cold += s.Fetched + int64(s.Tuples)
+		if !s.Cached {
+			r.Fetched += int64(s.Tuples)
+		}
 	}
 	r.Relations = e.relations(b)
+	if err == nil {
+		r.Cold = &ColdReport{Work: r.Work, Lookups: r.Lookups, Fetched: cold}
+	}
+}
+
+// warm reports whether the Eval's cost depended on what the Base kept from earlier queries in a way
+// its own numbers can't undo: it reused a derived relation, or probed the index of a relation the Base
+// held whole, where a fresh Base would have asked the Source to look the call up.
+func (e *explainer) warm(b *Base) bool {
+	if len(e.held) > 0 {
+		return true
+	}
+	if b.looker == nil {
+		return false
+	}
+	for _, s := range e.sources {
+		if s.Cached && len(s.Indexes) > 0 {
+			return true
+		}
+	}
+	return false
+}
+
+// coldCost evaluates q again on a copy of b that keeps nothing: no derived relations, and when the
+// Source looks relations up, no base relations either. It doesn't count toward b's Work.
+func coldCost(ctx context.Context, q Query, b *Base, opts []Option, rewrite func(*Base, Query) Query, fixpoint func(*Base, []Rule) error) *ColdReport {
+	cold := *b
+	cold.derived, cold.work = nil, nil
+	if b.looker != nil {
+		cold.edb = newEDBCache()
+	}
+	var r Report
+	_, err := evaluate(ctx, q, &cold, append(opts[:len(opts):len(opts)], Explain(&r), func(o *evalOptions) { o.cold = true }), rewrite, fixpoint)
+	if err != nil {
+		return &ColdReport{Work: r.Work, Lookups: r.Lookups, Error: err.Error()}
+	}
+	return r.Cold
 }
 
 // relations reports each derived relation the goal reached, from the program as linked and what the
@@ -409,6 +485,20 @@ func (r *Report) String() string {
 	if r.Error != "" {
 		fmt.Fprintf(&sb, "error: %s\n", r.Error)
 	}
+	if r.Lookups > 0 || r.Fetched > 0 {
+		fmt.Fprintf(&sb, "fetched %d tuples from the source", r.Fetched)
+		if r.Lookups > 0 {
+			fmt.Fprintf(&sb, " in %d lookups", r.Lookups)
+		}
+		sb.WriteString("\n")
+	}
+	if c := r.Cold; c != nil && (c.Work != r.Work || c.Lookups != r.Lookups || c.Fetched != r.Fetched || c.Error != "") {
+		fmt.Fprintf(&sb, "cold: work %d, fetched %d tuples, %d lookups", c.Work, c.Fetched, c.Lookups)
+		if c.Error != "" {
+			fmt.Fprintf(&sb, ", error: %s", c.Error)
+		}
+		sb.WriteString("\n")
+	}
 	if len(r.Relations) > 0 {
 		sb.WriteString("\nrelations\n")
 		for _, rr := range r.Relations {
@@ -447,7 +537,17 @@ func (r *Report) String() string {
 			if s.Cached {
 				how = "cached"
 			}
-			fmt.Fprintf(&sb, "  %s: %d tuples, %s", s.Relation, s.Tuples, how)
+			if s.Tuples == 0 && s.Scans == 0 && len(s.Indexes) == 0 {
+				fmt.Fprintf(&sb, "  %s: looked up", s.Relation)
+			} else {
+				fmt.Fprintf(&sb, "  %s: %d tuples, %s", s.Relation, s.Tuples, how)
+			}
+			if s.Lookups > 0 || s.Hits > 0 {
+				fmt.Fprintf(&sb, ", %d lookups fetching %d tuples", s.Lookups, s.Fetched)
+				if s.Hits > 0 {
+					fmt.Fprintf(&sb, ", %d answered again from this query's", s.Hits)
+				}
+			}
 			if s.Scans > 0 {
 				fmt.Fprintf(&sb, ", %d scans", s.Scans)
 			}
@@ -499,6 +599,20 @@ func (b *Base) explainEDB(atom *Atom, rows []ns.Tuple, bnd *binding) {
 	on := maskLabels(b, atom.Relation, mask)
 	e.probe(atom.Relation, on, !e.cachedIndexes[idxKey{rel: atom.Relation, mask: mask}])
 	e.access("index (" + strings.Join(on, ", ") + ")")
+}
+
+// explainLookup records a call the Source looked up for atom: fetching tuples, or answered by an
+// earlier lookup of the same values when hit is set.
+func (b *Base) explainLookup(atom *Atom, mask patternMask, fetched int, hit bool) {
+	e := b.run.explain
+	s := e.readSource(atom.Relation, 0, false)
+	if hit {
+		s.Hits++
+	} else {
+		s.Lookups++
+		s.Fetched += int64(fetched)
+	}
+	e.access("lookup (" + strings.Join(maskLabels(b, atom.Relation, mask), ", ") + ")")
 }
 
 // explainIDB records how a derived relation is about to be read for atom.

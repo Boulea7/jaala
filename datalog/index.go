@@ -197,6 +197,19 @@ func (c *edbCache) tuples(ctx context.Context, rel string, src ns.Source) ([]ns.
 	return t, nil
 }
 
+// holds reports whether the cache holds rel's tuples whole. A relation another Eval is reading at this
+// moment counts as not held.
+func (c *edbCache) holds(rel string) bool {
+	c.mu.RLock()
+	r, ok := c.tup[rel]
+	c.mu.RUnlock()
+	if !ok || !r.mu.TryLock() {
+		return false
+	}
+	defer r.mu.Unlock()
+	return r.done
+}
+
 // held lists the relations whose tuples the cache holds, and the indexes it has built, for Explain.
 // A relation another Eval is reading at this moment counts as not held.
 func (c *edbCache) held() (map[string]bool, map[idxKey]bool) {

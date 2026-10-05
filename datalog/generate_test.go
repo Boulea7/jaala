@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"math/rand"
 	"os"
+	"reflect"
 	"regexp"
 	"slices"
 	"strconv"
@@ -557,10 +558,44 @@ func (c genCase) check() (genOutcome, string) {
 	if _, err := (Naive{}).Eval(bg, q, b, append(c.opts(), Budget(genBudget))...); errors.As(err, &over) {
 		return genSkipped, ""
 	}
-	if _, diff, _ := agree(q, b, c.opts()...); diff != "" {
+	want, diff, werr := agree(q, b, c.opts()...)
+	if diff != "" {
+		return genDisagreed, diff
+	}
+	if diff := agreeLookingUp(q, b, want, werr, c.opts()); diff != "" {
 		return genDisagreed, diff
 	}
 	return genAgreed, ""
+}
+
+// lookedUpPrograms counts the corpus programs whose evaluation made a lookup, for the corpus's control.
+var lookedUpPrograms int
+
+// agreeLookingUp runs q over b's facts through a Source answering lookups (#126): every evaluator must
+// give the rows and error Naive gave reading them whole, and Naive the same citations and witnesses
+// under CanonicalCites.
+func agreeLookingUp(q Query, b *Base, want []Row, werr error, opts []Option) string {
+	src := lookingAt(b.src)
+	lb := MustBase(b.reg, src)
+	for _, ev := range []Evaluator{Naive{}, SemiNaive{WrittenOrder: true}, SemiNaive{}} {
+		got, err := ev.Eval(bg, q, lb, opts...)
+		if errText(err) != errText(werr) || !reflect.DeepEqual(binds(got), binds(want)) {
+			return fmt.Sprintf("%T looking up answers differently from Naive reading whole on %v\n whole:     %v %v\n looked up: %v %v", ev, q, binds(want), werr, binds(got), err)
+		}
+	}
+	if len(src.lookups) > 0 {
+		lookedUpPrograms++
+	}
+	if werr != nil {
+		return ""
+	}
+	canon := append(opts[:len(opts):len(opts)], CanonicalCites())
+	w, _ := Naive{}.Eval(bg, q, b, canon...)
+	g, _ := Naive{}.Eval(bg, q, lb, canon...)
+	if !reflect.DeepEqual(w, g) {
+		return fmt.Sprintf("Naive looking up cites differently under CanonicalCites on %v\n whole:     %v\n looked up: %v", q, w, g)
+	}
+	return ""
 }
 
 // shrink drops rules, literals, goal clauses, edges and nodes one at a time while the case still
@@ -724,6 +759,7 @@ func TestGeneratedProgramsAgree(t *testing.T) {
 		first, seeds = int64(s), 1
 	}
 	compared, known, skipped, failed := map[string]int{}, map[int]int{}, 0, 0
+	lookedUpPrograms = 0
 	for seed := first; seed < first+int64(seeds); seed++ {
 		rnd := rand.New(rand.NewSource(seed))
 		facts := genGraph(rnd)
@@ -772,6 +808,9 @@ func TestGeneratedProgramsAgree(t *testing.T) {
 		seeds, strings.Join(counts, ", "), skipped, strings.Join(issues, ", "))
 	if seeds < 50 {
 		return
+	}
+	if lookedUpPrograms == 0 {
+		t.Errorf("control: no program made a lookup through a Source answering them")
 	}
 	for _, s := range shapes {
 		for _, mode := range []string{"plain", "witnessed"} {
