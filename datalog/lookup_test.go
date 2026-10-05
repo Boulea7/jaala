@@ -217,7 +217,7 @@ func TestALookupIsKeptForItsEvalOnly(t *testing.T) {
 	if lr := r.Goal.Literals[1]; fmt_(lr.Access) != "lookup (from)" {
 		t.Errorf("edge's access: %q", lr.Access)
 	}
-	if !strings.Contains(r.String(), "edge: looked up, 1 lookups fetching 1 tuples, 4 answered again") {
+	if !strings.Contains(r.String(), "edge: looked up, 1 lookups fetching 1 tuples, 4 answered from earlier lookups") {
 		t.Errorf("text:\n%s", r)
 	}
 	explained(t, Naive{}, q, b)

@@ -545,7 +545,7 @@ func (r *Report) String() string {
 			if s.Lookups > 0 || s.Hits > 0 {
 				fmt.Fprintf(&sb, ", %d lookups fetching %d tuples", s.Lookups, s.Fetched)
 				if s.Hits > 0 {
-					fmt.Fprintf(&sb, ", %d answered again from this query's", s.Hits)
+					fmt.Fprintf(&sb, ", %d answered from earlier lookups", s.Hits)
 				}
 			}
 			if s.Scans > 0 {
