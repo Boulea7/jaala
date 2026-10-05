@@ -59,7 +59,9 @@ const deltaSep = "\x00delta"
 // each round runs one variant per such atom, with that atom reading the delta and every other atom
 // reading the whole relation. A new tuple's derivation uses some fact of the component that was new
 // last round, at the latest, so one of the variants finds it; the fixpoint is reached when a round
-// adds nothing. Unless WrittenOrder is set, a variant starts from its
+// adds nothing. Round zero's rules run one after another, so a rule already read what the rules before
+// it added: round one's delta for its variants starts from what the component held when it ran (#149).
+// Under demand that is most of round one, a guarded rule having read the values its guard was given. Unless WrittenOrder is set, a variant starts from its
 // delta when the delta is the smaller side (see variant.pick).
 //
 // The delta is installed as an ordinary derived relation under a name no query can spell, so solving,
@@ -89,28 +91,30 @@ func (s SemiNaive) fixpoint(b *Base, byHead map[string][]Rule, comp []string) er
 	// The delta variants are made once per component: one per rule and recursive atom, in the
 	// planned order and, unless that already starts at the delta, a second one that does (see
 	// deltaFirst). Each round runs whichever starts from fewer tuples.
-	var variants []variant
+	var rules []Rule
 	for _, rel := range comp {
-		for _, r := range byHead[rel] {
-			for i, lit := range r.Body.Literals {
-				if lit.Pos == nil || !in[lit.Pos.Relation] {
-					continue
-				}
-				v := variant{reads: lit.Pos.Relation, rule: readingDelta(r, i)}
-				if !s.WrittenOrder && i > 0 {
-					first := deltaFirst(b, v.rule, i)
-					v.first = &first
-				}
-				variants = append(variants, v)
+		rules = append(rules, byHead[rel]...)
+	}
+	var variants []variant
+	for from, r := range rules {
+		for i, lit := range r.Body.Literals {
+			if lit.Pos == nil || !in[lit.Pos.Relation] {
+				continue
 			}
+			v := variant{from: from, reads: lit.Pos.Relation, rule: readingDelta(r, i)}
+			if !s.WrittenOrder && i > 0 {
+				first := deltaFirst(b, v.rule, i)
+				v.first = &first
+			}
+			variants = append(variants, v)
 		}
 	}
 	mark := marks(b, comp)
-	for _, rel := range comp {
-		for _, r := range byHead[rel] {
-			if err := derive(b, r); err != nil {
-				return err
-			}
+	ran := make([]roundMark, len(rules)) // what the component held as each rule began round zero
+	for i, r := range rules {
+		ran[i] = peekMark(b, comp)
+		if err := derive(b, r); err != nil {
+			return err
 		}
 	}
 	rounds := 1
@@ -125,18 +129,36 @@ func (s SemiNaive) fixpoint(b *Base, byHead map[string][]Rule, comp []string) er
 		return nil // not recursive: one pass derived everything
 	}
 	delta := since(b, comp, mark)
-	for len(delta) > 0 {
+	for first := true; len(delta) > 0; first = false {
 		rounds++
 		if err := b.run.done(); err != nil {
 			return err
 		}
-		installDeltas(b, comp, delta)
+		// Round one reads, for each variant, what was added after its rule ran in round zero.
+		var own [][]idbTuple
+		if first {
+			own = make([][]idbTuple, len(variants))
+			for i, v := range variants {
+				own[i] = since(b, []string{v.reads}, ran[v.from])[v.reads]
+			}
+		} else {
+			installDeltas(b, comp, delta)
+		}
 		mark = marks(b, comp)
-		for _, v := range variants {
-			if len(delta[v.reads]) == 0 {
+		installed := map[string]int{}
+		for i, v := range variants {
+			d := delta[v.reads]
+			if first {
+				d = own[i]
+				if from, ok := installed[v.reads]; len(d) > 0 && (!ok || from != v.from) {
+					installDelta(b, v.reads, d)
+					installed[v.reads] = v.from
+				}
+			}
+			if len(d) == 0 {
 				continue
 			}
-			r, err := v.pick(b, len(delta[v.reads]))
+			r, err := v.pick(b, len(d))
 			if err != nil {
 				return err
 			}
@@ -218,6 +240,7 @@ func components(stratum []string, byHead map[string][]Rule) [][]string {
 
 // A variant is a recursive rule with one same-stratum atom reading its relation's delta.
 type variant struct {
+	from  int    // the rule it varies, by its place in round zero
 	reads string // the relation whose delta it reads
 	rule  Rule   // in the planned order
 	first *Rule  // starting from the delta, when the planned order does not; nil under WrittenOrder
@@ -301,12 +324,29 @@ func derive(b *Base, r Rule) error {
 	return nil
 }
 
-// marks records how many tuples each relation of a stratum holds, so since can tell what a round added.
-func marks(b *Base, stratum []string) map[string]int {
-	m := make(map[string]int, len(stratum))
+// A roundMark is how many tuples each relation of a stratum held at some point, and how many of its
+// tuples had been listed as revised (see CanonicalCites), so since can tell what was added after.
+type roundMark struct {
+	n, revised map[string]int
+}
+
+// marks records how many tuples each relation of a stratum holds, so since can tell what a round
+// added, and starts the relations' revised lists over.
+func marks(b *Base, stratum []string) roundMark {
+	m := roundMark{n: make(map[string]int, len(stratum))}
 	for _, rel := range stratum {
-		m[rel] = len(b.idb[rel])
+		m.n[rel] = len(b.idb[rel])
 		delete(b.run.revised, rel)
+	}
+	return m
+}
+
+// peekMark is marks without starting the revised lists over, for a mark taken partway through a round.
+func peekMark(b *Base, stratum []string) roundMark {
+	m := roundMark{n: make(map[string]int, len(stratum)), revised: make(map[string]int, len(stratum))}
+	for _, rel := range stratum {
+		m.n[rel] = len(b.idb[rel])
+		m.revised[rel] = len(b.run.revised[rel])
 	}
 	return m
 }
@@ -315,15 +355,16 @@ func marks(b *Base, stratum []string) map[string]int {
 // A derived relation only ever grows by appending, so they are the tail of its slice. Under
 // CanonicalCites a tuple older than the mark that a later derivation replaced is new as well, so what
 // was derived from it is derived again.
-func since(b *Base, stratum []string, mark map[string]int) map[string][]idbTuple {
+func since(b *Base, stratum []string, mark roundMark) map[string][]idbTuple {
 	out := map[string][]idbTuple{}
 	for _, rel := range stratum {
-		if tuples := b.idb[rel]; len(tuples) > mark[rel] {
-			out[rel] = tuples[mark[rel]:]
+		n := mark.n[rel]
+		if tuples := b.idb[rel]; len(tuples) > n {
+			out[rel] = tuples[n:]
 		}
 		seen := map[int]bool{}
-		for _, i := range b.run.revised[rel] {
-			if i < mark[rel] && !seen[i] {
+		for _, i := range b.run.revised[rel][mark.revised[rel]:] {
+			if i < n && !seen[i] {
 				seen[i] = true
 				out[rel] = append(out[rel][:len(out[rel]):len(out[rel])], b.idb[rel][i])
 			}
@@ -336,12 +377,17 @@ func since(b *Base, stratum []string, mark map[string]int) map[string][]idbTuple
 // delta is replaced wholesale each round rather than appended to, so any index built over the last
 // one is dropped with it.
 func installDeltas(b *Base, stratum []string, delta map[string][]idbTuple) {
-	dropDeltas(b, stratum)
 	for _, rel := range stratum {
-		d := rel + deltaSep
-		b.idb[d] = append([]idbTuple(nil), delta[rel]...)
-		b.idbArity[d] = b.idbArity[rel]
+		installDelta(b, rel, delta[rel])
 	}
+}
+
+// installDelta makes delta readable as rel's delta, dropping the one before and its indexes.
+func installDelta(b *Base, rel string, delta []idbTuple) {
+	dropDeltas(b, []string{rel})
+	d := rel + deltaSep
+	b.idb[d] = append([]idbTuple(nil), delta...)
+	b.idbArity[d] = b.idbArity[rel]
 }
 
 // dropDeltas removes a stratum's delta relations and their indexes.
