@@ -27,7 +27,7 @@ A call to a relation with one rule, not recursive, is replaced by that rule's bo
 
 ## Demand (magic sets)
 
-A goal like `depends_on("p190", ?d)` only needs what `p190` reaches. The demand rewrite gives each called relation an adornment, a pattern of which arguments arrive bound (`bf` is bound, free), and derives the relation only for the values demanded. The first example above shows the effect: the same nine rows for under 1% of the work. A rule's body before a call is stored once in a supplementary relation, so it isn't joined twice ([#54](https://github.com/panyam/jaala/issues/54)). A right-linear recursion called from a constant is factored further, reduced to the set of nodes the walk visits, so a long chain costs linear work rather than quadratic.
+A goal like `depends_on("p190", ?d)` only needs what `p190` reaches. The demand rewrite gives each called relation an adornment, a pattern of which arguments arrive bound (`bf` is bound, free), and derives the relation only for the values demanded. In the first example above, that gives the same nine rows for under 1% of the work. A rule's body before a call is stored once in a supplementary relation, so it isn't joined twice ([#54](https://github.com/panyam/jaala/issues/54)). A right-linear recursion called from a constant is factored further, reduced to the set of nodes the walk visits, so a long chain costs linear work rather than quadratic.
 
 Demand stands aside:
 
