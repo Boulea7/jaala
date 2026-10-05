@@ -109,10 +109,10 @@ go list -deps ./... | grep '\.' | grep -v '^github.com/panyam/jaala' | grep -v '
   then the rewrites `unfold` → `magic` → `plan`, all off with `WrittenOrder`) must answer as it
   does. The test helpers
   (`eval`, `evalErr`, `evalReg`, `evalRegErr`) route through `both()`, which runs Naive,
-  `SemiNaive{WrittenOrder: true}` (same rows and errors; same citations too unless the program is
-  recursive, where rounds run in another order and a tuple reachable two ways may cite the other
-  path; #22 would make citations canonical) and the planned `SemiNaive{}` (same rows, and Naive's
-  error whenever it errors). A new evaluator or option belongs in `both()` too. `seminaive_test.go` adds a
+  `SemiNaive{WrittenOrder: true}` (same rows and errors) and the planned `SemiNaive{}` (same rows,
+  and Naive's error whenever it errors). A tuple reachable two ways keeps whichever derivation an
+  evaluator finds first, so plain citations aren't compared; `agree` then runs the query again under
+  `CanonicalCites()`, where all three must give the same rows, citations and witnesses (#22). A new evaluator or option belongs in `both()` too. `seminaive_test.go` adds a
   seeded random-graph corpus, and `plan_test.go` a clause-order shuffle property.
 - **The generated corpus (`generate_test.go`, #87) runs random programs through `agree`**, the
   comparison `both()` makes, without the panic. Each program runs plain and under `Witnesses()`, and a
@@ -123,16 +123,24 @@ go list -deps ./... | grep '\.' | grep -v '^github.com/panyam/jaala' | grep -v '
   hides), and so does a fixed bug, whose line then goes. A program is classified by its first
   disagreement, so a known one can mask another: #90 hid about a tenth of the planned comparisons
   until it was fixed.
-  Citations can differ without recursion too, when a relation's two rules reach one tuple at
-  different depths (#22), so the corpus counts a citation-only difference as #22. The planned
-  evaluator's rows are compared, never its citations. `./selfcheck.sh` runs the corpus at 5000
-  seeds (#86).
+  `./selfcheck.sh` runs the corpus at 5000 seeds (#86).
 - **Cost is checked against `testdata/work.golden`** (`bench_test.go`, #88): each workload's `Work()`
   under the planned SemiNaive must stay within 10% of its baseline, and its answer keep its row count.
   The corpus checks answers and can't see cost; the baseline is what catches a rewrite that stops
   paying off. Work that drops past 10% fails too, so an improvement lowers the baseline
   (`go test ./datalog -run TestWorkStaysWithinBaseline -update`), and a PR that moves it says why.
   The baseline records today's costs, bad ones included (#96, #97).
+- **`CanonicalCites()` keeps each tuple's shortest derivation** (`canonical.go`, #22): fewest rule
+  steps (a witness node's `height`), then the rule's written text, then the body nodes in written
+  order by relation, values and a leaf's citations. It records witnesses to compare (so `tagWritten`
+  runs whenever `witnessing()`; `Row.Witness` is cleared unless `Witnesses()` asked). On a duplicate,
+  `addTuple` calls `keepCanonical`, which replaces a later-first derivation, or an equal one whose
+  citations or derived children changed, and lists it in `run.revised`; `since` puts revised tuples
+  in the next delta and `Naive` loops on them, so a consumer shortens too. Shortest depth is the same
+  whatever the order, which is why size-of-citation-set (the issue's first idea) wasn't used: unions
+  don't compose, so a local minimum depends on order. It turns off inlining and factoring (as
+  Witnesses does) and supplementary relations, which merge derivations differing only in a `_`.
+  Answer rows sort their bindings by `compareBindings` before `dedupSort` keeps the first.
 - **Magic tuples carry no citations.** `magic.go` adds relations recording what a query demanded;
   `SemiNaive`'s `derive` clears their citations, or an answer would cite the facts that worked out
   someone else's demand. Two relations the rewrite adds are not demand and keep theirs on purpose:

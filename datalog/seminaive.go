@@ -293,17 +293,27 @@ func marks(b *Base, stratum []string) map[string]int {
 	m := make(map[string]int, len(stratum))
 	for _, rel := range stratum {
 		m[rel] = len(b.idb[rel])
+		delete(b.run.revised, rel)
 	}
 	return m
 }
 
 // since returns, per relation, the tuples added after mark, leaving out relations that gained none.
-// A derived relation only ever grows by appending, so they are the tail of its slice.
+// A derived relation only ever grows by appending, so they are the tail of its slice. Under
+// CanonicalCites a tuple older than the mark that a later derivation replaced is new as well, so what
+// was derived from it is derived again.
 func since(b *Base, stratum []string, mark map[string]int) map[string][]idbTuple {
 	out := map[string][]idbTuple{}
 	for _, rel := range stratum {
 		if tuples := b.idb[rel]; len(tuples) > mark[rel] {
 			out[rel] = tuples[mark[rel]:]
+		}
+		seen := map[int]bool{}
+		for _, i := range b.run.revised[rel] {
+			if i < mark[rel] && !seen[i] {
+				seen[i] = true
+				out[rel] = append(out[rel][:len(out[rel]):len(out[rel])], b.idb[rel][i])
+			}
 		}
 	}
 	return out

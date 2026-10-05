@@ -2,6 +2,7 @@ package datalog
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"github.com/panyam/jaala/ns"
 	"github.com/panyam/jaala/stdlib"
@@ -65,12 +66,12 @@ func baseFor(v *ns.Vocabulary) *Base { return MustBase(v, sources[v]) }
 // both answers q with the reference evaluator and with SemiNaive, and panics when they disagree, so
 // every test that evaluates through these helpers is also a differential test.
 //
-// SemiNaive in written order must match Naive's rows and errors exactly, and its citations too when
-// the program has no recursion. With recursion its rounds run in another order than Naive's, so a
-// tuple reachable two ways can keep the other derivation's citations: equally valid, and #22
-// (canonical citations) is what would make them equal again. Planned, it must give the same rows, and
-// Naive's error whenever it errors itself; it may succeed where Naive's written order stops on an
-// unbound check, which is what planning is for. It returns Naive's answer. opts go to every Eval.
+// SemiNaive in written order must match Naive's rows and errors exactly. Planned, it must give the
+// same rows, and Naive's error whenever it errors itself; it may succeed where Naive's written order
+// stops on an unbound check, which is what planning is for. A tuple reachable two ways keeps whichever
+// derivation an evaluator finds first, so citations are compared under CanonicalCites (#22), where all
+// three must give the same rows, citations and witnesses. It returns Naive's answer. opts go to every
+// Eval.
 func both(q Query, b *Base, opts ...Option) ([]Row, error) {
 	rows, diff, err := agree(q, b, opts...)
 	if diff != "" {
@@ -84,14 +85,7 @@ func both(q Query, b *Base, opts ...Option) ([]Row, error) {
 func agree(q Query, b *Base, opts ...Option) ([]Row, string, error) {
 	want, werr := Naive{}.Eval(bg, q, b, opts...)
 	got, gerr := SemiNaive{WrittenOrder: true}.Eval(bg, q, b, opts...)
-	same := reflect.DeepEqual(binds(want), binds(got))
-	if linked, err := Link(q, b.reg); err == nil && len(recursiveRelations(linked.Rules)) == 0 {
-		same = reflect.DeepEqual(want, got)
-	}
-	if fmt.Sprint(werr) == fmt.Sprint(gerr) && !same && reflect.DeepEqual(binds(want), binds(got)) {
-		return want, fmt.Sprintf("SemiNaive cites differently from Naive on %v\n naive:     %v\n seminaive: %v", q, want, got), werr
-	}
-	if fmt.Sprint(werr) != fmt.Sprint(gerr) || !same {
+	if fmt.Sprint(werr) != fmt.Sprint(gerr) || !reflect.DeepEqual(binds(want), binds(got)) {
 		return want, fmt.Sprintf("SemiNaive disagrees with Naive on %v\n naive:     %v %v\n seminaive: %v %v", q, want, werr, got, gerr), werr
 	}
 	planned, perr := SemiNaive{}.Eval(bg, q, b, opts...)
@@ -101,7 +95,38 @@ func agree(q Query, b *Base, opts ...Option) ([]Row, string, error) {
 	case perr == nil && werr == nil && !reflect.DeepEqual(binds(want), binds(planned)):
 		return want, fmt.Sprintf("planned SemiNaive answers differently on %v\n naive:   %v\n planned: %v", q, binds(want), binds(planned)), werr
 	}
+	if werr == nil {
+		return want, agreeCanonically(q, b, want, opts), nil
+	}
 	return want, "", werr
+}
+
+// agreeCanonically runs q under CanonicalCites through all three evaluators, which must give the
+// rows Naive gave without it, and the same citations and witnesses as one another (#22). A run the
+// extra comparisons push past its budget is not compared.
+func agreeCanonically(q Query, b *Base, want []Row, opts []Option) string {
+	opts = append(opts[:len(opts):len(opts)], CanonicalCites())
+	var got [3][]Row
+	for i, ev := range []Evaluator{Naive{}, SemiNaive{WrittenOrder: true}, SemiNaive{}} {
+		rows, err := ev.Eval(bg, q, b, opts...)
+		var over *BudgetExceeded
+		if errors.As(err, &over) {
+			return ""
+		}
+		if err != nil {
+			return fmt.Sprintf("%T fails under CanonicalCites on %v: %v", ev, q, err)
+		}
+		got[i] = rows
+	}
+	if !reflect.DeepEqual(binds(got[0]), binds(want)) {
+		return fmt.Sprintf("CanonicalCites changes Naive's rows on %v\n plain:     %v\n canonical: %v", q, binds(want), binds(got[0]))
+	}
+	for i, name := range []string{"", "SemiNaive", "planned SemiNaive"} {
+		if i > 0 && !reflect.DeepEqual(got[0], got[i]) {
+			return fmt.Sprintf("%s cites differently from Naive under CanonicalCites on %v\n naive: %v\n %s: %v", name, q, got[0], name, got[i])
+		}
+	}
+	return ""
 }
 
 // binds is an answer's rows without their citations.

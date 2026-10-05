@@ -17,7 +17,15 @@ A tuple keeps the citations of the derivation that found it first. When it can b
 {{ includeFileText "examples/architecture/provenance_test.go" }}
 ```
 
-Making citations canonical, the same whatever the evaluation order, is [#22](https://github.com/panyam/jaala/issues/22). Until then, jaala's tests require the same rows from every evaluator and treat a difference in citations alone as that issue.
+## Canonical citations
+
+`CanonicalCites()` makes the evidence the same whichever evaluator answers ([#22](https://github.com/panyam/jaala/issues/22)). Each tuple keeps its shortest derivation, the one with the fewest rule steps above the facts, which is also the easiest to check by hand. When two are equally short, it keeps the one whose rule comes first by its written text, and then the one whose body facts come first by value, in the order they're written. The shortest derivation comes out the same however it's found, and the tie-breaks only read what was derived, so every evaluator lands on the same one:
+
+```go
+{{ includeFileText "examples/architecture/canonical_test.go" }}
+```
+
+It costs a bit. A tuple derived again is compared with the one kept rather than dropped, and when a later round finds a shorter derivation, whatever was derived from the tuple is derived again, so that shortens too. It also keeps the planned evaluator from inlining, factoring and storing body prefixes, which would change the steps it counts or merge derivations it has to tell apart. On jaala's baselines that's about the same work for a closure, and half as much again for a points-to analysis, with up to four times the memory, since it records each tuple's derivation to compare them. A host that needs stable evidence, for goldens or for a review someone signs off, turns it on, and one that only needs answers can leave it off. With `Witnesses()` as well, the witness is the canonical derivation too. jaala's tests run every query under it and require the same rows, citations and witnesses from all three evaluators.
 
 ## What the rewrites do to citations
 

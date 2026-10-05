@@ -697,16 +697,7 @@ var knownDisagreements = []struct {
 	issue int
 	match *regexp.Regexp
 	repro genCase // a case that disagrees this way, so a wrong pattern or a fixed bug shows
-}{
-	{22, regexp.MustCompile(`^SemiNaive cites differently`), genCase{prog: genProgram{
-		rules: []genRule{
-			{head: "r2", args: []string{"?a", "?a"}, body: []genLit{{rel: "r3", args: []string{"?a"}}}},
-			{head: "r2", args: []string{"?b", "?b"}, body: []genLit{{rel: "edge", args: []string{"?c", "?b"}}}},
-			{head: "r3", args: []string{"?d"}, body: []genLit{{rel: "edge", args: []string{"?d", "?e"}}}},
-		},
-		goal: genGoal{body: []genLit{{rel: "r2", args: []string{"?x", "?y"}}}, sel: []string{"?y"}},
-	}, facts: genFacts{n: 4, weights: []int{5, 8, 9, 5}, edges: [][2]int{{2, 1}, {3, 2}}}}},
-}
+}{}
 
 func knownDisagreement(diff string) int {
 	for _, k := range knownDisagreements {

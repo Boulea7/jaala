@@ -13,9 +13,10 @@ import (
 type Option func(*evalOptions)
 
 type evalOptions struct {
-	bind    map[Var][]ns.Value
-	budget  int64
-	witness bool
+	bind      map[Var][]ns.Value
+	budget    int64
+	witness   bool
+	canonical bool
 }
 
 // Bind gives goal variables values from the host, so a parameterized query needs no program text built
@@ -72,6 +73,10 @@ type evalRun struct {
 	budget  int64
 	used    int64
 	witness bool // record witnesses (see Witnesses)
+	// canonical keeps each tuple's canonical derivation (see CanonicalCites), and revised lists, by
+	// relation, the tuples a later derivation replaced since the last semi-naive mark.
+	canonical bool
+	revised   map[string][]int
 }
 
 // ctxCheckEvery is how many units of work pass between checks of the context. Checking on every

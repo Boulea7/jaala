@@ -36,6 +36,7 @@ type workload struct {
 	name  string
 	src   func() ns.Source
 	query string
+	opts  []Option
 }
 
 const (
@@ -50,18 +51,23 @@ const (
 )
 
 var workloads = []workload{
-	{"closure/chain", func() ns.Source { return chainOf(150) }, closure + `reach(?a, ?b) => ?a, ?b`},
-	{"closure/reversed", func() ns.Source { return reversedLine(150) }, closure + `reach(?a, ?b) => ?a, ?b`},
-	{"closure/reversed-from-start", func() ns.Source { return reversedLine(400) }, closure + `reach("v0", ?b) => ?b`},
-	{"closure/reversed-to-end", func() ns.Source { return reversedLine(400) }, closure + `reach(?a, "v399") => ?a`},
-	{"same-generation/tree", func() ns.Source { return binaryTree(7) }, sameGen + `sg(?x, ?y) => ?x, ?y`},
-	{"same-generation/tree-bound", func() ns.Source { return binaryTree(9) }, sameGen + `sg("t300", ?y) => ?y`},
-	{"points-to", func() ns.Source { return pointerProgram(1) }, pointsTo + `pt(?v, ?o) => ?v, ?o`},
-	{"points-to/one-variable", func() ns.Source { return pointerProgram(1) }, pointsTo + `pt("p7", ?o) => ?o`},
-	{"netlist/test-point-counts", func() ns.Source { return netlistOf(1, 2000, 600) }, testPoints + `tpc(?n, ?c) => ?n, ?c`},
-	{"netlist/uncovered-nets", func() ns.Source { return netlistOf(1, 2000, 600) }, testPoints + `tpc(?n, 0) => count(?n)`},
-	{"netlist/series-from-a-net", func() ns.Source { return netlistOf(1, 2000, 600) }, series + `along("n0", ?b) => ?b`},
-	{"netlist/series-reach-count", func() ns.Source { return netlistOf(1, 2000, 600) }, series + `along(?a, ?b) => ?a, count(?b)`},
+	{"closure/chain", func() ns.Source { return chainOf(150) }, closure + `reach(?a, ?b) => ?a, ?b`, nil},
+	{"closure/reversed", func() ns.Source { return reversedLine(150) }, closure + `reach(?a, ?b) => ?a, ?b`, nil},
+	{"closure/reversed-from-start", func() ns.Source { return reversedLine(400) }, closure + `reach("v0", ?b) => ?b`, nil},
+	{"closure/reversed-to-end", func() ns.Source { return reversedLine(400) }, closure + `reach(?a, "v399") => ?a`, nil},
+	{"same-generation/tree", func() ns.Source { return binaryTree(7) }, sameGen + `sg(?x, ?y) => ?x, ?y`, nil},
+	{"same-generation/tree-bound", func() ns.Source { return binaryTree(9) }, sameGen + `sg("t300", ?y) => ?y`, nil},
+	{"points-to", func() ns.Source { return pointerProgram(1) }, pointsTo + `pt(?v, ?o) => ?v, ?o`, nil},
+	{"points-to/one-variable", func() ns.Source { return pointerProgram(1) }, pointsTo + `pt("p7", ?o) => ?o`, nil},
+	{"netlist/test-point-counts", func() ns.Source { return netlistOf(1, 2000, 600) }, testPoints + `tpc(?n, ?c) => ?n, ?c`, nil},
+	{"netlist/uncovered-nets", func() ns.Source { return netlistOf(1, 2000, 600) }, testPoints + `tpc(?n, 0) => count(?n)`, nil},
+	{"netlist/series-from-a-net", func() ns.Source { return netlistOf(1, 2000, 600) }, series + `along("n0", ?b) => ?b`, nil},
+	{"netlist/series-reach-count", func() ns.Source { return netlistOf(1, 2000, 600) }, series + `along(?a, ?b) => ?a, count(?b)`, nil},
+	// CanonicalCites (#22) compares every rederivation and derives again from what it shortens.
+	{"canonical/closure-chain", func() ns.Source { return chainOf(150) }, closure + `reach(?a, ?b) => ?a, ?b`, []Option{CanonicalCites()}},
+	{"canonical/closure-reversed-from-start", func() ns.Source { return reversedLine(400) }, closure + `reach("v0", ?b) => ?b`, []Option{CanonicalCites()}},
+	{"canonical/same-generation-tree", func() ns.Source { return binaryTree(7) }, sameGen + `sg(?x, ?y) => ?x, ?y`, []Option{CanonicalCites()}},
+	{"canonical/points-to-one-variable", func() ns.Source { return pointerProgram(1) }, pointsTo + `pt("p7", ?o) => ?o`, []Option{CanonicalCites()}},
 }
 
 // binaryTree is a complete binary tree of the given depth as parent->child edges, t0 the root and
@@ -139,7 +145,7 @@ func (w workload) measure(t testing.TB, ev Evaluator) (int64, int) {
 	if err != nil {
 		t.Fatalf("%s: %v", w.name, err)
 	}
-	rows, err := ev.Eval(bg, q, b)
+	rows, err := ev.Eval(bg, q, b, w.opts...)
 	if err != nil {
 		t.Fatalf("%s: %v", w.name, err)
 	}
@@ -243,8 +249,8 @@ func TestWorkStaysWithinBaseline(t *testing.T) {
 // size where fixed costs hide the fixpoint's.
 func TestWorkloadsAreBigEnoughToShowGrowth(t *testing.T) {
 	q := closure + `reach(?a, ?b) => ?a, ?b`
-	small, _ := workload{"", func() ns.Source { return chainOf(75) }, q}.measure(t, SemiNaive{})
-	big, _ := workload{"", func() ns.Source { return chainOf(150) }, q}.measure(t, SemiNaive{})
+	small, _ := workload{"", func() ns.Source { return chainOf(75) }, q, nil}.measure(t, SemiNaive{})
+	big, _ := workload{"", func() ns.Source { return chainOf(150) }, q, nil}.measure(t, SemiNaive{})
 	if ratio := float64(big) / float64(small); ratio < 3 {
 		t.Errorf("doubling the chain grew the closure's work %.1fx, want at least 3x", ratio)
 	}
@@ -259,7 +265,7 @@ func BenchmarkWorkloads(b *testing.B) {
 		v := std(w.src())
 		b.Run(w.name, func(b *testing.B) {
 			for i := 0; i < b.N; i++ {
-				if _, err := (SemiNaive{}).Eval(bg, q, baseFor(v)); err != nil {
+				if _, err := (SemiNaive{}).Eval(bg, q, baseFor(v), w.opts...); err != nil {
 					b.Fatal(err)
 				}
 			}
