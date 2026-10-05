@@ -63,7 +63,9 @@ import (
 // Magic tuples record what was asked, not what produced an answer, so their citations must not reach
 // an answer: SemiNaive's fixpoint derives them without citations (see SemiNaive.materialize). A
 // supplementary tuple is a prefix's result, so it keeps its citations, and under Witnesses the
-// witnesses of the literals it stands for (see idbTuple.parts).
+// witnesses of the literals it stands for (see idbTuple.parts). Under CanonicalCites there are none: a
+// supplementary relation is a set over the prefix's variables, so two derivations differing only in a
+// `_` would be stored as one, and the one kept would not be the one Naive's full comparison keeps.
 func magic(b *Base, q Query) Query {
 	for _, intoNeg := range []bool{true, false} {
 		out := magicWith(b, q, intoNeg)
@@ -109,7 +111,7 @@ func magicWith(b *Base, q Query, intoNeg bool) Query {
 	}
 	// A supplementary relation is a set, so the goal keeps its own prefix when an aggregate counts
 	// its bindings (see countsBindings).
-	supply := !countsBindings(out.Select, q.Having)
+	supply := !countsBindings(out.Select, q.Having) && !b.canonical()
 	out.Goal = Body{Literals: m.body(nil, planGoal(b, q.Goal).Literals, nil, supply)}
 	m.drain()
 	originals := make([]Rule, len(q.Rules))
@@ -421,7 +423,7 @@ func (m *magician) adornRules(rel, adorn string) {
 		guard := &Atom{Relation: magicName(rel, adorn), Args: demanded}
 		m.rules = append(m.rules, Rule{
 			Head:      Atom{Relation: adornedName(rel, adorn), Args: r.Head.Args},
-			Body:      Body{Literals: m.body(guard, planBody(m.b, r.Body, entry).Literals, entry, true)},
+			Body:      Body{Literals: m.body(guard, planBody(m.b, r.Body, entry).Literals, entry, !m.b.canonical())},
 			Hops:      r.Hops,
 			HeadTypes: r.HeadTypes,
 			text:      r.text,

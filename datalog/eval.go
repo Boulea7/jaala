@@ -213,7 +213,7 @@ func evaluate(ctx context.Context, q Query, b *Base, opts []Option, rewrite func
 	// are its own, while the Source's tuples and their indexes stay shared (see Base).
 	gen := b.refresh()
 	nb := *b
-	nb.run = &evalRun{ctx: ctx, budget: o.budget, witness: o.witness}
+	nb.run = &evalRun{ctx: ctx, budget: o.budget, witness: o.witness || o.canonical, canonical: o.canonical}
 	b = &nb
 	if err := b.run.done(); err != nil {
 		return nil, err
@@ -237,7 +237,7 @@ func evaluate(ctx context.Context, q Query, b *Base, opts []Option, rewrite func
 	if q, err = coerceConstants(q, b.reg); err != nil {
 		return nil, err
 	}
-	if o.witness {
+	if b.witnessing() {
 		q = tagWritten(q)
 	}
 	if err := checkWrittenAnchors(written.Goal, q.Rules, o.bind); err != nil {
@@ -315,6 +315,11 @@ func evaluate(ctx context.Context, q Query, b *Base, opts []Option, rewrite func
 	if err != nil {
 		return nil, err
 	}
+	if b.canonical() {
+		// Bindings that project to one row keep the first one's citations (dedupSort is stable), so
+		// under CanonicalCites they arrive in the order of their derivations (see compareBindings).
+		sort.SliceStable(raw, func(i, j int) bool { return compareBindings(raw[i], raw[j]) < 0 })
+	}
 	var rows []Row
 	if hasAggregate(sel) || len(q.Having) > 0 {
 		if rows, err = aggregate(sel, q.Having, raw); err != nil {
@@ -328,6 +333,11 @@ func evaluate(ctx context.Context, q Query, b *Base, opts []Option, rewrite func
 			for _, r := range rows {
 				r.Bind[c.Var] = vals[0]
 			}
+		}
+	}
+	if !o.witness {
+		for i := range rows {
+			rows[i].Witness = nil // recorded only to compare derivations (see CanonicalCites)
 		}
 	}
 	orderRows(rows, written.OrderBy)

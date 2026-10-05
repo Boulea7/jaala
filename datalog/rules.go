@@ -239,8 +239,7 @@ func (b *Base) applyRule(r Rule) (bool, error) {
 			if text == "" {
 				text = r.String()
 			}
-			t.wit = &Witness{Relation: shownName(r.Head.Relation), Values: vals, Rule: text,
-				Children: inWrittenOrder(append(bnd.wit[:len(bnd.wit):len(bnd.wit)], b.negationWitnesses(negs, bnd)...))}
+			t.wit = derivedNode(r.Head.Relation, vals, text, inWrittenOrder(append(bnd.wit[:len(bnd.wit):len(bnd.wit)], b.negationWitnesses(negs, bnd)...)))
 		}
 		fresh, err := b.addTuple(r.Head.Relation, t)
 		if err != nil {
@@ -296,7 +295,7 @@ func (b *Base) applyAggregate(r Rule, pos, negs []Literal) (bool, error) {
 			if text == "" {
 				text = r.String()
 			}
-			t.wit = &Witness{Relation: shownName(r.Head.Relation), Values: vals, Rule: text}
+			t.wit = derivedNode(r.Head.Relation, vals, text, nil)
 		}
 		fresh, err := b.addTuple(r.Head.Relation, t)
 		if err != nil {
@@ -309,7 +308,8 @@ func (b *Base) applyAggregate(r Rule, pos, negs []Literal) (bool, error) {
 
 // addTuple appends a derived tuple to its relation unless an equal-valued one is already present
 // (set semantics — datalog facts have value identity). The first derivation's cites are kept, so
-// provenance is deterministic under the fixpoint's fixed rule and tuple order.
+// provenance is deterministic under the fixpoint's fixed rule and tuple order, unless the Eval keeps
+// canonical derivations (see keepCanonical), when it reports a replaced derivation as a change too.
 //
 // The membership test is a bucket lookup rather than a scan of the relation. It used to
 // be linear, so deriving n tuples cost O(n^2) before any join work: a transitive closure over a
@@ -325,6 +325,9 @@ func (b *Base) addTuple(rel string, t idbTuple) (bool, error) {
 				return false, err
 			}
 			if valsEqual(tuples[i].vals, t.vals) {
+				if b.canonical() && (t.wit != nil || t.parts != nil) {
+					return b.keepCanonical(rel, i, t), nil
+				}
 				return false, nil
 			}
 		}

@@ -8,7 +8,7 @@ jaala's hosts trust its answers enough to act on them, so we test most answers a
 
 ## Every query, three ways
 
-Every test that evaluates a query runs it through `Naive`, `SemiNaive{WrittenOrder: true}` and the planned `SemiNaive{}`, and fails if they disagree. Written order has to match Naive's rows and errors exactly, and its citations wherever the program can't derive a tuple two ways. The planned evaluator has to match Naive's rows, and give Naive's error whenever it fails. So a new optimisation is tested by every test that already exists, the moment it lands.
+Every test that evaluates a query runs it through `Naive`, `SemiNaive{WrittenOrder: true}` and the planned `SemiNaive{}`, and fails if they disagree. Written order has to match Naive's rows and errors exactly. The planned evaluator has to match Naive's rows, and give Naive's error whenever it fails. Each query runs again under `CanonicalCites()`, where all three have to give the same rows, citations and witnesses ([provenance]({{.Site.PathPrefix}}/architecture/provenance/#canonical-citations)). So a new optimisation is tested by every test that already exists, the moment it lands.
 
 ## Generated programs
 
@@ -16,7 +16,7 @@ Hand-written tests only reach the shapes their authors thought of. A generator w
 
 ## Work baselines
 
-Answers being right says nothing about cost. Twelve workloads (closures, same-generation, a points-to analysis, a netlist the size of an agni board) record the work the planned evaluator does, and a test fails when any of them moves more than 10% either way ([#88](https://github.com/panyam/jaala/issues/88)). Work is counted, not timed, so it's the same on every run and on every machine. The baselines found two costs worth fixing as soon as they existed ([#96](https://github.com/panyam/jaala/issues/96), [#97](https://github.com/panyam/jaala/issues/97)).
+Answers being right says nothing about cost. Sixteen workloads (closures, same-generation, a points-to analysis, a netlist the size of an agni board, and four of those again under `CanonicalCites()`) record the work the planned evaluator does, and a test fails when any of them moves more than 10% either way ([#88](https://github.com/panyam/jaala/issues/88)). Work is counted, not timed, so it's the same on every run and on every machine. The baselines found two costs worth fixing as soon as they existed ([#96](https://github.com/panyam/jaala/issues/96), [#97](https://github.com/panyam/jaala/issues/97)).
 
 ## The docs
 

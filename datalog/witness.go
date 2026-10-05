@@ -32,6 +32,8 @@ type Witness struct {
 	// generators, filters and negations; not comparisons), in the order the rule is WRITTEN, whatever
 	// order it was evaluated in.
 	Children []*Witness
+	// height is the number of rule steps above the facts, which CanonicalCites keeps shortest.
+	height int
 }
 
 // Witnesses asks an Eval to record how each answer was derived, in Row.Witness. Recording keeps the
