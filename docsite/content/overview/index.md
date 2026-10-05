@@ -7,7 +7,7 @@ jaala is a Datalog engine for graph-shaped data. A host program, written in Go, 
 
 ## A query
 
-Here's a reachability question over a directed graph. The two rules define `reach`, and the line after `=>` is the goal: everything `a` reaches.
+Here's a reachability question over a directed graph, the [`graph`]({{ datasetURL "graph" }}) dataset. The two rules define `reach`, and the line after `=>` is the goal: everything `a` reaches.
 
 {{ demo "demos/overview/reach.yaml" }}
 

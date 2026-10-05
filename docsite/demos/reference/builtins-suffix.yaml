@@ -1,0 +1,3 @@
+fixture: deps
+query: test(?t, ?p), str.suffix(?t, "_test") => ?t
+expect: [[api_test], [auth_test], [db_test], [util_test]]

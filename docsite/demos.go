@@ -114,7 +114,7 @@ func editableSpec(s demo.Spec) string {
 func factsCaption(s demo.Spec) string {
 	var parts []string
 	if s.Fixture != "" {
-		parts = append(parts, `Facts: the <code>`+html.EscapeString(s.Fixture)+`</code> fixture`)
+		parts = append(parts, `Facts: the <a href="`+datasetURL(s.Fixture)+`"><code>`+html.EscapeString(s.Fixture)+`</code></a> dataset`)
 	}
 	if strings.TrimSpace(s.Facts) != "" {
 		facts := strings.TrimSpace(s.Facts)

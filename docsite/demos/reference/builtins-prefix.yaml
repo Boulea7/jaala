@@ -1,0 +1,3 @@
+fixture: deps
+query: package(?p), str.prefix(?p, "a") => ?p
+expect: [[api], [app], [auth]]

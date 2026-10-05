@@ -1,6 +1,11 @@
 # A small Go-style service: its packages, what each imports, its
 # tests, who owns each package, and how many lines each has.
 # cache and config import each other.
+#: package(name)
+#: imports(from, to)
+#: test(name, pkg)
+#: owner(pkg, team)
+#: loc(pkg, lines)
 package("app"); package("api"); package("auth"); package("db")
 package("cache"); package("config"); package("log")
 package("metrics"); package("util"); package("legacy")

@@ -76,13 +76,17 @@ func Run(s Spec) (Table, error) {
 	}
 	src := ns.NewMemSource()
 	arity := map[string]int{}
+	named := labels(text)
 	for _, f := range facts {
 		if n, ok := arity[f.Relation]; !ok {
-			labels := make([]string, len(f.Args))
-			for i := range labels {
-				labels[i] = fmt.Sprintf("arg%d", i+1)
+			cols := named[f.Relation]
+			if len(cols) != len(f.Args) {
+				cols = make([]string, len(f.Args))
+				for i := range cols {
+					cols[i] = fmt.Sprintf("arg%d", i+1)
+				}
 			}
-			src.Declare(f.Relation, labels...)
+			src.Declare(f.Relation, cols...)
 			arity[f.Relation] = len(f.Args)
 		} else if n != len(f.Args) {
 			return Table{}, fmt.Errorf("demo: %s has %d arguments here and %d before", f.Text, len(f.Args), n)

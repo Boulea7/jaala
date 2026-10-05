@@ -1,0 +1,3 @@
+fixture: deps
+query: str.contains(?p, "a") => ?p
+expect_error: "str.contains needs all arguments bound"
