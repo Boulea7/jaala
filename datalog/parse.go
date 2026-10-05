@@ -409,7 +409,7 @@ func parseHead(s string) (Atom, []ns.ArgType, error) {
 	declared := false
 	for _, a := range splitTop(inner, ",") {
 		if strings.TrimSpace(a) == "" {
-			continue
+			return Atom{}, nil, fmt.Errorf("query: empty term")
 		}
 		var t ns.ArgType
 		if parts := splitTop(a, ":"); len(parts) == 2 {
@@ -457,20 +457,20 @@ func splitProjection(s string) (body, proj string, err error) {
 }
 
 func parseLiterals(body string) ([]Literal, error) {
+	if strings.TrimSpace(body) == "" {
+		return nil, fmt.Errorf("query: empty query")
+	}
 	var lits []Literal
 	for _, piece := range splitTop(body, ",") {
 		piece = strings.TrimSpace(piece)
 		if piece == "" {
-			continue
+			return nil, fmt.Errorf("query: empty literal")
 		}
 		lit, err := parseLiteral(piece)
 		if err != nil {
 			return nil, err
 		}
 		lits = append(lits, lit)
-	}
-	if len(lits) == 0 {
-		return nil, fmt.Errorf("query: empty query")
 	}
 	return lits, nil
 }
@@ -522,11 +522,11 @@ func parseAtomArgs(s string, term func(string) (Term, error)) (Atom, error) {
 	}
 	inner := strings.TrimSpace(s)
 	inner = inner[open+1 : len(inner)-1]
+	if strings.TrimSpace(inner) == "" {
+		return Atom{Relation: rel}, nil
+	}
 	var args []Term
 	for _, a := range splitTop(inner, ",") {
-		if strings.TrimSpace(a) == "" {
-			continue
-		}
 		t, err := term(a)
 		if err != nil {
 			return Atom{}, err

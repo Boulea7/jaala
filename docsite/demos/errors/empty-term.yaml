@@ -1,0 +1,3 @@
+fixture: "deps"
+query: "imports(?a,,?b) => ?a, ?b"
+expect_error: "query: empty term"

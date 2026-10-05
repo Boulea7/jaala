@@ -63,7 +63,17 @@ A literal is an atom, a negated atom or a comparison.
 
 `query: empty term`
 
-An argument with nothing in it. Today the parser drops empty arguments before this check can fire ([#129](https://github.com/panyam/jaala/issues/129)).
+An argument has nothing before, between or after commas.
+
+{{ demo "demos/errors/empty-term.yaml" }}
+
+`query: empty literal`
+
+A comma has no literal on one side. The same error can arise from an empty literal in a query built in Go.
+
+{{ demo "demos/errors/empty-literal.yaml" }}
+
+Earlier versions skipped empty arguments and literals and ran the remaining query. We now refuse these queries. Remove the extra comma; a zero-argument call such as `flag()` stays valid.
 
 `query: empty variable name`
 
@@ -544,10 +554,6 @@ Should never happen. If you see it, it's a bug in jaala; please report it.
 `query: internal: … emitted … values for … arguments`
 
 A host generator emitted a row with the wrong number of values.
-
-`query: empty literal`
-
-An empty literal in a query built in Go. Today the parser drops empty literals ([#129](https://github.com/panyam/jaala/issues/129)).
 
 `query: stop`
 

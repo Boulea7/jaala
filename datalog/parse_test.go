@@ -72,6 +72,89 @@ func TestParseErrors(t *testing.T) {
 	}
 }
 
+func TestParseRejectsEmptyCommaPieces(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		text string
+		want string
+	}{
+		{"argument between commas", `imports(?a,,?b) => ?a, ?b`, "query: empty term"},
+		{"leading argument", `imports(,?b) => ?b`, "query: empty term"},
+		{"trailing argument", `imports(?a,) => ?a`, "query: empty term"},
+		{"whitespace argument", "imports(?a, \t\n ,?b) => ?a, ?b", "query: empty term"},
+		{"only empty arguments", `flag(,)`, "query: empty term"},
+		{"negated argument", `not imports(?a,,?b) => ?a`, "query: empty term"},
+		{"rule head argument", `r(?a,,?b) :- imports(?a,?b); r(?a,?b)`, "query: empty term"},
+		{"typed head argument", `r(?a: string,,?b) :- imports(?a,?b); r(?a,?b)`, "query: empty term"},
+		{"leading typed head argument", `r(,?a: string,?b) :- imports(?a,?b); r(?a,?b)`, "query: empty term"},
+		{"trailing typed head argument", `r(?a: string,?b,) :- imports(?a,?b); r(?a,?b)`, "query: empty term"},
+		{"literal between commas", `imports(?a, ?b), , => ?a`, "query: empty literal"},
+		{"leading literal", `, imports(?a, ?b) => ?a`, "query: empty literal"},
+		{"trailing literal", `imports(?a, ?b), => ?a`, "query: empty literal"},
+		{"whitespace literal", "imports(?a, ?b), \t\n , package(?b) => ?a", "query: empty literal"},
+		{"only empty literals", ", \t ,", "query: empty literal"},
+		{"rule body literal", `r(?a,?b) :- imports(?a,?b),,package(?b); r(?a,?b)`, "query: empty literal"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if _, err := Parse(tc.text); err == nil || err.Error() != tc.want {
+				t.Errorf("Parse(%q): err = %v, want %q", tc.text, err, tc.want)
+			}
+		})
+	}
+}
+
+func TestParseRulesRejectsEmptyCommaPieces(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		text string
+		want string
+	}{
+		{"head argument", `r(?a,,?b) :- imports(?a,?b);`, "query: empty term"},
+		{"typed head argument", `r(?a: string,,?b) :- imports(?a,?b);`, "query: empty term"},
+		{"body argument", `r(?a,?b) :- imports(?a,,?b);`, "query: empty term"},
+		{"body literal", `r(?a,?b) :- imports(?a,?b),,package(?b);`, "query: empty literal"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if _, err := ParseRules(tc.text); err == nil || err.Error() != tc.want {
+				t.Errorf("ParseRules(%q): err = %v, want %q", tc.text, err, tc.want)
+			}
+		})
+	}
+}
+
+func TestParseCommaControls(t *testing.T) {
+	q := mustParse(t, `imports(?a,?b) => ?a, ?b`)
+	if len(q.Goal.Literals) != 1 || len(q.Goal.Literals[0].Pos.Args) != 2 || len(q.Select) != 2 {
+		t.Fatalf("control: valid imports query = %+v, want one literal, two arguments and two columns", q)
+	}
+	for _, text := range []string{`flag()`, "flag( \t\n ) =>", `;;; flag(); ;;`} {
+		q := mustParse(t, text)
+		if len(q.Goal.Literals) != 1 || len(q.Goal.Literals[0].Pos.Args) != 0 || len(q.Select) != 0 {
+			t.Errorf("control: Parse(%q) = %+v, want one zero-argument literal and no columns", text, q)
+		}
+	}
+	q = mustParse(t, `imports("a,,b", ?b), package(?b) => ?b`)
+	if len(q.Goal.Literals) != 2 || len(q.Goal.Literals[0].Pos.Args) != 2 || q.Goal.Literals[0].Pos.Args[0].Const.S != "a,,b" {
+		t.Errorf("control: quoted and nested commas changed the literals or arguments: %+v", q)
+	}
+	q = mustParse(t, `r(?a: {"api", "cli"}, ?b) :- imports(?a,?b); r(?a,?b)`)
+	if len(q.Rules[0].Head.Args) != 2 || len(q.Rules[0].HeadTypes[0].Domain) != 2 {
+		t.Errorf("control: nested vocabulary commas changed the typed head: %+v", q.Rules[0])
+	}
+	q = mustParse(t, `degree(?a, count(?b)) :- imports(?a,?b); degree(?a,?n)`)
+	if len(q.Rules[0].Head.Args) != 2 || q.Rules[0].Head.Args[1].Agg == nil {
+		t.Errorf("control: nested aggregate changed the rule head: %+v", q.Rules[0])
+	}
+	for _, text := range []string{"", " \t\n ", ";; # no rules\n;"} {
+		if rules, err := ParseRules(text); err != nil || len(rules) != 0 {
+			t.Errorf("control: ParseRules(%q) = %v, %v; want no rules and no error", text, rules, err)
+		}
+	}
+	if _, err := Parse(" \t =>"); err == nil || err.Error() != "query: empty query" {
+		t.Errorf("control: empty goal err = %v, want query: empty query", err)
+	}
+}
+
 // TestParseHaving: the group filter parses into Having rather than into the goal, so it is applied
 // after the reduce.
 func TestParseHaving(t *testing.T) {
