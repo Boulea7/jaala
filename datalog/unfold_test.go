@@ -70,9 +70,9 @@ func TestInliningLeavesABindingCountAlone(t *testing.T) {
 	if got := rows[0].Bind["count(n)"].S; got != "2" {
 		t.Errorf("count = %s, want 2 (c and d, each once)", got)
 	}
-	q := unfold(baseFor(std(src)), mustParse(t, `has(?n) :- edge(?x, ?n); node(?n), has(?n) => count(distinct ?n)`))
-	if strings.Contains(q.Goal.String(), "has(") {
-		t.Errorf("a distinct count cannot see duplicates, so has should be inlined: goal %s", q.Goal)
+	q := unfold(baseFor(std(src)), mustParse(t, `via(?a, ?n) :- edge(?a, ?n); node(?n), via(?a, ?n) => count(distinct ?n)`))
+	if strings.Contains(q.Goal.String(), "via(") {
+		t.Errorf("a distinct count cannot see duplicates, so via should be inlined: goal %s", q.Goal)
 	}
 }
 
@@ -93,6 +93,9 @@ func TestWhatUnfoldLeavesAlone(t *testing.T) {
 		{"a head constant met by a variable", `p(?x, "k") :- node(?x); p(?y, ?w) => ?y, ?w`, false},
 		{"a head constant met by another constant", `p(?x, "k") :- node(?x); p(?y, "j") => ?y`, false},
 		{"a repeated head variable", `p(?x, ?x) :- node(?x); p(?y, ?z) => ?y`, false},
+		{"a projection (#139)", `p(?x) :- edge(?x, ?y); p(?n) => ?n`, false},
+		{"a projection through _", `p(?x) :- edge(?x, _); p(?n) => ?n`, false},
+		{"control: a variable only a negation reads", `p(?x) :- node(?x), not edge(?x, _); p(?n) => ?n`, true},
 	} {
 		done := make(chan Query, 1)
 		go func() { done <- unfold(b, mustParse(t, c.query)) }()
@@ -129,9 +132,9 @@ func TestUnfoldLeavesARecursiveBodyAlone(t *testing.T) {
 // rule the goal never reached stays, as a query's own rules always do.
 func TestUnfoldDropsWhatTheGoalNoLongerReaches(t *testing.T) {
 	q := unfold(baseFor(std(graph())), mustParse(t,
-		`two(?a, ?c) :- one(?a, ?b), one(?b, ?c); one(?a, ?b) :- edge(?a, ?b); `+
+		`two(?a, ?b, ?c) :- one(?a, ?b), one(?b, ?c); one(?a, ?b) :- edge(?a, ?b); `+
 			`multi(?x) :- node(?x); multi(?x) :- edge(?x, _); via(?x) :- multi(?x); `+
-			`unused(?x) :- node(?x); two("a", ?c), via(?c) => ?c`))
+			`unused(?x) :- node(?x); two("a", _, ?c), via(?c) => ?c`))
 	var heads []string
 	for _, r := range q.Rules {
 		heads = append(heads, r.Head.Relation)
@@ -142,10 +145,14 @@ func TestUnfoldDropsWhatTheGoalNoLongerReaches(t *testing.T) {
 	}
 }
 
-// The answer's columns are the written goal's, not the inlined one's: the variable an inlined body
-// adds (has's ?x) is not one of them.
+// The answer's columns are the written goal's, not the inlined one's: the variable inlining adds for
+// the call's "_" is not one of them.
 func TestUnfoldKeepsTheWrittenColumns(t *testing.T) {
-	rows, err := SemiNaive{}.Eval(bg, mustParse(t, `has(?n) :- edge(?x, ?n); has(?n)`), baseFor(std(graph())))
+	q := mustParse(t, `via(?x, ?n) :- edge(?x, ?n); via(_, ?n)`)
+	if g := unfold(baseFor(std(graph())), q).Goal.String(); strings.Contains(g, "via(") {
+		t.Fatalf("control: via should be inlined: %s", g)
+	}
+	rows, err := SemiNaive{}.Eval(bg, q, baseFor(std(graph())))
 	if err != nil || col(rows, "n") != "b,c,d" {
 		t.Fatalf("rows = %v, %v", rows, err)
 	}

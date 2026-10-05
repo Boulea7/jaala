@@ -181,7 +181,9 @@ go list -deps ./... | grep '\.' | grep -v '^github.com/panyam/jaala' | grep -v '
   an error names `r`, never `r\x00/bf` or a factored relation. A new rewrite gets this for free;
   a new check that names a relation belongs there too.
 - **Inlining must not change multiplicity.** `unfold.go` inlines single-rule, non-recursive derived
-  relations, but never into a goal or rule head whose aggregate counts bindings (`count`, `sum`,
+  relations, but never a projection (a body variable, `_` included, the head drops; `projects`,
+  #139): probing one inlined `has_tp(GND)` per caller re-lists every test point on GND, where demand
+  derives each net once. Nor into a goal or rule head whose aggregate counts bindings (`count`, `sum`,
   `list` without `distinct`): a derived relation is a set, its inlined body is not. Nor into a recursive relation's
   rules (#97): the fixpoint reruns that body every round, so an inlined join is redone each time. Modes are checked on the linked
   program before any rewrite, so inlining a rule away can't hide an unrunnable body.
@@ -190,7 +192,10 @@ go list -deps ./... | grep '\.' | grep -v '^github.com/panyam/jaala' | grep -v '
   message, checked on the linked program before any rewrite. Planning lives in `plan.go`, called
   only by `SemiNaive`. A generator runs as soon as one of its modes is satisfied, after only the
   ready checks (comparisons, filters, and relations with every argument bound), so a host never
-  has to write a body generator-first (#36). A body the demand rewrite guarded (a magic,
+  has to write a body generator-first (#36). Relations tied on bound arguments (at least one) go by
+  `fanOut`, the base relation's tuples per call from its index (#139): `part(?r, "capacitor")`
+  scans every capacitor, `pin(?r, ?a)` with `?a` bound reads one net. It reads the Source at plan
+  time, and a failed read is reported after the rewrite (`evalRun.readErr`). A body the demand rewrite guarded (a magic,
   supplementary or factored relation, `isGuard`) keeps the guard first when `plan` runs over it (`planRule`); ranked
   from nothing bound, the guard would fall behind any relation bound by constants.
 - **SemiNaive derives a stratum component by component** (`components`, Tarjan, in dependency
@@ -204,7 +209,8 @@ go list -deps ./... | grep '\.' | grep -v '^github.com/panyam/jaala' | grep -v '
   `line`/`walker` (a two-mode generator recording what each call had bound) and `tested()` (line
   with tests as attributes, Declaire's shape) in `plan_test.go`; `hopper` (a generator citing its
   path in walk order) and `workOf` in `magic_test.go`; `reversedLine` and `counter` in
-  `seminaive_test.go`; `parts()` (counts and numbers whose text and value orders differ) in
+  `seminaive_test.go`; `probedBoard` (caps between GND and their own nets, test points on both) in
+  `scaling_test.go`; `parts()` (counts and numbers whose text and value orders differ) in
   `order_test.go`; `typedNets()` (number counts, a numeric-looking ref, a pin stored as `ns.N`, an
   untyped relation) and `answersAs` in `coerce_test.go`; `netlist()` (C1's two pins both on GND, so
   counting bindings and distinct values disagree; `ohms` carries a unit) in `aggregate_test.go`. `both()` takes Eval options, so a `Bind`

@@ -4,7 +4,8 @@ closure/chain 33970 11175
 closure/reversed 33970 11175
 closure/reversed-from-start 1600 399
 closure/reversed-to-end 2000 399
-netlist/series-from-a-net 463094 555
+netlist/probed-both 6399 1
+netlist/series-from-a-net 16077 555
 netlist/series-reach-count 2119917 561
 netlist/test-point-counts 10858 600
 netlist/uncovered-nets 10234 1
