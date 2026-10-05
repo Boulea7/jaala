@@ -94,6 +94,16 @@ func TestParseRejectsEmptyCommaPieces(t *testing.T) {
 		{"whitespace literal", "imports(?a, ?b), \t\n , package(?b) => ?a", "query: empty literal"},
 		{"only empty literals", ", \t ,", "query: empty literal"},
 		{"rule body literal", `r(?a,?b) :- imports(?a,?b),,package(?b); r(?a,?b)`, "query: empty literal"},
+		{"projection between commas", `imports(?a, ?b) => ?a, , ?b`, `query: the projection has an empty column, as in "=> ?a, ?b"`},
+		{"leading projection", `imports(?a, ?b) => , ?a`, `query: the projection has an empty column, as in "=> ?a, ?b"`},
+		{"trailing projection", `imports(?a, ?b) => ?a,`, `query: the projection has an empty column, as in "=> ?a, ?b"`},
+		{"whitespace projection", "imports(?a, ?b) => ?a, \t\n , ?b", `query: the projection has an empty column, as in "=> ?a, ?b"`},
+		{"only empty projection columns", `imports(?a, ?b) => ,`, `query: the projection has an empty column, as in "=> ?a, ?b"`},
+		{"having between commas", `imports(?a, ?b) => ?a, count(?b) having count(?b) > 0, , count(?b) < 2`, `query: having needs a comparison, as in "having count(?n) > 1"`},
+		{"leading having", `imports(?a, ?b) => ?a, count(?b) having , count(?b) > 0`, `query: having needs a comparison, as in "having count(?n) > 1"`},
+		{"trailing having", `imports(?a, ?b) => ?a, count(?b) having count(?b) > 0,`, `query: having needs a comparison, as in "having count(?n) > 1"`},
+		{"whitespace having", "imports(?a, ?b) => ?a, count(?b) having count(?b) > 0, \t\n , count(?b) < 2", `query: having needs a comparison, as in "having count(?n) > 1"`},
+		{"only empty having comparisons", `imports(?a, ?b) => ?a, count(?b) having ,`, `query: having needs a comparison, as in "having count(?n) > 1"`},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			if _, err := Parse(tc.text); err == nil || err.Error() != tc.want {
@@ -126,6 +136,23 @@ func TestParseCommaControls(t *testing.T) {
 	q := mustParse(t, `imports(?a,?b) => ?a, ?b`)
 	if len(q.Goal.Literals) != 1 || len(q.Goal.Literals[0].Pos.Args) != 2 || len(q.Select) != 2 {
 		t.Fatalf("control: valid imports query = %+v, want one literal, two arguments and two columns", q)
+	}
+	for _, text := range []string{`imports(?a, ?b) =>`, "imports(?a, ?b) => \t\n"} {
+		q := mustParse(t, text)
+		if len(q.Goal.Literals) != 1 || len(q.Select) != 0 || len(q.Having) != 0 {
+			t.Errorf("control: Parse(%q) = %+v, want default projection and no having", text, q)
+		}
+	}
+	for _, text := range []string{`imports(?a, ?b) => ?a, count(?b)`, "imports(?a, ?b) => ?a, count(?b) having \t\n"} {
+		q := mustParse(t, text)
+		if len(q.Select) != 2 || q.Select[1].Agg == nil || q.Select[1].Agg.Func != "count" || len(q.Having) != 0 {
+			t.Errorf("control: Parse(%q) = %+v, want two columns and no having comparisons", text, q)
+		}
+	}
+	q = mustParse(t, `imports(?a, ?b) => ?a, list(?b) having list(?b) != "a,,b", count(?b) > 0`)
+	if len(q.Select) != 2 || len(q.Having) != 2 || q.Having[0].Left.Agg == nil || q.Having[0].Left.Agg.Var != "b" ||
+		q.Having[0].Right.Const == nil || q.Having[0].Right.Const.S != "a,,b" || q.Having[1].Left.Agg == nil || q.Having[1].Left.Agg.Func != "count" {
+		t.Errorf("control: quoted and nested commas changed the projection or having: %+v", q)
 	}
 	for _, text := range []string{`flag()`, "flag( \t\n ) =>", `;;; flag(); ;;`} {
 		q := mustParse(t, text)

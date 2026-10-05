@@ -63,17 +63,17 @@ A literal is an atom, a negated atom or a comparison.
 
 `query: empty term`
 
-An argument has nothing before, between or after commas.
+An argument is empty, as in `imports(?a,,?b)` or `imports(?a,)`.
 
 {{ demo "demos/errors/empty-term.yaml" }}
 
 `query: empty literal`
 
-A comma has no literal on one side. The same error can arise from an empty literal in a query built in Go.
+A literal is empty, as in `imports(?a, ?b), , => ?a`. A query built in Go can hold one too.
 
 {{ demo "demos/errors/empty-literal.yaml" }}
 
-Earlier versions skipped empty arguments and literals and ran the remaining query. We now refuse these queries. Remove the extra comma; a zero-argument call such as `flag()` stays valid.
+Before v0.1.24 the parser dropped empty arguments and literals and ran what was left, so a doubled comma could change a query's arity without a word. Remove the extra comma. A call with no arguments, like `flag()`, is still fine.
 
 `query: empty variable name`
 
@@ -98,6 +98,12 @@ A term is a `?variable`, a quoted string or a number. A word without quotes is n
 The columns after `=>` are variables or aggregates.
 
 {{ demo "demos/errors/projection-column.yaml" }}
+
+`query: the projection has an empty column, as in …`
+
+A column after `=>` is empty. Remove the extra comma.
+
+{{ demo "demos/errors/empty-projection-column.yaml" }}
 
 `query: malformed aggregate …`
 
@@ -150,6 +156,12 @@ Wraps an error in one of `order by`'s columns, with that error's own text.
 Wraps an error inside a `having` condition. Today it repeats the `query:` prefix ([#128](https://github.com/panyam/jaala/issues/128)).
 
 {{ demo "demos/errors/having-q-w.yaml" }}
+
+`query: having needs a comparison, as in …`
+
+A comparison in `having` is empty. Remove the extra comma.
+
+{{ demo "demos/errors/empty-having-comparison.yaml" }}
 
 `query: having … filters ?…, which is a group key rather than an aggregate — a comparison over plain variables belongs in the goal, before the …`
 

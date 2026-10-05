@@ -277,7 +277,7 @@ func parseHaving(s string) ([]Compare, error) {
 	for _, piece := range splitTop(s, ",") {
 		piece = strings.TrimSpace(piece)
 		if piece == "" {
-			continue
+			return nil, fmt.Errorf("query: having needs a comparison, as in %q", "having count(?n) > 1")
 		}
 		c, err := parseHavingOne(piece)
 		if err != nil {
@@ -592,7 +592,7 @@ func parseSelect(proj string) ([]Term, error) {
 	for _, p := range splitTop(proj, ",") {
 		p = strings.TrimSpace(p)
 		if p == "" {
-			continue
+			return nil, fmt.Errorf("query: the projection has an empty column, as in %q", "=> ?a, ?b")
 		}
 		t, err := parseSelItem(p)
 		if err != nil {
