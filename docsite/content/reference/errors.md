@@ -199,19 +199,19 @@ Each value in a closed set is a quoted string.
 
 jaala looks every name up in the vocabulary, and suggests a close one when a name is missing.
 
-`query: unknown relation ……`
+`query: unknown relation …`
 
 A name the vocabulary doesn't hold. When a close name exists, the message suggests it.
 
 {{ demo "demos/errors/unknown-relation-q-s.yaml" }}
 
-`query: … is a module, not a relation; it holds ……`
+`query: … is a module, not a relation; it holds …`
 
 A module's path used as a relation. The message lists what the module holds.
 
 {{ demo "demos/errors/is-a-module-not-a-relation-it-holds.yaml" }}
 
-`query: unknown module … in ……`
+`query: unknown module … in …`
 
 The first part of a path names no module, which is a different typo from a wrong last part.
 
@@ -341,7 +341,7 @@ A number argument compared with text that isn't a number.
 
 {{ demo "demos/errors/cannot-be-compared-with.yaml" }}
 
-`query: …'s … argument cannot be …… (it holds one of: …)`
+`query: …'s … argument cannot be … (it holds one of: …)`
 
 A constant outside an argument's closed set of values. Raised for a host relation that declares one.
 
