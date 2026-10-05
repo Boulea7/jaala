@@ -1,0 +1,4 @@
+fixture: "deps"
+program: "imports(?a, ?b) :- package(?a), package(?b);"
+query: "imports(?a, ?b) => ?a"
+expect_error: "redefines a fact relation"

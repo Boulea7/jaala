@@ -9,5 +9,4 @@ These pages are for looking things up. Each one is generated from jaala itself o
 2. [Grammar](grammar/) is the parser's own grammar, read from its source.
 3. [Built-ins](builtins/) lists everything the standard library adds, read from its registry.
 4. [Evaluators](evaluators/) covers `Naive` and `SemiNaive`, and what each one guarantees.
-
-A catalogue of every error message is on its way.
+5. [Error messages](errors/) lists every error jaala can return, with an example of each one a query can trigger.

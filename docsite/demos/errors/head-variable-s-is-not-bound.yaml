@@ -1,0 +1,4 @@
+fixture: "deps"
+program: "r(?x, ?y) :- package(?x);"
+query: "r(?x, ?y) => ?x"
+expect_error: "is not bound by a positive body relation"

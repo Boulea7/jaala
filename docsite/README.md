@@ -88,6 +88,16 @@ The build renders each example's spec into a `data-spec` attribute for the edito
   under an aggregate allocated about 3.6 KB per unit, and the old 2M cap ran a wasm build out of
   memory (#120). The docs' own examples need a few hundred units.
 
+## The error catalogue
+
+`content/reference/errors.md` lists every `query:` message in jaala's source, and
+`TestErrorCatalogueListsEveryMessage` reads the source to check it: each message's longest run of
+fixed wording has to appear on the page. So a new message, or a reworded one, fails `make check`
+until the page lists it. Add an entry in the section where the message fires: the message with `…`
+for each placeholder, a sentence on what causes it, and, when a query can trigger it, a demo in
+`demos/errors/` that pins the wording with `expect_error`. A message containing a backtick goes in a
+double-backtick code span (`` `` … `` ``), so the page shows its wording exactly.
+
 ## Things that publish a broken page without failing the build
 
 - **A stray `{{`.** Pages are run through Go's `text/template` before Markdown, so `{{` anywhere,

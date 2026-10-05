@@ -1,0 +1,3 @@
+fixture: "deps"
+query: "package(?p), str.contains(?p) => ?p"
+expect_error: "args, got"

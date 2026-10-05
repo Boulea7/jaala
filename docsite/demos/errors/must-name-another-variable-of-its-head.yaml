@@ -1,0 +1,4 @@
+fixture: "deps"
+program: "r(?x: ?y) :- package(?x);"
+query: "r(?x)"
+expect_error: "must name another variable of its head"

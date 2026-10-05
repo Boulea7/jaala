@@ -1,0 +1,3 @@
+fixture: "deps"
+query: "imports(?, ?b) => ?b"
+expect_error: "empty variable name"

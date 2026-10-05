@@ -1,0 +1,4 @@
+fixture: "deps"
+program: "r(?x) :- package(?x);"
+query: ""
+expect_error: "no goal clause (a query needs one clause without"

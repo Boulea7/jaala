@@ -1,0 +1,4 @@
+fixture: "deps"
+program: "size(?p, ?n: number) :- loc(?p, ?n);"
+query: "size(?p, \"big\") => ?p"
+expect_error: "it holds a number"

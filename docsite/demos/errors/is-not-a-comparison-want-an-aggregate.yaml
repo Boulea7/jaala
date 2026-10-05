@@ -1,0 +1,3 @@
+fixture: "deps"
+query: "imports(?a, ?b) => ?a, count(?b) having count(?b)"
+expect_error: "is not a comparison (want an aggregate, an operator and a value, as in"

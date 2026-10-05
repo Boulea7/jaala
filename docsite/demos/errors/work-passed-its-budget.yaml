@@ -1,0 +1,4 @@
+facts: "n(1); n(2); n(3); n(4); n(5); n(6); n(7); n(8); n(9); n(10)"
+program: "p(?a, ?b, ?c) :- n(?a), n(?b), n(?c);"
+query: "p(?a, ?b, ?c), p(?d, ?e, ?f) => count(?a)"
+expect_error: "evaluation stopped: work passed its budget of"

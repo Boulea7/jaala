@@ -1,0 +1,3 @@
+fixture: "deps"
+query: "imp orts(?a, ?b) => ?a"
+expect_error: "bad relation name"

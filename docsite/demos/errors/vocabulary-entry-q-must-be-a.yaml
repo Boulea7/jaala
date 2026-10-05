@@ -1,0 +1,4 @@
+fixture: "deps"
+program: "s(?p: {\"a\", b}) :- package(?p);"
+query: "s(?p) => ?p"
+expect_error: "must be a \"string"

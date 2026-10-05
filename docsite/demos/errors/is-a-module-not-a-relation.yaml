@@ -1,0 +1,4 @@
+fixture: "deps"
+program: "str(?x) :- package(?x);"
+query: "package(?x) => ?x"
+expect_error: "is a module, not a relation"

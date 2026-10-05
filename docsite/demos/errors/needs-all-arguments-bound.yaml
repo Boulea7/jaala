@@ -1,0 +1,3 @@
+fixture: "deps"
+query: "package(?p), str.contains(?q, \"a\") => ?p"
+expect_error: "needs all arguments bound (a variable must appear in a relation before"

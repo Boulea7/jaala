@@ -1,0 +1,3 @@
+fixture: "deps"
+query: "str(?a) => ?a"
+expect_error: "is a module, not a relation; it holds"

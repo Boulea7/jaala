@@ -1,0 +1,4 @@
+fixture: "deps"
+program: "str.contains(?a, ?b) :- package(?a), package(?b);"
+query: "package(?a) => ?a"
+expect_error: "is a qualified path; a query defines only its own bare relations, and a shared one is registered with AddModule"

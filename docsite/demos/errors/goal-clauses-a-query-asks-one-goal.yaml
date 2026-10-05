@@ -1,0 +1,3 @@
+fixture: "deps"
+query: "imports(?a, ?b); imports(?b, ?c)"
+expect_error: "goal clauses; a query asks one goal (rules use"

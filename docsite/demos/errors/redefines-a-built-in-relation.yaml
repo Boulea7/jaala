@@ -1,0 +1,4 @@
+fixture: "deps"
+program: "absent(?x) :- package(?x);"
+query: "package(?x) => ?x"
+expect_error: "redefines a built-in relation"

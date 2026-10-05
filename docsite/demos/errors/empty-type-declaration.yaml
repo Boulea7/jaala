@@ -1,0 +1,4 @@
+fixture: "deps"
+program: "s(?p: ) :- package(?p);"
+query: "s(?p) => ?p"
+expect_error: "empty type declaration"

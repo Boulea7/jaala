@@ -1,0 +1,4 @@
+fixture: "deps"
+program: "s(?p, ?n: number) :- loc(?p, ?n);"
+query: "s(?p, ?n), ?n > \"big\" => ?p"
+expect_error: "cannot be compared with"
