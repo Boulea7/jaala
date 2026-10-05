@@ -1,0 +1,4 @@
+fixture: "deps"
+program: "c(count(?x)) :- package(?x);\nc(?n) :- loc(_, ?n);"
+query: "c(?n) => ?n"
+expect_error: "aggregates, so it must be the relation's only rule"

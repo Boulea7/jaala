@@ -1,0 +1,4 @@
+fixture: "deps"
+program: "s(?p: net(x)) :- package(?p);"
+query: "s(?p) => ?p"
+expect_error: "an owner is written kind(?var"

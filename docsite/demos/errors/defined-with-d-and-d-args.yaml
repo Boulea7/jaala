@@ -1,0 +1,4 @@
+fixture: "deps"
+program: "r(?x) :- package(?x);\nr(?x, ?y) :- imports(?x, ?y);"
+query: "r(?x) => ?x"
+expect_error: "args (arity must be consistent"

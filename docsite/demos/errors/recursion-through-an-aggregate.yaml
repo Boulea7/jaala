@@ -1,0 +1,4 @@
+fixture: "deps"
+program: "a(count(?x)) :- b(?x);\nb(?x) :- package(?x), a(?n);"
+query: "a(?n) => ?n"
+expect_error: "rules are not stratifiable (recursion through an aggregate"

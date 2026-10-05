@@ -1,0 +1,3 @@
+fixture: "deps"
+query: "imprts(?a, ?b) => ?a"
+expect_error: "unknown relation"

@@ -1,0 +1,4 @@
+fixture: "deps"
+program: "r(?x) :- package(?x) :- package(?x);"
+query: "r(?x)"
+expect_error: "has more than one"

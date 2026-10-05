@@ -1,0 +1,4 @@
+fixture: "deps"
+query: "test(?t, ?p) => ?t"
+bind: {"zz": "x"}
+expect_error: "the goal does not use it"

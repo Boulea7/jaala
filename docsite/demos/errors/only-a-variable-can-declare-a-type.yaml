@@ -1,0 +1,4 @@
+fixture: "deps"
+program: "r(\"a\": number) :- package(?x);"
+query: "r(?x)"
+expect_error: "only a ?variable can declare a type, not"

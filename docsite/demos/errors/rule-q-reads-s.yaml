@@ -1,0 +1,4 @@
+fixture: "deps"
+program: "r(?x) :- nope(?x);"
+query: "r(?x) => ?x"
+expect_error: "reads"

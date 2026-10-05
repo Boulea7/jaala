@@ -1,0 +1,3 @@
+fixture: "deps"
+query: "package(?x), not nope(?x) => ?x"
+expect_error: "negation over"

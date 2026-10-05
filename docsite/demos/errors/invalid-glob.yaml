@@ -1,0 +1,3 @@
+fixture: "deps"
+query: "package(?p), str.glob(?p, \"[\") => ?p"
+expect_error: "invalid glob"

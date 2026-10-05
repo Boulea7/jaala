@@ -1,0 +1,3 @@
+fixture: "deps"
+query: "package(\"abc) =>"
+expect_error: "malformed atom"

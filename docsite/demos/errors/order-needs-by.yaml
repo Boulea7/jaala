@@ -1,0 +1,3 @@
+fixture: "deps"
+query: "imports(?a, ?b) => ?a order ?a"
+expect_error: "order needs by, as in"
