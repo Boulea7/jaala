@@ -5,17 +5,17 @@ Maintained by /checkpoint: one thread per branch, pruned when the branch merges.
 
 ## At a glance
 
-- Mission #104 `mission_docsite`, 2/7: the docsite and its build-time demos are in (#113, #114,
-  #115). Next ready: #107 (live demos in wasm; plan it first, measuring the wasm size and whether
-  TinyGo is worth trying), then #108 tutorials. Exercise `make -C docsite check` last ran at
-  856c39e, 1 PR (#115, CSS) since.
-- Mission #86 `mission_selfcheck`, 8/11: what's left is #22 (canonical citations, the last known
-  disagreement), #23 (Soufflé) and #89 (fuzzing), all P2. `./selfcheck.sh` last ran at b98b2d1,
-  3 docs PRs since, none touching the engine. v0.1.21 is the latest tag.
-- Mission #81 looks done: agni#819 closed through agni#850 (`net.test_point_count`), and agni#843
-  closed with its exercise passing at agni 173b859c. Waiting on the owner's go-ahead to log that on
-  #81 and close it.
-- The site is live at https://panyam.github.io/jaala/ (Pages on since 2026-10-04); every merge to
-  main redeploys it.
-- No open threads. This run dropped every branch from the selfcheck and docsite work (PRs #94,
-  #95, #98–#103, #113–#115 merged) and the old `checkpoint-v0.1.19` thread (#85 merged).
+- Mission #86 `mission_selfcheck`, 10/13: #133 and #127 closed by #135 (arity checked as written,
+  plus `TestBrokenProgramsFailTheSameWay`, #89's first step). Next ready: #22 (canonical citations,
+  the last known disagreement), #23 (Soufflé), #89 (fuzzing the text), all P2. `./selfcheck.sh` last
+  logged at a8481f9; #136 merged since, and it passed on that branch too (168/168 set-bound goals).
+- Mission #104 `mission_docsite`, 7/7: exercise logged at cd4b594 and run on each PR since. Waiting
+  on the owner's go-ahead to close it.
+- Release: v0.1.21 is the latest tag. v0.1.22 goes on 34757bf (#135, #136). #136 breaks hosts
+  (`Bind` takes `map[Var][]ns.Value`), so after tagging, post the upgrade note on #132 with the
+  lines agni and Declaire change, and note the tag on #133 and #127.
+- Open: draft PR #137 (outside contributor, for #129, empty comma pieces), waiting on its author's
+  prose checks before review. #126 (P2) serves no mission.
+- The site is live at https://panyam.github.io/jaala/ and every merge to main redeploys it.
+- No open threads. This run dropped the unmerged `checkpoint-docsite` commit b95206f (mission #81,
+  since closed) and every branch from #135 and #136.
