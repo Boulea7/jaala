@@ -57,6 +57,12 @@ type Builtin struct {
 	// error when the query stops (cancelled, or over its work budget, which counts every emitted
 	// solution), and Gen should return it as is.
 	Gen func(ctx context.Context, src Source, args []Arg, emit func(vals []Value, cites []string) error) error
+	// Volatile marks a generator or filter whose answers can change while its Source's facts don't,
+	// such as one reading the clock, the network, or a host index updated in place. A Base keeps the
+	// derived relations a query evaluated in full and reuses them in later queries, which assumes every
+	// predicate is a function of its arguments and the Source; a relation that reads a Volatile one,
+	// directly or through other derived relations, is never kept.
+	Volatile bool
 }
 
 // An Arg is one argument as a generator sees it: its value when the binding fixes it.

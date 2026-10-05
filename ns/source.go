@@ -45,7 +45,8 @@ type Schema struct {
 type Source interface {
 	// Schema reports whether the source serves rel, and its shape.
 	Schema(rel string) (Schema, bool)
-	// Tuples returns every fact of rel. Called at most once per relation per Base.
+	// Tuples returns every fact of rel. Called at most once per relation per Base, unless the Source
+	// is Versioned and its version changes, or the host calls the Base's Forget.
 	Tuples(rel string) []Tuple
 	// Relations lists every relation name the source serves, in the order a did-you-mean suggestion
 	// should prefer on a tie. An EMPTY list means no vocabulary is installed at all, which the engine
@@ -61,6 +62,18 @@ type Source interface {
 // context. A read error stops the query that asked, wrapped with the relation's name.
 type ContextSource interface {
 	TuplesContext(ctx context.Context, rel string) ([]Tuple, error)
+}
+
+// Versioned is optionally implemented by a Source whose facts can change while a Base over it is
+// kept. A Base caches what it reads, the base relations and their indexes and the derived relations a
+// query evaluated in full, on the promise that a Source's facts are fixed for the Base's life. Version
+// lets a Source withdraw that promise: each Eval reads it once before reading anything else, and when
+// it differs from the version the caches were built at, they are dropped and the relations read again,
+// so Tuples may then be called again for a relation. Any string works, as long as it changes whenever
+// the facts do. A Source that doesn't implement it is taken as fixed, and a host that changes one
+// anyway calls the Base's Forget.
+type Versioned interface {
+	Version() string
 }
 
 // NoVocabularyHinter is optionally implemented by a Source to explain an empty vocabulary in the

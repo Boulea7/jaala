@@ -17,7 +17,7 @@ Every evaluator runs a query through the same steps, and they differ only in the
 
 ## The base and each evaluation
 
-A `Base` pairs a vocabulary with one source's facts. It caches and indexes what it reads from the source, and it's shared: many evaluations run against one `Base` at once. Everything an evaluation changes lives on its own copy of the base: the relations its rules derive, its budget and its context. What the copies share is either read-only, counted atomically, or locked. jaala's tests run concurrent evaluations under the race detector to keep that true.
+A `Base` pairs a vocabulary with one source's facts. It caches and indexes what it reads from the source, and the derived relations `SemiNaive` evaluated in full, keyed by their rules ([#140](https://github.com/panyam/jaala/issues/140)), and it's shared: many evaluations run against one `Base` at once. Everything an evaluation changes lives on its own copy of the base: the relations its rules derive, its budget and its context. What the copies share is either read-only, counted atomically, or locked. jaala's tests run concurrent evaluations under the race detector to keep that true.
 
 ## Strata
 

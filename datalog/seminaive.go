@@ -16,7 +16,8 @@ import (
 // the last round (the delta). Each fact is joined against once rather than once per round, and the
 // same closure grows with about n².
 //
-// It also inlines single-rule, non-recursive derived relations into their callers (see unfold), so a
+// It reads a derived relation the Base already holds, from an earlier query that evaluated it in full,
+// instead of deriving it (see reuseDerived). It also inlines single-rule, non-recursive derived relations into their callers (see unfold), so a
 // bound argument reaches the literals that can use it; rewrites the derived relations still called
 // with bound arguments so only what the query demands is derived (see magic, and factor for
 // right-linear recursion); and then plans each rule body and the goal before evaluating (see plan): a
@@ -35,7 +36,7 @@ func (s SemiNaive) Eval(ctx context.Context, q Query, b *Base, opts ...Option) (
 	var rewrite func(*Base, Query) Query
 	if !s.WrittenOrder {
 		rewrite = func(b *Base, q Query) Query {
-			q = withoutUnreached(q)
+			q = reuseDerived(b, withoutUnreached(q))
 			if b.witnessing() {
 				return plan(b, magic(b, q)) // inlining would remove a relation's node from the witness
 			}
