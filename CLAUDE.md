@@ -30,7 +30,9 @@ go list -deps ./... | grep '\.' | grep -v '^github.com/panyam/jaala' | grep -v '
 ## Constraints
 
 - **Standard library only, and it must build for wasm.** agni runs the engine in the browser, and
-  any dependency here becomes every host's dependency.
+  any dependency here becomes every host's dependency. The deps check greps for a dot, so a
+  standard package can trip it too: `crypto/sha256` pulls in `crypto/internal/entropy/v1.0.0`.
+  Run the `go list -deps` line before pushing a new standard import.
 - **The packages layer one way: `ns` imports nothing in jaala, `stdlib` imports `ns` and never
   `datalog`, production `datalog` imports `ns` only.** A host's fact layer imports `ns` and
   `stdlib` precisely because it may not import an engine (agni's C29), and the engine doesn't
@@ -174,14 +176,17 @@ go list -deps ./... | grep '\.' | grep -v '^github.com/panyam/jaala' | grep -v '
   rules are facts and add no dependency.
 - **A Base keeps the derived relations SemiNaive evaluated in full** (`derived.go`, #140). The key is
   the sorted text of the relation's linked rules and those of every derived relation they reach
-  (`derivedKeys`; not a hash, which would pull `crypto/internal/entropy/v1.0.0` into the deps check), so a redefinition anywhere below is a new key. `reuseDerived`, SemiNaive's first
+  (`derivedKeys`; text, not a hash, for the deps check above), so a redefinition anywhere below is
+  a new key. `reuseDerived`, SemiNaive's first
   rewrite, drops a held relation's rules and installs its tuples, so demand reads it by index rather
   than deriving part of it; after the fixpoint, a keyed relation still derived under its own name is
-  kept (a rewrite renames whatever it derives in part). Off for Naive, `WrittenOrder` and
-  `Witnesses()`. A relation reaching a `Volatile` predicate has no key. `ns.Versioned` and
+  kept (a rewrite renames whatever it derives in part, and nothing enforces that for a new one).
+  Off for Naive, `WrittenOrder`, and any witnessed Eval, which includes `CanonicalCites()`. A relation reaching a `Volatile` predicate has no key. `ns.Versioned` and
   `Base.Forget` drop both caches; an Eval stores only into the generation it started in, and
   `edbCache.get` files no index over tuples read before a reset. Work tests that reuse a Base across
-  queries see the second one cheaper: give each its own Base, or `LimitDerivedCache(0)`.
+  queries see the second one cheaper: give each its own Base, or `LimitDerivedCache(0)`. A probe
+  that misses derives and keeps what it read, which can evict what the next probe checks, so a test
+  checks its expected misses last.
 - **SemiNaive drops the rules the goal never reaches before rewriting** (`withoutUnreached`, #90).
   A rewrite renames or removes what they read, which left them reading a relation with no rules.
   They are checked first, as linked, so their mistakes are still reported.
@@ -239,7 +244,8 @@ go list -deps ./... | grep '\.' | grep -v '^github.com/panyam/jaala' | grep -v '
 
 ## Releasing
 
-Merge the PR, then put an annotated tag on the merge commit and push it
+Merge the PR, then run the CI set and `./selfcheck.sh` on the merged `main` (PRs that merged
+together were never tested together), then put an annotated tag on the merge commit and push it
 (`git tag -a v0.1.N <merge-sha>`, `git push origin v0.1.N`). The owner picks the version. So far
 releases are patch bumps on v0.1.x, breaking changes included, pre-1.0. agni consumes tags only
 (`go get github.com/panyam/jaala@vX`), never a `replace`.
