@@ -17,6 +17,7 @@ type evalOptions struct {
 	budget    int64
 	witness   bool
 	canonical bool
+	explain   *Report
 }
 
 // Bind gives goal variables values from the host, so a parameterized query needs no program text built
@@ -84,6 +85,8 @@ type evalRun struct {
 	// the Base already held (see reuseDerived). Both nil unless SemiNaive's rewrite ran.
 	keys    map[string]string
 	preload map[string]*derivedEntry
+	// explain is the Explain report being filled, or nil.
+	explain *explainer
 }
 
 // ctxCheckEvery is how many units of work pass between checks of the context. Checking on every
@@ -98,6 +101,9 @@ func (r *evalRun) step() error {
 		return nil
 	}
 	r.used++
+	if r.explain != nil {
+		r.explain.count()
+	}
 	if r.budget > 0 && r.used > r.budget {
 		return &BudgetExceeded{Work: r.used, Limit: r.budget}
 	}

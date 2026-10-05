@@ -18,6 +18,13 @@ import (
 
 // extendBuiltin runs a builtin under the current binding.
 func extendBuiltin(bi ns.Builtin, atom *Atom, bnd *binding, b *Base, yield func(*binding) error) error {
+	if b.run != nil && b.run.explain != nil {
+		if bi.Holds != nil {
+			b.run.explain.access("filter")
+		} else {
+			b.run.explain.access("generator")
+		}
+	}
 	if bi.Holds != nil {
 		args := make([]ns.Value, len(atom.Args))
 		for i, a := range atom.Args {
@@ -161,6 +168,9 @@ func (b *Base) extendEDB(atom *Atom, bnd *binding, yield func(*binding) error) e
 	if err != nil {
 		return err
 	}
+	if b.run != nil && b.run.explain != nil {
+		b.explainEDB(atom, rows, bnd)
+	}
 	pos, all := b.edbCandidates(atom, rows, bnd)
 	for i := 0; ; i++ {
 		var t ns.Tuple
@@ -193,6 +203,9 @@ func (b *Base) extendEDB(atom *Atom, bnd *binding, yield func(*binding) error) e
 // extendIDB fans a rule-defined atom over the derived tuples of its relation, carrying each tuple's
 // provenance forward — the same shape as extendEDB, over the materialized IDB store.
 func (b *Base) extendIDB(atom *Atom, bnd *binding, yield func(*binding) error) error {
+	if b.run != nil && b.run.explain != nil {
+		b.explainIDB(atom, bnd)
+	}
 	for _, t := range b.idbCandidates(atom, bnd) {
 		if err := b.countWork(); err != nil {
 			return err

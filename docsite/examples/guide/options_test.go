@@ -91,3 +91,29 @@ func Example_cancel() {
 	// Output:
 	// true
 }
+
+// Explain fills a report of what an Eval did: each derived relation and
+// how it was evaluated, each body in the order it ran, and where the work
+// went. Report.String prints all of it; here, the relations and the goal.
+func Example_explain() {
+	b, ctx := base(), context.Background()
+	var r datalog.Report
+	q := datalog.MustParse(`deps.depends_on("app", ?d) => ?d`)
+	_, err := datalog.SemiNaive{}.Eval(ctx, q, b, datalog.Explain(&r))
+	if err != nil {
+		fmt.Println(err)
+		return
+	}
+	for _, rr := range r.Relations {
+		fmt.Println(rr.Relation, rr.How, rr.Adornments, rr.Tuples, "tuples")
+	}
+	fmt.Println("goal:", r.Goal.Ran)
+	for _, l := range r.Goal.Literals {
+		fmt.Println(" ", l.Literal, l.Access, "passed", l.Passed)
+	}
+	// Output:
+	// deps._step demand [bf] 3 tuples
+	// deps.depends_on demand [bf] 3 tuples
+	// goal: deps.depends_on/bf("app", ?d)
+	//   deps.depends_on/bf("app", ?d) [derived scan] passed 3
+}

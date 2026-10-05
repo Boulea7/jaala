@@ -113,11 +113,20 @@ func (s SemiNaive) fixpoint(b *Base, byHead map[string][]Rule, comp []string) er
 			}
 		}
 	}
+	rounds := 1
+	if b.run.explain != nil {
+		defer func() {
+			for _, rel := range comp {
+				b.run.explain.rounds[rel] = rounds
+			}
+		}()
+	}
 	if len(variants) == 0 {
 		return nil // not recursive: one pass derived everything
 	}
 	delta := since(b, comp, mark)
 	for len(delta) > 0 {
+		rounds++
 		if err := b.run.done(); err != nil {
 			return err
 		}
