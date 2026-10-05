@@ -1,5 +1,6 @@
 # has_tp(?n) :- pin(?tp, ?n), part(?tp, "test_point"); tt(?r, ?a, ?b) :- part(?r, "capacitor"), pin(?r, ?a), pin(?r, ?b), ?a < ?b; probed_both(?r) :- tt(?r, ?a, ?b), has_tp(?a), has_tp(?b); probed_both("C3")
 work 194, 1 rows, 0s
+fetched 140 tuples from the source
 
 relations
   has_tp: demand [b], 2 demanded, 2 tuples, 3 rounds, work 174 (87 per demanded value)
@@ -64,6 +65,7 @@ sources
 
 # reach(?a, ?b) :- edge(?a, ?b); reach(?a, ?c) :- reach(?a, ?b), edge(?b, ?c); reach("v0", ?b), not edge(?b, "v9") => ?b
 work 202, 8 rows, 0s
+fetched 9 tuples from the source
 
 relations
   reach: demand [bf], 1 demanded, 9 tuples, 9 rounds, work 120 (120 per demanded value)

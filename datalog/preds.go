@@ -164,6 +164,14 @@ func (b *Base) checkAtom(atom *Atom) error {
 // exactly those positions instead of from the whole relation. unify still decides every candidate,
 // so the index only ever has to avoid MISSING a match; see index.go.
 func (b *Base) extendEDB(atom *Atom, bnd *binding, yield func(*binding) error) error {
+	if b.looksUp(atom.Relation) {
+		if rows, ok, err := b.lookup(atom, bnd); err != nil || ok {
+			if err != nil {
+				return err
+			}
+			return b.unifyEach(atom, rows, nil, true, bnd, yield)
+		}
+	}
 	rows, err := b.edbTuples(atom.Relation)
 	if err != nil {
 		return err
@@ -172,6 +180,11 @@ func (b *Base) extendEDB(atom *Atom, bnd *binding, yield func(*binding) error) e
 		b.explainEDB(atom, rows, bnd)
 	}
 	pos, all := b.edbCandidates(atom, rows, bnd)
+	return b.unifyEach(atom, rows, pos, all, bnd, yield)
+}
+
+// unifyEach unifies atom with each candidate, rows[pos[i]] for every i, or every row when all is set.
+func (b *Base) unifyEach(atom *Atom, rows []ns.Tuple, pos []int, all bool, bnd *binding, yield func(*binding) error) error {
 	for i := 0; ; i++ {
 		var t ns.Tuple
 		if all {

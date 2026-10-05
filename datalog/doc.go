@@ -28,7 +28,9 @@
 //
 // A Base caches and indexes what it reads, and keeps the derived relations SemiNaive evaluated in
 // full for later queries (see Base.LimitDerivedCache, Base.Forget and ns.Versioned), so one Base
-// serves many queries, concurrently, and an Evaluator answers a Query over it. SemiNaive is the one to run: it derives recursive rules
+// serves many queries, concurrently, and an Evaluator answers a Query over it. A Source that
+// implements ns.LookupSource is asked for the facts a call with bound arguments needs, rather than
+// read whole, and what it returns is kept for that one Eval. SemiNaive is the one to run: it derives recursive rules
 // semi-naively, inlines single-rule non-recursive relations so a bound argument reaches the literals
 // that can use it, derives a relation called with bound arguments only for the values demanded
 // (magic sets, with right-linear recursion from a constant start reduced to the set of nodes it

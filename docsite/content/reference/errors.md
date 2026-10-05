@@ -501,6 +501,14 @@ The context ended while the source was serving a relation.
 
 The host's source failed to serve a relation. jaala doesn't cache a failed read.
 
+`query: evaluation stopped looking up …: …`
+
+The context ended while a source that looks facts up (`ns.LookupSource`) was answering a call.
+
+`query: looking up …: …`
+
+The host's source failed to look up a relation's facts for a call with bound arguments. jaala doesn't keep a failed lookup.
+
 ## Setting up a vocabulary
 
 These come from a host's Go code registering a vocabulary, never from a query. They're listed so a host author can find them.
