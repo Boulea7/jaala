@@ -158,3 +158,18 @@ func TestASetBoundVariableAnchorsANegationAndLeavesNoWitness(t *testing.T) {
 		}
 	}
 }
+
+// A generator whose mode needs its input bound runs from each value of a set-bound input, after the
+// relation of values binds it. control: unbound, the mode is refused.
+func TestASetBoundInputSatisfiesAGeneratorsMode(t *testing.T) {
+	gv := std(line(6))
+	walker(t, gv, [][]bool{{true, false}})
+	q := mustParse(t, `walk(?s, ?e) => ?s, ?e`)
+	rows, err := both(q, baseFor(gv), bindSet("s", "v1", "v3"))
+	if err != nil || len(rows) != 6 || col(rows, "s") != "v1,v1,v1,v1,v3,v3" {
+		t.Errorf("walk from v1 and v3: %v, %v; want v1's four steps and v3's two", rows, err)
+	}
+	if _, err := both(q, baseFor(gv)); err == nil {
+		t.Errorf("control: walk with nothing bound ran, want the mode refusal")
+	}
+}
