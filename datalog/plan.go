@@ -153,8 +153,9 @@ func planGoal(b *Base, goal Body) Body {
 // whose Modes is satisfied (#36): a generator call is the host's own work, such as a graph walk, and
 // one placed after a relation runs once per row of it, where a relation bound only by constants is
 // a scan that costs a cheap comparison per row. Failing that, the relation with the most bound
-// arguments, earliest written on a tie, since it fans out least and binds the most for what
-// follows. A literal nothing can make runnable keeps its written
+// arguments, since it fans out least and binds the most for what follows; on a tie with something
+// bound, the base relation estimated to yield fewer tuples per call (see fanOut), else the earliest
+// written. A literal nothing can make runnable keeps its written
 // place at the end, where solving reports it as it always has. bound is what is bound on entry, such
 // as a rule head's demanded arguments (see magic); it is not changed.
 func planBody(b *Base, body Body, entry map[Var]bool) Body {
@@ -184,7 +185,7 @@ func planBody(b *Base, body Body, entry map[Var]bool) Body {
 			}
 		}
 		if pick < 0 {
-			best := -1
+			best, bestSize := -1, -1
 			for i, lit := range pos {
 				if isCheck(b, lit) {
 					continue
@@ -193,8 +194,16 @@ func planBody(b *Base, body Body, entry map[Var]bool) Body {
 				if bi, ok := b.reg.Predicate(lit.Pos.Relation); ok && !bi.Satisfied(flags) {
 					continue
 				}
-				if n := count(flags); n > best {
-					pick, best = i, n
+				n := count(flags)
+				if n < best {
+					continue
+				}
+				size := -1
+				if n > 0 {
+					size = fanOut(b, lit.Pos, flags)
+				}
+				if n > best || (size >= 0 && bestSize >= 0 && size < bestSize) {
+					pick, best, bestSize = i, n, size
 				}
 			}
 		}
@@ -210,6 +219,55 @@ func planBody(b *Base, body Body, entry map[Var]bool) Body {
 		pos = append(pos[:pick:pick], pos[pick+1:]...)
 	}
 	return Body{Literals: append(out, negs...)}
+}
+
+// fanOut estimates how many tuples a base relation yields per call with the given arguments bound,
+// or -1 when it can't tell: a derived relation, which isn't derived yet when a body is planned, a
+// predicate, or a Base that doesn't index. Bound only by constants, it is the exact bucket the call
+// reads; bound by a variable too, the relation's size over the buckets at those positions, the
+// average a call reads. It breaks ties between relations with as many arguments bound (#139): in
+// tt(?r, ?a) :- part(?r, "capacitor"), pin(?r, ?a) with ?a bound, the constant would scan every
+// capacitor for each ?a, where pin reads the few parts on one net.
+func fanOut(b *Base, a *Atom, flags []bool) int {
+	if b.edb == nil || b.noIndex {
+		return -1
+	}
+	if _, ok := b.schemaOf(a.Relation); !ok {
+		return -1
+	}
+	rows, err := b.edbTuples(a.Relation)
+	if err != nil {
+		if b.run != nil && b.run.readErr == nil {
+			b.run.readErr = err
+		}
+		return -1
+	}
+	var mask patternMask
+	var consts []ns.Value
+	vars := false
+	for i, f := range flags {
+		if !f || i >= maskWidth {
+			continue
+		}
+		mask |= 1 << uint(i)
+		if c := a.Args[i].Const; c != nil {
+			consts = append(consts, *c)
+		} else {
+			vars = true
+		}
+	}
+	if mask == 0 || len(rows) < indexMinFacts {
+		return len(rows)
+	}
+	idx := b.edb.get(a.Relation, rows, mask)
+	if vars {
+		return len(rows) / max(len(idx), 1)
+	}
+	n := 0
+	for _, k := range tupleKeys(consts) {
+		n += len(idx[k])
+	}
+	return n
 }
 
 // isCheck reports whether a literal only tests: a comparison or a filter.

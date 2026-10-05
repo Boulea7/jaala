@@ -63,6 +63,7 @@ var workloads = []workload{
 	{"netlist/uncovered-nets", func() ns.Source { return netlistOf(1, 2000, 600) }, testPoints + `tpc(?n, 0) => count(?n)`, nil},
 	{"netlist/series-from-a-net", func() ns.Source { return netlistOf(1, 2000, 600) }, series + `along("n0", ?b) => ?b`, nil},
 	{"netlist/series-reach-count", func() ns.Source { return netlistOf(1, 2000, 600) }, series + `along(?a, ?b) => ?a, count(?b)`, nil},
+	{"netlist/probed-both", func() ns.Source { return probedBoard(400) }, probed + `probed_both(?r) => count(?r)`, nil},
 	// CanonicalCites (#22) compares every rederivation and derives again from what it shortens.
 	{"canonical/closure-chain", func() ns.Source { return chainOf(150) }, closure + `reach(?a, ?b) => ?a, ?b`, []Option{CanonicalCites()}},
 	{"canonical/closure-reversed-from-start", func() ns.Source { return reversedLine(400) }, closure + `reach("v0", ?b) => ?b`, []Option{CanonicalCites()}},

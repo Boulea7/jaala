@@ -15,6 +15,9 @@ import "strconv"
 //   - Its head is distinct variables, or constants the call matches with constants or "_". A head
 //     constant meeting a caller variable would need "=" to bind, and it does not.
 //   - The call is positive. "not p(...)" negates the whole body, not each literal of it.
+//   - The relation's rule isn't a projection: every variable its positive body binds is in its head
+//     (see projects). has_tp(?n) :- pin(?tp, ?n), ... holds a net once, and inlined, each probe of a
+//     net re-lists its test points (#139). Demand still reaches it, deduplicated (see magic).
 //   - No aggregate of the goal, or of the rule whose body holds the call, counts bindings: count,
 //     sum and list without distinct. A derived relation is a set, so has_tp(?n) yields each net once,
 //     but its inlined body yields a net once per test point on it, and `=> count(?n)` would count
@@ -82,7 +85,7 @@ func (u *unfolder) inline(call Atom) ([]Literal, bool) {
 		return nil, false
 	}
 	r := rules[0]
-	if len(r.Head.Args) != len(call.Args) {
+	if len(r.Head.Args) != len(call.Args) || projects(r) {
 		return nil, false
 	}
 	u.fresh++
@@ -138,6 +141,29 @@ func (u *unfolder) inline(call Atom) ([]Literal, bool) {
 		}
 	}
 	return lits, true
+}
+
+// projects reports whether a rule's positive body binds a variable its head drops, "_" included. Such
+// a relation is a projection: has_tp(?n) :- pin(?tp, ?n), part(?tp, "test_point") holds each net
+// once, but its body yields a net once per test point on it. Inlined into a rule, every probe of one
+// net re-lists those test points, once per caller binding (#139), where the relation is derived once,
+// or under demand once per distinct net. A variable only a negation reads enumerates nothing.
+func projects(r Rule) bool {
+	head := map[Var]bool{}
+	for _, t := range r.Head.Args {
+		head[t.Var] = true
+	}
+	for _, l := range r.Body.Literals {
+		if l.Pos == nil {
+			continue
+		}
+		for _, t := range l.Pos.Args {
+			if t.Var == "_" || (t.Var != "" && !head[t.Var]) {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 // freshVar is a variable no query can spell, distinct per inlined call, so an inlined body's own

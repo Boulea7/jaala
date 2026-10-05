@@ -266,6 +266,9 @@ func evaluate(ctx context.Context, q Query, b *Base, opts []Option, rewrite func
 			return nil, err
 		}
 		q = rewrite(b, q)
+		if b.run != nil && b.run.readErr != nil {
+			return nil, b.run.readErr
+		}
 	}
 	if len(q.Rules) > 0 {
 		b.idb = map[string][]idbTuple{}
