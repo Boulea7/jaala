@@ -5,14 +5,13 @@ Maintained by /checkpoint: one thread per branch, pruned when the branch merges.
 
 ## At a glance
 
-- Mission #86 `mission_selfcheck`, 11/13: #22 closed by #142 (`CanonicalCites`), so the corpus has
-  no known disagreements left. Next ready: #23 (Soufflé), #89 (fuzzing the text), both P2.
-  `./selfcheck.sh` passed on 25b65ce (4999/4999 compared, 13 baselines match).
-- Release: v0.1.23 is tagged on 25b65ce (#141, #142, #144). Upgrade note posted on #140 (nothing
-  breaks; `ns.Versioned` / `Base.Forget` / `Volatile` for hosts whose facts move). agni is asked on
-  #139 to re-measure `probed_both` on its real boards and drop the `_test_points` workaround.
-- Off-mission, waiting: #145 (evaluate a small demanded relation in full so the Base can keep it;
-  unparks on agni's per-click numbers), #143 (P3). #126 (P2) serves no mission.
-- Open: draft PR #137 (outside contributor, for #129), waiting on its author.
-- No open threads. This run dropped the threads for `probe-projections` (#141) and `derived-cache`
-  (#144), both merged. `origin/checkpoint-docsite` (PR #116, merged) still exists on the remote.
+- Mission #86 `mission_selfcheck`, 12/15: #89 closed by #151 (fuzzed query text; `./selfcheck.sh`
+  now fuzzes each target for `JAALA_FUZZ_TIME`). Next ready: #23 (Soufflé), #148 (a number spelled
+  two ways, which `FuzzEval` counts rather than fails), #149 (demand re-derives round zero), all P2.
+  `./selfcheck.sh` passed on 25cd296 (4999/4999, no known disagreements, fuzz clean).
+- Release: v0.1.24 is tagged on 25cd296 (#150 Explain, #151, #137). The upgrade note is on #89:
+  no API change, but some queries now get a different error, an error, or an answer (comparisons
+  are order-free and checked statically; head `_` and empty pieces are refused).
+- Off-mission: #147 (Explain, P2) stays open after #150 by choice; #126 (P2) serves no mission;
+  #145 and #143 are `waiting`.
+- No open threads or PRs. This run dropped `fuzz-text` (#151, merged).

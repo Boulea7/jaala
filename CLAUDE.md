@@ -95,7 +95,9 @@ go list -deps ./... | grep '\.' | grep -v '^github.com/panyam/jaala' | grep -v '
   fails on its assertion. When scripting mutations, **treat a build failure as "not checked", not
   as red**. An unused variable left by a mutation fails the build, and a naive harness counts that
   as a pass. Likewise a `-run '^Name$'` that matches no test passes; run by prefix and check the
-  test actually ran. Restore mutated files in a `finally` and give each run a timeout.
+  test actually ran. Restore mutated files in a `finally` and give each run a timeout. Mutate back
+  to the exact old code: one that also loosened a neighbouring check (#89's head `_`) was caught by
+  that check under another message, and the saved fuzz input "survived" for the wrong reason.
 - **Give a test a control that proves its fixture can tell the cases apart.** Most surviving
   mutations here were fixtures that could not: a recursion guard tested only with two-rule
   relations, a column-order test whose sort orders coincided, a "free" call the planner bound, a
@@ -154,7 +156,9 @@ go list -deps ./... | grep '\.' | grep -v '^github.com/panyam/jaala' | grep -v '
   hooks off the hot path: `solve` routes through `solveAt` so the yield closure captures nothing
   new, and `applyRule` copies `r` before taking its address. A capture or `&param` there moved a
   value to the heap on every call and doubled points-to's time with Explain off; compare
-  `-benchmem` allocations against main, which load doesn't skew. Rewritten names are made readable by
+  `-benchmem` allocations against main, which load doesn't skew. For time, build both test binaries
+  (`go test -c`, main from a worktree) and interleave their runs: back to back, load made #151 look
+  25% slower where interleaved it was within noise. Rewritten names are made readable by
   `ExplainName`, and `testdata/explain.golden` (`-update`) holds the text. `enter` lists a body's
   literals in `deferComparisons` order, the order `solve` indexes them in (#89).
 - **`CanonicalCites()` keeps each tuple's shortest derivation** (`canonical.go`, #22): fewest rule
