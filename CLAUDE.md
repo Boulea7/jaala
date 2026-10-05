@@ -132,6 +132,15 @@ go list -deps ./... | grep '\.' | grep -v '^github.com/panyam/jaala' | grep -v '
   paying off. Work that drops past 10% fails too, so an improvement lowers the baseline
   (`go test ./datalog -run TestWorkStaysWithinBaseline -update`), and a PR that moves it says why.
   The baseline records today's costs, bad ones included (#96, #97).
+- **`Explain(&r)` fills a `Report`** (`explain.go`, #147): the run's `explainer` (on `evalRun`) is
+  told which body (`enter`, from `applyRule` and the goal) and literal (`literal`, from `solve` and
+  `passesNegationsExplained`) is current, and `step` counts each unit of work against them, so the
+  bodies' work adds up to the Eval's exactly (`TestExplainAccountsForEveryUnitOfWork`). Keep the
+  hooks off the hot path: `solve` routes through `solveAt` so the yield closure captures nothing
+  new, and `applyRule` copies `r` before taking its address. A capture or `&param` there moved a
+  value to the heap on every call and doubled points-to's time with Explain off; compare
+  `-benchmem` allocations against main, which load doesn't skew. Rewritten names are made readable by
+  `ExplainName`, and `testdata/explain.golden` (`-update`) holds the text.
 - **`CanonicalCites()` keeps each tuple's shortest derivation** (`canonical.go`, #22): fewest rule
   steps (a witness node's `height`), then the rule's written text, then the body nodes in written
   order by relation, values and a leaf's citations. It records witnesses to compare (so `tagWritten`

@@ -49,7 +49,16 @@ func (Naive) materialize(b *Base, rules []Rule) error {
 		return err
 	}
 	for _, stratum := range strata {
+		rounds := 0
+		defer func(stratum []string) {
+			if b.run.explain != nil {
+				for _, rel := range stratum {
+					b.run.explain.rounds[rel] = rounds
+				}
+			}
+		}(stratum)
 		for { // naive fixpoint: re-derive every rule in the stratum until nothing new appears
+			rounds++
 			if err := b.run.done(); err != nil {
 				return err
 			}
@@ -207,6 +216,10 @@ func (b *Base) knownRelation(rel string) bool {
 // (positive backtracking join + post-solve negation filter), so a rule body has the full body
 // expressiveness the goal has. Returns whether any new (deduplicated) tuple was added this pass.
 func (b *Base) applyRule(r Rule) (bool, error) {
+	if b.run != nil && b.run.explain != nil {
+		explained := r // a copy, so the parameter doesn't escape on the path that doesn't explain
+		defer b.run.explain.enter(&explained, Body{})()
+	}
 	pos, negs := splitNegations(r.Body.Literals)
 	if err := b.checkNegatedRelations(negs); err != nil {
 		return false, err
@@ -244,6 +257,9 @@ func (b *Base) applyRule(r Rule) (bool, error) {
 		fresh, err := b.addTuple(r.Head.Relation, t)
 		if err != nil {
 			return err
+		}
+		if fresh && b.run.explain != nil && b.run.explain.body != nil {
+			b.run.explain.body.Tuples++
 		}
 		added = added || fresh
 		return nil
@@ -300,6 +316,9 @@ func (b *Base) applyAggregate(r Rule, pos, negs []Literal) (bool, error) {
 		fresh, err := b.addTuple(r.Head.Relation, t)
 		if err != nil {
 			return false, err
+		}
+		if fresh && b.run.explain != nil && b.run.explain.body != nil {
+			b.run.explain.body.Tuples++
 		}
 		added = added || fresh
 	}

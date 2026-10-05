@@ -1,0 +1,100 @@
+# has_tp(?n) :- pin(?tp, ?n), part(?tp, "test_point"); tt(?r, ?a, ?b) :- part(?r, "capacitor"), pin(?r, ?a), pin(?r, ?b), ?a < ?b; probed_both(?r) :- tt(?r, ?a, ?b), has_tp(?a), has_tp(?b); probed_both("C3")
+work 194, 1 rows, 0s
+
+relations
+  has_tp: demand [b], 2 demanded, 2 tuples, 3 rounds, work 174 (87 per demanded value)
+  probed_both: factored, 1 tuples, 1 rounds, work 3
+  tt: inlined, 0 tuples, work 0
+
+goal
+  probed_both:answer1("C3")
+    1 runs, work 1, 0s
+    probed_both:answer1("C3")                reached 1, passed 1, work 1, derived scan
+
+rules
+  probed_both:from1("C3")
+    1 runs, 1 new tuples, work 0, 0s
+  prefix:0(?a, ?r) :- probed_both:from1(?r), part(?r, "capacitor"), pin(?r, ?a)
+    1 runs, 2 new tuples, work 4, 0s
+    probed_both:from1(?r)                    reached 1, passed 1, work 1, derived scan
+    part(?r, "capacitor")                    reached 1, passed 1, work 1, index (ref, class)
+    pin(?r, ?a)                              reached 1, passed 2, work 2, index (ref)
+  demand:has_tp/b(?a) :- prefix:0(?a, ?r)
+    1 runs, 2 new tuples, work 2, 0s
+    prefix:0(?a, ?r)                         reached 1, passed 2, work 2, derived scan
+  demand:has_tp/b(?b) :- prefix:1(?a, ?b, ?r)
+    1 runs, work 0, 0s
+    prefix:1(?a, ?b, ?r)                     reached 1, passed 0, work 0, derived scan
+  prefix:1(?a, ?b, ?r) :- prefix:0(?a, ?r), has_tp/b(?a), pin(?r, ?b), ?a < ?b
+    1 runs, work 2, 0s
+    prefix:0(?a, ?r)                         reached 1, passed 2, work 2, derived scan
+    has_tp/b(?a)                             reached 2, passed 0, work 0, derived scan
+    pin(?r, ?b)                              reached 0, passed 0, work 0
+    ?a < ?b                                  reached 0, passed 0, work 0
+  has_tp(?n) :- pin(?tp, ?n), part(?tp, "test_point")
+    ran as has_tp/b(?n) :- demand:has_tp/b(?n), pin(?tp, ?n), part(?tp, "test_point")
+    1 runs, 2 new tuples, work 84, 0s
+    demand:has_tp/b(?n)                      reached 1, passed 2, work 2, derived scan
+    pin(?tp, ?n)                             reached 2, passed 42, work 42, index (net)
+    part(?tp, "test_point")                  reached 42, passed 21, work 21, index (ref, class)
+  prefix:1(?a, ?b, ?r) :- prefix:0(?a, ?r), has_tp/b+(?a), pin(?r, ?b), ?a < ?b
+    1 runs, 1 new tuples, work 10, 0s
+    prefix:0(?a, ?r)                         reached 1, passed 2, work 2, derived scan
+    has_tp/b+(?a)                            reached 2, passed 2, work 4, derived scan
+    pin(?r, ?b)                              reached 2, passed 4, work 4, index (ref)
+    ?a < ?b                                  reached 4, passed 1, work 0, comparison
+  has_tp(?n) :- pin(?tp, ?n), part(?tp, "test_point")
+    ran as has_tp/b(?n) :- demand:has_tp/b+(?n), pin(?tp, ?n), part(?tp, "test_point")
+    1 runs, work 86, 0s
+    demand:has_tp/b+(?n)                     reached 1, passed 2, work 2, derived scan
+    pin(?tp, ?n)                             reached 2, passed 42, work 42, index (net)
+    part(?tp, "test_point")                  reached 42, passed 21, work 21, index (ref, class)
+  demand:has_tp/b(?b) :- prefix:1+(?a, ?b, ?r)
+    1 runs, work 2, 0s
+    prefix:1+(?a, ?b, ?r)                    reached 1, passed 1, work 1, derived scan
+  probed_both(?r) :- tt(?r, ?a, ?b), has_tp(?a), has_tp(?b)
+    ran as probed_both:answer1("C3") :- prefix:1(?a, ?b, ?r), has_tp/b(?b)
+    1 runs, 1 new tuples, work 3, 0s
+    prefix:1(?a, ?b, ?r)                     reached 1, passed 1, work 1, derived scan
+    has_tp/b(?b)                             reached 1, passed 1, work 2, derived scan
+
+sources
+  part: 60 tuples, read, index (ref, class) built, 85 probes
+  pin: 80 tuples, read, index (ref) built, 3 probes, index (net) built, 4 probes
+
+# reach(?a, ?b) :- edge(?a, ?b); reach(?a, ?c) :- reach(?a, ?b), edge(?b, ?c); reach("v0", ?b), not edge(?b, "v9") => ?b
+work 202, 8 rows, 0s
+
+relations
+  reach: demand [bf], 1 demanded, 9 tuples, 9 rounds, work 120 (120 per demanded value)
+
+goal
+  reach/bf("v0", ?b), not edge(?b, "v9")
+    1 runs, work 82, 0s
+    reach/bf("v0", ?b)                       reached 1, passed 9, work 9, derived scan
+    not edge(?b, "v9")                       reached 9, passed 8, work 73, not scan
+
+rules
+  demand:reach/bf("v0")
+    1 runs, 1 new tuples, work 0, 0s
+  reach(?a, ?b) :- edge(?a, ?b)
+    ran as reach/bf(?a, ?b) :- demand:reach/bf(?a), edge(?a, ?b)
+    1 runs, 1 new tuples, work 10, 0s
+    demand:reach/bf(?a)                      reached 1, passed 1, work 1, derived scan
+    edge(?a, ?b)                             reached 1, passed 1, work 9, scan
+  reach(?a, ?c) :- reach(?a, ?b), edge(?b, ?c)
+    ran as reach/bf(?a, ?c) :- demand:reach/bf(?a), reach/bf(?a, ?b), edge(?b, ?c)
+    1 runs, 1 new tuples, work 11, 0s
+    demand:reach/bf(?a)                      reached 1, passed 1, work 1, derived scan
+    reach/bf(?a, ?b)                         reached 1, passed 1, work 1, derived scan
+    edge(?b, ?c)                             reached 1, passed 1, work 9, scan
+  reach(?a, ?c) :- reach(?a, ?b), edge(?b, ?c)
+    ran as reach/bf(?a, ?c) :- demand:reach/bf(?a), reach/bf+(?a, ?b), edge(?b, ?c)
+    8 runs, 7 new tuples, work 99, 0s
+    demand:reach/bf(?a)                      reached 8, passed 8, work 8, derived scan
+    reach/bf+(?a, ?b)                        reached 8, passed 9, work 9, derived scan
+    edge(?b, ?c)                             reached 9, passed 8, work 81, scan
+
+sources
+  edge: 9 tuples, read, 20 scans
+

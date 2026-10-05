@@ -1,11 +1,11 @@
 ---
 title: "Host options"
-description: "Bind, Budget and the context: how a Go host gives a query its values, caps its work, and stops it."
+description: "Bind, Budget, Explain and the context: how a Go host gives a query its values, caps its work, sees where the work went, and stops it."
 prev: {url: "/jaala/guide/ordering/", title: "Ordering"}
 next: {url: "/jaala/guide/modules-and-vocabulary/", title: "Modules and the vocabulary"}
 ---
 
-A host runs a query with `Eval`, and passes options to it. This page covers the three a host uses most. The [Go tutorial]({{.Site.PathPrefix}}/tutorials/05-go-host/) builds the vocabulary and base they run against, and shows the fourth, `Witnesses`. Every code block here is a Go `Example` from `docsite/examples/guide/`, which `go test` runs on every build of this site and checks against its `// Output:` comment.
+A host runs a query with `Eval`, and passes options to it. This page covers the ones a host uses most. The [Go tutorial]({{.Site.PathPrefix}}/tutorials/05-go-host/) builds the vocabulary and base they run against, and shows the fourth, `Witnesses`. Every code block here is a Go `Example` from `docsite/examples/guide/`, which `go test` runs on every build of this site and checks against its `// Output:` comment.
 
 The examples share a source and a vocabulary, built the same way as in the tutorial, with a `deps` module of rules:
 
@@ -26,6 +26,18 @@ A variable can be bound to several values too, which is how a host asks one ques
 `Budget` caps the work one `Eval` does, counted the same way on every run, so a budget that passes once passes every time. `Base.Work` reports what a query used, which is how to size a budget from your real queries. The budget is what bounds memory too: a goal that aggregates holds its bindings until it reduces them, which can be a few kilobytes per unit of work ([#120](https://github.com/panyam/jaala/issues/120)), so size it with the memory you have in mind as well as the time.
 
 The context reaches every `Eval`. When it's cancelled or its deadline passes, the `Eval` stops at its next check, which comes every 1024 units of work, and returns an error that wraps the context's own, so `errors.Is(err, context.DeadlineExceeded)` works. It also reaches a host's own Go code running inside a query, its generators and sources, so those can stop too.
+
+## Explaining a slow query
+
+`Explain` fills a `Report` with what an `Eval` did, so a slow query shows where its work went rather than one total to bisect by hand ([#147](https://github.com/panyam/jaala/issues/147)). `Example_explain` in the code block above prints part of it. `Report.String` prints all of it, and the struct has JSON tags, so a host can log it beside a slow query or return it with an answer.
+
+The report lists each derived relation the query reached, and whether it was evaluated in full, under demand (with how many values were demanded), as a factored walk, inlined into its callers, or reused from what the `Base` kept from an earlier query. Each comes with its tuples, rounds and work.
+
+It then shows the goal and each rule body in the order it actually ran, after jaala's rewrites, labelled with the rule as you wrote it. Every literal says how it was read (an index on which arguments, a scan, a generator or a filter), how often solving reached it, how many bindings it passed on, and how many candidates it examined. A literal reached thousands of times is usually the place to look.
+
+Last come the base relations it read, whether the `Base` already held them, and the indexes it probed, with whether this `Eval` built them.
+
+The report is filled even when the `Eval` fails, so a query its `Budget` stopped still shows what spent the budget. Asking for it costs time in proportion to the rules and literals a query runs. Not asking costs nothing measurable, which is why it's off by default.
 
 ## Sharing a base
 
