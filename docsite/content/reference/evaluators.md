@@ -3,7 +3,7 @@ title: "Evaluators"
 description: "Naive and SemiNaive: what each evaluator does, and what it guarantees about its answers."
 ---
 
-An evaluator answers a query over a `Base`. jaala has two, and three ways to run them, which all give the same answer and differ in how much work they do getting there.
+An evaluator answers a query over a `Base`. The [architecture]({{.Site.PathPrefix}}/architecture/evaluation/) section explains how. jaala has two, and three ways to run them, which all give the same answer and differ in how much work they do getting there.
 
 - **`SemiNaive{}`** is the one you'll want. In each round of a recursive fixpoint it only revisits what the last round added. It derives only what a query's constants ask for (magic sets), and it plans each rule body so the order a rule is written in doesn't change what it costs.
 - **`SemiNaive{WrittenOrder: true}`** keeps the semi-naive fixpoint and turns the rewrites off, running each body in the order it's written.

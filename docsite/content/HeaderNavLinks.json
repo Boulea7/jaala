@@ -2,5 +2,6 @@
   {"name": "Overview", "url": "overview/"},
   {"name": "Tutorials", "url": "tutorials/"},
   {"name": "Guide", "url": "guide/"},
-  {"name": "Reference", "url": "reference/"}
+  {"name": "Reference", "url": "reference/"},
+  {"name": "Architecture", "url": "architecture/"}
 ]
