@@ -36,6 +36,9 @@ type Base struct {
 	// A POINTER, so Eval's shallow copy shares the one cache rather than copying a mutex (which vet
 	// rejects, correctly: two copies of a lock guard nothing).
 	edb *edbCache
+	// derived keeps the derived relations SemiNaive evaluated in full, for later queries over the
+	// same Base (see derivedCache). Shared, and behind a pointer, for the reasons edb is.
+	derived *derivedCache
 	// idb holds the derived (IDB) relations materialized from a query's user-defined rules, and
 	// idbArity their positional arity (from the rule heads). Both are nil on the shared Base and
 	// populated on a per-query shallow copy, so rules never leak between queries that reuse a Base.
@@ -98,7 +101,7 @@ func NewBase(v *ns.Vocabulary, src ns.Source) (*Base, error) {
 	if len(problems) > 0 {
 		return nil, fmt.Errorf("query: %s", strings.Join(problems, "; "))
 	}
-	return &Base{src: src, reg: v, edb: newEDBCache(), work: new(int64)}, nil
+	return &Base{src: src, reg: v, edb: newEDBCache(), derived: newDerivedCache(), work: new(int64)}, nil
 }
 
 // MustBase is NewBase for a Source known to match its vocabulary, such as a test fixture. It panics
@@ -208,6 +211,7 @@ func evaluate(ctx context.Context, q Query, b *Base, opts []Option, rewrite func
 	}
 	// The query runs on its own copy of the Base: its context, its budget and its derived relations
 	// are its own, while the Source's tuples and their indexes stay shared (see Base).
+	gen := b.refresh()
 	nb := *b
 	nb.run = &evalRun{ctx: ctx, budget: o.budget, witness: o.witness}
 	b = &nb
@@ -270,7 +274,7 @@ func evaluate(ctx context.Context, q Query, b *Base, opts []Option, rewrite func
 			return nil, b.run.readErr
 		}
 	}
-	if len(q.Rules) > 0 {
+	if len(q.Rules) > 0 || len(b.run.preload) > 0 {
 		b.idb = map[string][]idbTuple{}
 		b.idbArity = map[string]int{}
 		// Fresh alongside idb, and for the same reason: an index of derived tuples describes THIS
@@ -278,9 +282,11 @@ func evaluate(ctx context.Context, q Query, b *Base, opts []Option, rewrite func
 		// carried the map header across, so leaving this out would have one query probing an index
 		// whose positions point into another query's idb slice.
 		b.idbIdx = map[idxKey]*idbIndex{}
+		installHeld(b)
 		if err := fixpoint(b, q.Rules); err != nil {
 			return nil, err
 		}
+		keepDerived(b, gen, q.Rules)
 	}
 	pos, negs := splitNegations(q.Goal.Literals)
 	if err := b.checkNegatedRelations(negs); err != nil {

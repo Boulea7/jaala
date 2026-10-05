@@ -40,7 +40,7 @@ go list -deps ./... | grep '\.' | grep -v '^github.com/panyam/jaala' | grep -v '
   fragments of them. New cases get new wording; existing wording doesn't move.
 - **`Base` is shared across concurrent `Eval`s.** Anything mutable reachable from it must be
   per-query (the `idb*` fields on Eval's shallow copy), atomic (`work`), or locked (`edbCache`,
-  the vocabulary's `Memo` entries). `TestConcurrentEvalsShareOneCheck` and
+  `derivedCache`, the vocabulary's `Memo` entries). `TestConcurrentEvalsShareOneCheck` and
   `TestBasesOverDifferentSourcesEvaluateConcurrently` catch a regression under `-race`.
 - **Strategy code lives on its strategy, never on shared state.** `Base` is the fact store plus the
   primitives every evaluator shares (`checkRules`, `applyRule`, `solve`); each evaluator owns its
@@ -164,6 +164,16 @@ go list -deps ./... | grep '\.' | grep -v '^github.com/panyam/jaala' | grep -v '
   twice, which made demand for one points-to variable cost three times the whole analysis. A rule evaluated in full also has its
   constant calls rewritten (`fromConstants`, #57), adorned by the constants alone, so their demand
   rules are facts and add no dependency.
+- **A Base keeps the derived relations SemiNaive evaluated in full** (`derived.go`, #140). The key is
+  the sorted text of the relation's linked rules and those of every derived relation they reach
+  (`derivedKeys`; not a hash, which would pull `crypto/internal/entropy/v1.0.0` into the deps check), so a redefinition anywhere below is a new key. `reuseDerived`, SemiNaive's first
+  rewrite, drops a held relation's rules and installs its tuples, so demand reads it by index rather
+  than deriving part of it; after the fixpoint, a keyed relation still derived under its own name is
+  kept (a rewrite renames whatever it derives in part). Off for Naive, `WrittenOrder` and
+  `Witnesses()`. A relation reaching a `Volatile` predicate has no key. `ns.Versioned` and
+  `Base.Forget` drop both caches; an Eval stores only into the generation it started in, and
+  `edbCache.get` files no index over tuples read before a reset. Work tests that reuse a Base across
+  queries see the second one cheaper: give each its own Base, or `LimitDerivedCache(0)`.
 - **SemiNaive drops the rules the goal never reaches before rewriting** (`withoutUnreached`, #90).
   A rewrite renames or removes what they read, which left them reading a relation with no rules.
   They are checked first, as linked, so their mistakes are still reported.
@@ -209,7 +219,8 @@ go list -deps ./... | grep '\.' | grep -v '^github.com/panyam/jaala' | grep -v '
   `line`/`walker` (a two-mode generator recording what each call had bound) and `tested()` (line
   with tests as attributes, Declaire's shape) in `plan_test.go`; `hopper` (a generator citing its
   path in walk order) and `workOf` in `magic_test.go`; `reversedLine` and `counter` in
-  `seminaive_test.go`; `probedBoard` (caps between GND and their own nets, test points on both) in
+  `seminaive_test.go`; `answer`/`fresh` (one query's own work), `versioned` and `stepper` (a
+  generator counting its calls, optionally `Volatile`) in `derived_test.go`; `probedBoard` (caps between GND and their own nets, test points on both) in
   `scaling_test.go`; `parts()` (counts and numbers whose text and value orders differ) in
   `order_test.go`; `typedNets()` (number counts, a numeric-looking ref, a pin stored as `ns.N`, an
   untyped relation) and `answersAs` in `coerce_test.go`; `netlist()` (C1's two pins both on GND, so

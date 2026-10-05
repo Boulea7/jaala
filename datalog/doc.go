@@ -26,8 +26,9 @@
 // read as the type of the argument it stands in, or of the number it is compared with, and refused
 // when it cannot be, so a question asked with the wrong type fails rather than answering empty.
 //
-// A Base caches and indexes what it reads, so one Base serves many queries, concurrently, and an
-// Evaluator answers a Query over it. SemiNaive is the one to run: it derives recursive rules
+// A Base caches and indexes what it reads, and keeps the derived relations SemiNaive evaluated in
+// full for later queries (see Base.LimitDerivedCache, Base.Forget and ns.Versioned), so one Base
+// serves many queries, concurrently, and an Evaluator answers a Query over it. SemiNaive is the one to run: it derives recursive rules
 // semi-naively, inlines single-rule non-recursive relations so a bound argument reaches the literals
 // that can use it, derives a relation called with bound arguments only for the values demanded
 // (magic sets, with right-linear recursion from a constant start reduced to the set of nodes it

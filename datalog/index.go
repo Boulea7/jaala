@@ -212,8 +212,28 @@ func (c *edbCache) get(rel string, tuples []ns.Tuple, mask patternMask) edbIndex
 	if idx, ok := c.idx[k]; ok {
 		return idx
 	}
+	// An Eval still running over tuples read before a reset (see Base.Forget) must not file an index
+	// of their positions where a later Eval would probe the relation as read again.
+	if r, ok := c.tup[rel]; !ok || !sameTuples(r, tuples) {
+		return built
+	}
 	c.idx[k] = built
 	return built
+}
+
+// sameTuples reports whether tuples is the relation as r read it.
+func sameTuples(r *edbRead, tuples []ns.Tuple) bool {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.done && len(r.tuples) == len(tuples) && (len(tuples) == 0 || &r.tuples[0] == &tuples[0])
+}
+
+// reset drops every relation read and every index, so the next Eval reads the Source again.
+func (c *edbCache) reset() {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.tup = map[string]*edbRead{}
+	c.idx = map[idxKey]edbIndex{}
 }
 
 // buildEDBIndex indexes every tuple of a relation at the given mask. Tuples are immutable for the

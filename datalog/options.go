@@ -75,6 +75,10 @@ type evalRun struct {
 	// readErr is the first Source read the planner made that failed (see fanOut). Planning can't
 	// return an error, so evaluate reports it once the rewrite is done.
 	readErr error
+	// keys are the cache keys of the relations this Eval may keep once derived, and preload the ones
+	// the Base already held (see reuseDerived). Both nil unless SemiNaive's rewrite ran.
+	keys    map[string]string
+	preload map[string]*derivedEntry
 }
 
 // ctxCheckEvery is how many units of work pass between checks of the context. Checking on every
