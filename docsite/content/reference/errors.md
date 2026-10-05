@@ -225,7 +225,7 @@ A relation called with the wrong number of arguments.
 
 `query: … takes … args, got …`
 
-A predicate, like a string test, called with the wrong number of arguments.
+A predicate such as `str.contains` called with the wrong number of arguments.
 
 {{ demo "demos/errors/takes-s-args-got-d.yaml" }}
 
