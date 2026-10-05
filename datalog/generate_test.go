@@ -825,3 +825,94 @@ func TestKnownDisagreementsStillDisagree(t *testing.T) {
 		}
 	}
 }
+
+// errorOf runs an evaluator and returns its error, turning a panic into one so the test can say
+// which evaluator panicked on which program.
+func errorOf(ev Evaluator, q Query, b *Base) (err error) {
+	defer func() {
+		if p := recover(); p != nil {
+			err = fmt.Errorf("PANIC: %v", p)
+		}
+	}()
+	_, err = ev.Eval(bg, q, b)
+	return err
+}
+
+// Every evaluator refuses a broken program with the same query: error and never panics (the first
+// step of #89). Each generated program is broken three ways, one literal at a time: an argument
+// dropped, an argument added, and a relation renamed to one nothing defines. Each variant is wrong,
+// so each has to fail. The planned evaluator used to panic on the first (#133).
+func TestBrokenProgramsFailTheSameWay(t *testing.T) {
+	seeds := envInt("JAALA_GEN_SEEDS", 300)
+	checked, failed := 0, 0
+	for seed := int64(1); seed <= int64(seeds); seed++ {
+		rnd := rand.New(rand.NewSource(seed))
+		facts := genGraph(rnd)
+		prog := (&generator{rnd: rnd, nodes: facts.n}).program()
+		for _, broken := range breakProgram(prog, rnd) {
+			q, err := Parse(broken.String())
+			if err != nil {
+				continue // refused by the parser, the same for every evaluator
+			}
+			b := baseFor(std(facts.source()))
+			var errs []string
+			for _, ev := range []Evaluator{Naive{}, SemiNaive{WrittenOrder: true}, SemiNaive{}} {
+				errs = append(errs, fmt.Sprint(errorOf(ev, q, b)))
+			}
+			checked++
+			ok := strings.HasPrefix(errs[0], "query: ") && errs[1] == errs[0] && errs[2] == errs[0]
+			if !ok {
+				failed++
+				t.Errorf("seed %d: %s\n naive:    %s\n written:  %s\n planned:  %s", seed, broken, errs[0], errs[1], errs[2])
+			}
+			if failed >= 5 {
+				t.Fatal("stopping after 5")
+			}
+		}
+	}
+	if checked < seeds {
+		t.Fatalf("control: only %d broken programs reached the evaluators", checked)
+	}
+	t.Logf("%d broken programs, each refused alike by all three evaluators", checked)
+}
+
+// breakProgram returns three wrong versions of p, each changing one literal that names a relation:
+// one argument fewer, one more, and a name nothing defines.
+func breakProgram(p genProgram, rnd *rand.Rand) []genProgram {
+	type site struct{ rule, lit int } // rule -1 is the goal
+	var sites []site
+	for i, r := range p.rules {
+		for j, l := range r.body {
+			if l.rel != "" && len(l.args) > 1 {
+				sites = append(sites, site{i, j})
+			}
+		}
+	}
+	for j, l := range p.goal.body {
+		if l.rel != "" && len(l.args) > 1 {
+			sites = append(sites, site{-1, j})
+		}
+	}
+	if len(sites) == 0 {
+		return nil
+	}
+	s := sites[rnd.Intn(len(sites))]
+	var out []genProgram
+	for _, change := range []func(*genLit){
+		func(l *genLit) { l.args = l.args[:len(l.args)-1] },
+		func(l *genLit) { l.args = append(l.args, `"extra"`) },
+		func(l *genLit) { l.rel = "nothing_" + l.rel },
+	} {
+		c := p.clone()
+		body := c.goal.body
+		if s.rule >= 0 {
+			body = c.rules[s.rule].body
+		}
+		l := body[s.lit]
+		l.args = slices.Clone(l.args)
+		change(&l)
+		body[s.lit] = l
+		out = append(out, c)
+	}
+	return out
+}

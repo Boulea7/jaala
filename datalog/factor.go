@@ -33,7 +33,7 @@ import (
 // away the levels of the recursion they would show. The set is an ordinary derived relation, so an
 // answer's citations are the facts of one path from the start.
 func (m *magician) factor(a Atom, bound map[Var]bool) (Atom, bool) {
-	if _, derived := m.byHead[a.Relation]; !derived || m.b.witnessing() || m.aggregates(a.Relation) {
+	if rules, derived := m.byHead[a.Relation]; !derived || m.b.witnessing() || m.aggregates(a.Relation) || len(rules[0].Head.Args) != len(a.Args) {
 		return a, false
 	}
 	adorn, demanded := adornment(a, bound)

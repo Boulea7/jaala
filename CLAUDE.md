@@ -159,6 +159,12 @@ go list -deps ./... | grep '\.' | grep -v '^github.com/panyam/jaala' | grep -v '
 - **SemiNaive drops the rules the goal never reaches before rewriting** (`withoutUnreached`, #90).
   A rewrite renames or removes what they read, which left them reading a relation with no rules.
   They are checked first, as linked, so their mistakes are still reported.
+- **Every call's arity, and every goal name, is checked on the program as written**
+  (`checkWrittenArity`, #133, #127), before any rewrite: the demand rewrite reads a call's arguments by
+  its relation's arity and panicked on a short call, and solving only checks an atom it reaches, so an
+  unknown goal name after an atom matching nothing went unreported. `TestBrokenProgramsFailTheSameWay`
+  breaks the generated programs (an argument dropped or added, a relation renamed) and requires every
+  evaluator to refuse each with the same `query:` error, never a panic; `selfcheck.sh` runs it too.
 - **A negation's anchor is checked on the program as written** (`checkWrittenAnchors`, #92): the goal
   before `Bind` turns the host's variables into constants, with those variables counted as anchors,
   and the rules before a rewrite inlines or renames them. Checks that run later (`applyRule`, the

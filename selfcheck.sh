@@ -10,7 +10,7 @@ trap 'rm -f "$out"' EXIT
 status=0
 
 echo "== generated programs: $seeds seeds"
-JAALA_GEN_SEEDS=$seeds go test -count=1 ./datalog -run '^TestGeneratedProgramsAgree$' -v >"$out" 2>&1 || status=1
+JAALA_GEN_SEEDS=$seeds go test -count=1 ./datalog -run '^(TestGeneratedProgramsAgree|TestBrokenProgramsFailTheSameWay)$' -v >"$out" 2>&1 || status=1
 # Relation names a rewrite adds carry a NUL, which would make grep treat the log as binary.
 tr -d '\000' <"$out" | grep -E 'seeds$|compared|skipped|known|disagrees|refuses|replay|shrunk|facts:|bind:|naive:|planned:|seminaive:|^(--- |ok|FAIL)'
 

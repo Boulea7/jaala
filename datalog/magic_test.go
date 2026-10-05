@@ -573,7 +573,7 @@ func TestAnUnreachedRuleDoesNotBreakTheRewrites(t *testing.T) {
 		}
 	}
 	// control: the unreached rule is still checked, under its written name, by every evaluator.
-	_, diff, err := agree(mustParse(t, `r0(?x) :- node(?x); r1(?y, ?z) :- r0(?y); r0("a", ?x) => ?x`), baseFor(std(graph())))
+	_, diff, err := agree(mustParse(t, `r0(?x) :- node(?x); r1(?y, ?z) :- r0(?y); r0("a") => `), baseFor(std(graph())))
 	if diff != "" || err == nil || !strings.Contains(err.Error(), `rule "r1"`) {
 		t.Errorf("an unreached rule with an unbound head variable: %v\n%s", err, diff)
 	}
