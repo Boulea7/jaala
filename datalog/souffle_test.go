@@ -685,14 +685,6 @@ func varsOf(vs []Var) []string {
 	return out
 }
 
-func joinTerms(ts []Term) string {
-	out := make([]string, len(ts))
-	for i, t := range ts {
-		out[i] = souffleTerm(t)
-	}
-	return strings.Join(out, ", ")
-}
-
 // writeSouffleFacts writes the generator's graph as Soufflé fact files in dir, prefixed.
 func writeSouffleFacts(dir, prefix string, src ns.Source) error {
 	for rel := range souffleBase {
