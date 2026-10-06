@@ -2,6 +2,7 @@ package datalog
 
 import (
 	"math"
+	"strings"
 	"testing"
 
 	"github.com/panyam/jaala/ns"
@@ -51,6 +52,22 @@ func TestTheDataSpellingOfANumberWinsOverTheQuerys(t *testing.T) {
 		if len(rows) != 1 || rows[0].Bind["w"].S != c.want || rows[0].Bind["w"].BaseUnit != c.unit {
 			t.Errorf("%s: ?w = %v, want %q in %q", c.rel, rows, c.want, c.unit)
 		}
+	}
+}
+
+// The query's 3.3 can also reach the data one relation further down: demand carries it through a
+// variable into e (demand:e/fb(?v) :- at:from1(?v)), and e meets rail's 3.3V there. control: the
+// planned evaluator ran that rule, so the value took that path.
+func TestTheDataSpellingWinsOverAQuerysPassedOnByDemand(t *testing.T) {
+	text := `e(?n, ?v) :- rail(?n, ?v); e(?n, ?v) :- rail(?n, ?v), ?n != "none";
+		at(?n, ?v, ?v) :- e(?n, ?v); at(?n, ?v, ?v) :- e(?n, ?v), ?n != "none"; at(?n, 3.3, ?w) => ?n, ?w`
+	rows := eval(t, volts(), text)
+	if len(rows) != 1 || rows[0].Bind["w"].S != "3.3V" {
+		t.Errorf("?w = %v, want 3.3V as rail spells it", rows)
+	}
+	var r Report
+	if _, err := (SemiNaive{}).Eval(bg, mustParse(t, text), baseFor(std(volts())), Explain(&r)); err != nil || !strings.Contains(r.String(), "demand:e/fb(?v) :- at:from1(?v)") {
+		t.Errorf("control: the planned evaluator didn't pass demand into e (%v):\n%s", err, r.String())
 	}
 }
 
