@@ -263,6 +263,11 @@ go list -deps ./... | grep '\.' | grep -v '^github.com/panyam/jaala' | grep -v '
   order). A stratum is a level, so it mixes recursion with plain dependencies; a relation that
   doesn't read itself, even through others, is derived once, and delta rounds run only inside a
   recursive component (#51). `stratify`'s strata, its errors, and `Naive` are unchanged.
+  Round zero runs the rules in turn, so each rule's round-one delta starts at a mark taken just
+  before it ran (`peekMark`, #149): it has already joined what came before. `peekMark` keeps the
+  `CanonicalCites` revised lists (only `marks` starts them over), so a tuple revised after the rule
+  ran is still in its delta; `TestRoundOneRereadsWhatRoundZeroRevisedAfterARuleRan` guards that,
+  since the corpus doesn't reach it.
 - Fixtures: `workloads`, `binaryTree`, `pointerProgram` and `netlistOf` (synthetic, agni-sized) in
   `bench_test.go`; `graph()` and the `eval`/`evalErr`/`col`/`std`/`baseFor` helpers in `helpers_test.go`;
   `withModules`/`evalReg` in `module_test.go`; the agni-shaped `circuit()` in `signature_test.go`;

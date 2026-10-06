@@ -1,19 +1,19 @@
 # The work, and the answer's row count, of each workload in bench_test.go under SemiNaive{}.
 # Rewritten by: go test ./datalog -run TestWorkStaysWithinBaseline -update
-canonical/closure-chain 33970 11175
-canonical/closure-reversed-from-start 1600 399
-canonical/points-to-one-variable 216142 38
-canonical/same-generation-tree 28162 5460
-closure/chain 33970 11175
-closure/reversed 33970 11175
-closure/reversed-from-start 1600 399
-closure/reversed-to-end 2000 399
+canonical/closure-chain 33525 11175
+canonical/closure-reversed-from-start 1597 399
+canonical/points-to-one-variable 196647 38
+canonical/same-generation-tree 26922 5460
+closure/chain 33525 11175
+closure/reversed 33525 11175
+closure/reversed-from-start 1597 399
+closure/reversed-to-end 1997 399
 netlist/probed-both 6399 1
-netlist/series-from-a-net 16077 555
-netlist/series-reach-count 2119917 561
+netlist/series-from-a-net 16057 555
+netlist/series-reach-count 2106307 561
 netlist/test-point-counts 10858 600
 netlist/uncovered-nets 10234 1
-points-to 144448 4392
-points-to/one-variable 140094 38
-same-generation/tree 28162 5460
-same-generation/tree-bound 1227 256
+points-to 144830 4392
+points-to/one-variable 140476 38
+same-generation/tree 26922 5460
+same-generation/tree-bound 1254 256

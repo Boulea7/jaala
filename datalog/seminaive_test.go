@@ -244,3 +244,50 @@ func TestComponentsAreInDependencyOrder(t *testing.T) {
 		t.Errorf("components = %s, want %s", got, want)
 	}
 }
+
+// Round zero runs a component's rules one after another, so a rule has read what the rules before it
+// added, and round one doesn't join it again (#149). Under demand, has_tp/b's rule reads the two nets
+// C3 is on in round zero; a variant reading them again as a delta derived nothing, for as much work.
+// control: the round-zero body still runs, and derives both tuples.
+func TestRoundOneSkipsWhatARuleReadInRoundZero(t *testing.T) {
+	r := explained(t, SemiNaive{}, probed+`probed_both("C3")`, baseFor(std(probedBoard(20))))
+	if again := ruleRan(r, "has_tp/b(?n) :- demand:has_tp/b+("); again != nil {
+		t.Errorf("has_tp/b's rule ran again over its demand's delta: %d runs, work %d", again.Runs, again.Work)
+	}
+	if once := ruleRan(r, "has_tp/b(?n) :- demand:has_tp/b("); once == nil || once.Tuples != 2 {
+		t.Errorf("control: has_tp/b's round-zero body: %+v; want it to derive the 2 demanded tuples", once)
+	}
+}
+
+// What a rule hasn't read yet in round zero, because a rule after it added it, is still its delta in
+// round one: a reads b, and b's rules run after a's. control: a's variant does run.
+func TestRoundOneReadsWhatARuleRanBefore(t *testing.T) {
+	text := `a(?x) :- b(?y), edge(?y, ?x); b(?x) :- node(?x), ?x = "a"; b(?x) :- a(?x); a(?x) => ?x`
+	rows := eval(t, graph(), text)
+	if got := col(rows, "x"); got != "b,c,d" {
+		t.Errorf("a = %q, want b c d", got)
+	}
+	r := explained(t, SemiNaive{}, text, baseFor(std(graph())))
+	if v := ruleRan(r, "a(?x) :- b+("); v == nil || v.Tuples == 0 {
+		t.Errorf("control: a's variant reading b's delta: %+v; want it to derive", v)
+	}
+}
+
+// Under CanonicalCites a tuple a rule read in round zero, and a later rule then gave a shorter
+// derivation, is still in that rule's round-one delta, so what it derived from the tuple shortens too.
+// b's first rule derives b("a") three steps up, its second extends it to b("b"), and its third
+// derives b("a") in one step after the second has run, revising it. The corpus doesn't reach this.
+func TestRoundOneRereadsWhatRoundZeroRevisedAfterARuleRan(t *testing.T) {
+	text := `d(?x) :- node(?x), ?x = "a"; c(?x) :- d(?x); ` +
+		`b(?x) :- c(?x); b(?y) :- b(?x), edge(?x, ?y); b(?x) :- node(?x), ?x = "a"; b(?x) => ?x`
+	q := mustParse(t, text)
+	rows, err := both(q, baseFor(std(graph())), CanonicalCites(), Witnesses())
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, r := range rows {
+		if r.Bind["x"].S == "b" && (len(r.Witness) != 1 || r.Witness[0].height != 2) {
+			t.Errorf("b(\"b\")'s witness: %v; want two steps, from the one-step b(\"a\")", r.Witness)
+		}
+	}
+}
