@@ -75,7 +75,9 @@ func tagWritten(q Query) Query {
 	out := q
 	out.Rules = make([]Rule, len(q.Rules))
 	for i, r := range q.Rules {
-		r.text = r.String()
+		if r.text == "" { // a lowered body aggregate's clause keeps its written text
+			r.text = r.String()
+		}
 		r.Body = tagBody(r.Body)
 		out.Rules[i] = r
 	}
@@ -128,6 +130,9 @@ func (b *Base) negationWitnesses(negs []Literal, bnd *binding) []placed {
 	}
 	out := make([]placed, 0, len(negs))
 	for _, l := range negs {
+		if isAggReduce(l.Neg.Relation) {
+			continue // a body aggregate's zero clause: its node is the aggregate's, with no children
+		}
 		out = append(out, placed{at: l.at, node: &Witness{Relation: shownName(l.Neg.Relation), Values: atomValues(l.Neg, bnd), Negated: true}})
 	}
 	return out

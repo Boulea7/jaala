@@ -13,7 +13,7 @@ A key can have several columns. Here each team and package is a group, and the c
 
 {{ demo "demos/guide/aggregation-two-keys.yaml" }}
 
-A group exists only when some row has its key, so a package with no tests has no row here at all.
+A group exists only when some row has its key, so a package with no tests has no row here at all. An aggregate in the body counts it as zero instead ([below](#an-aggregate-in-a-body)).
 
 ## Counting rows or values
 
@@ -46,6 +46,18 @@ A comparison in the goal can't do this, since it runs on each row before there's
 With no plain variables in the projection, the whole answer is a single group, and that group exists even when no row matched. So an aggregate over nothing still answers one row, with `count` and `sum` at zero and `min` and `max` absent:
 
 {{ demo "demos/guide/aggregation-empty.yaml" }}
+
+## An aggregate in a body
+
+`?n = count(?t) : { test(?t, ?p) }` binds `?n` to an aggregate over the bindings of its own body, the part in braces. The braces are reduced once per value of the variables they share with the rest of the clause, here `?p`, and every value the rest of the clause gives `?p` gets one, so a package with no tests counts 0 rather than having no row:
+
+{{ demo "demos/guide/aggregation-body-count.yaml" }}
+
+That makes it the way to count zero, which a group in the projection or a rule's head can't. Over no bindings the value is what an aggregate over nothing answers: `count` and `sum` 0, `min` and `max` absent, and `list` empty. It works in a rule as well as in the goal, so `util`, which imports nothing, has no heaviest import:
+
+{{ demo "demos/guide/aggregation-body-rule.yaml" }}
+
+The braces read only relations that are complete before the clause, as a head aggregate's body does, so a relation can't aggregate over itself. A variable they share has to be bound outside them by a relation that doesn't need the value, and inside them by a relation too. A variable written only inside them is theirs alone, so two aggregates in one body can each use `?t`. An aggregate can't sit inside another's braces yet.
 
 ## An aggregate in a rule
 

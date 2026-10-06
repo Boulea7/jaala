@@ -195,6 +195,10 @@ func substBody(body Body, sub func(Term) Term) Body {
 			c := *l.Compare
 			c.Left, c.Right = sub(c.Left), sub(c.Right)
 			l.Compare = &c
+		case l.Agg != nil:
+			a := *l.Agg
+			a.Body = substBody(a.Body, sub)
+			l.Agg = &a
 		}
 		out.Literals[i] = l
 	}

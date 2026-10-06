@@ -83,17 +83,33 @@ type Rule struct {
 // `a(?x), b(?x,?y), ?y < 5` is Body{Literals: [Atom a, Atom b, Compare]}.
 type Body struct{ Literals []Literal }
 
-// A Literal is exactly one of: a positive atom, a negated atom (stratified negation), or a
-// comparison built-in. Exactly one field is non-nil. Examples: `param(?m,"VIN",?v)` is
-// Literal{Pos: &Atom{...}}; `not param(?m,"VIN",?v)` is Literal{Neg: ...}; `?v < 30` is
-// Literal{Compare: ...}.
+// A Literal is exactly one of: a positive atom, a negated atom (stratified negation), a
+// comparison built-in, or an aggregate over a body of its own. Exactly one field is non-nil.
+// Examples: `param(?m,"VIN",?v)` is Literal{Pos: &Atom{...}}; `not param(?m,"VIN",?v)` is
+// Literal{Neg: ...}; `?v < 30` is Literal{Compare: ...}; `?c = count(?n) : { pin(?r, ?n, _) }` is
+// Literal{Agg: ...}.
 type Literal struct {
 	Pos     *Atom
 	Neg     *Atom
 	Compare *Compare
+	Agg     *BodyAggregate
 	// at is the literal's written position in its body (1-based), set for a witnessed Eval before any
 	// rewrite; 0 marks a literal a rewrite added. See Witness.
 	at int
+}
+
+// A BodyAggregate binds Result to an aggregate over the bindings of Body, reduced once per value of
+// the variables Body shares with the rest of the clause (#71): `part(?r), ?c = count(?n) : { pin(?r,
+// ?n, _) }` counts each part's pins. Every value the rest of the clause gives those variables gets a
+// row, so a part with no pins counts 0. Over no bindings count and sum are 0, min and max absent and
+// list empty, as an aggregate over nothing answers in a projection (#122).
+//
+// Body reads only relations complete before the clause's own, as a rule head aggregate does, and a
+// shared variable has to be bound outside the braces by a positive relation and inside them by one.
+type BodyAggregate struct {
+	Result Var
+	Agg    Aggregate
+	Body   Body
 }
 
 // An Atom applies a relation to argument terms: Relation(Args...). Relation is an EDB name

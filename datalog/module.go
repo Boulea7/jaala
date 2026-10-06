@@ -127,6 +127,9 @@ func resolveAll(v *ns.Vocabulary) (*resolution, error) {
 			continue
 		}
 		rules, err := ParseRules(m.Text)
+		if err == nil {
+			rules, err = lowerRules(rules, "m"+strconv.Itoa(i))
+		}
 		if err != nil {
 			return nil, fail(i, fmt.Errorf("%w (in module %q)", err, m.Path))
 		}
@@ -152,7 +155,7 @@ func resolveAll(v *ns.Vocabulary) (*resolution, error) {
 		for i, rules := range perModule {
 			for _, rule := range rules {
 				for _, a := range ruleAtoms(rule.Body) {
-					if !privates[a.Relation] && !v.Has(a.Relation) {
+					if !privates[a.Relation] && !isAggHelper(a.Relation) && !v.Has(a.Relation) {
 						return nil, fail(i, fmt.Errorf("query: module %q rule %q reads %s", mods[i].Path, displayName(rule.Head.Relation), v.Unknown(a.Relation)))
 					}
 				}
@@ -271,6 +274,9 @@ func privateName(module, name string, id int) string {
 // displayName is a linked relation name as its author wrote it: a private member loses its unit
 // suffix, so an error or a lint names `net._probe_count` rather than the linker's spelling.
 func displayName(rel string) string {
+	if i := strings.Index(rel, aggSep); i >= 0 {
+		return rel[:i] // a body aggregate's relation, shown as its aggregate (see lowerBodyAggregates)
+	}
 	if i := strings.Index(rel, privateSep); i >= 0 {
 		return rel[:i]
 	}

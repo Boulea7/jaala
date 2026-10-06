@@ -1,0 +1,3 @@
+fixture: deps
+query: "package(?p), ?n = count(?t) : { test(?t, _), ?t != ?p } => ?p, ?n"
+expect_error: "so a relation inside the braces must bind it too"

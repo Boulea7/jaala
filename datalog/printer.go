@@ -33,9 +33,12 @@ func (a Atom) String() string {
 	return a.Relation + "(" + strings.Join(args, ", ") + ")"
 }
 
-// String renders the literal as query text: an atom, `not` an atom, or a comparison.
+// String renders the literal as query text: an atom, `not` an atom, a comparison, or an aggregate
+// over a body of its own.
 func (l Literal) String() string {
 	switch {
+	case l.Agg != nil:
+		return "?" + string(l.Agg.Result) + " = " + (Term{Agg: &l.Agg.Agg}).String() + " : { " + l.Agg.Body.String() + " }"
 	case l.Pos != nil:
 		return l.Pos.String()
 	case l.Neg != nil:

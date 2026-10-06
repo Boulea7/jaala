@@ -53,16 +53,26 @@ var genGraphRels = []genRel{
 	{name: "weight", cols: []genType{genNode, genNum}, layer: -1},
 }
 
-// genLit is a body literal: an atom, a negated atom, or (rel empty) the comparison args[0] op args[1].
-// Args are printed terms: "?x", "_", `"v1"`, "3".
+// genLit is a body literal: an atom, a negated atom, an aggregate over a body of its own, or (rel
+// empty) the comparison args[0] op args[1]. Args are printed terms: "?x", "_", `"v1"`, "3".
 type genLit struct {
 	neg  bool
 	rel  string
 	args []string
 	op   string
+	agg  *genAgg
+}
+
+// genAgg is `result = fn : { body }` (#71).
+type genAgg struct {
+	result, fn string
+	body       []genLit
 }
 
 func (l genLit) String() string {
+	if l.agg != nil {
+		return l.agg.result + " = " + l.agg.fn + " : { " + joinLits(l.agg.body) + " }"
+	}
 	if l.rel == "" {
 		return l.args[0] + " " + l.op + " " + l.args[1]
 	}
@@ -196,8 +206,9 @@ func (g *generator) fresh() string {
 // Literals are added in an order Naive can run as written: a comparison or a negation only reads
 // variables already bound.
 type genBody struct {
-	lits  []genLit
-	bound map[genType][]string
+	lits    []genLit
+	bound   map[genType][]string
+	results map[string]bool // what a body aggregate binds
 }
 
 func newBody() *genBody { return &genBody{bound: map[genType][]string{}} }
@@ -321,6 +332,9 @@ func (g *generator) body(layer int, recursive bool) *genBody {
 		}
 		g.atom(b, from[g.pick(len(from))], false)
 	}
+	if g.chance(0.08) {
+		g.bodyAggregate(b, layer)
+	}
 	if len(b.all()) > 0 && g.chance(0.25) {
 		from := g.readable(layer, false, false)
 		g.atom(b, from[g.pick(len(from))], true)
@@ -329,6 +343,51 @@ func (g *generator) body(layer int, recursive bool) *genBody {
 		g.compare(b)
 	}
 	return b
+}
+
+// bodyAggregate adds `?v = fn : { ... }` (#71) over relations below layer, sharing up to two of the
+// variables b has bound, and binds ?v as a number. Each shared variable is bound by a relation inside
+// the braces, and none is another aggregate's value, since the braces' domain is what the rest of the
+// body binds without one.
+func (g *generator) bodyAggregate(b *genBody, layer int) {
+	inner := newBody()
+	var shared []string
+	for t, vars := range b.bound {
+		for _, v := range vars {
+			if !b.results[v] && len(shared) < 2 && g.chance(0.5) {
+				inner.bound[t] = append(inner.bound[t], v)
+				shared = append(shared, v)
+			}
+		}
+	}
+	from := g.readable(layer, false, false)
+	for i := 1 + g.pick(2); i > 0; i-- {
+		g.atom(inner, from[g.pick(len(from))], false)
+	}
+	fn := g.aggregate(inner, g.chance(0.1))
+	for t, vars := range inner.bound {
+		for _, v := range vars {
+			if !slices.Contains(shared, v) || slices.ContainsFunc(inner.lits, func(l genLit) bool { return slices.Contains(l.args, v) }) {
+				continue
+			}
+			if t == genNode {
+				inner.lits = append(inner.lits, genLit{rel: "node", args: []string{v}})
+			} else {
+				inner.lits = append(inner.lits, genLit{rel: "weight", args: []string{"_", v}})
+			}
+		}
+	}
+	if g.chance(0.3) {
+		g.compare(inner)
+	}
+	v := g.fresh()
+	b.lits = append(b.lits, genLit{agg: &genAgg{result: v, fn: fn, body: inner.lits}})
+	b.bound[genNum] = append(b.bound[genNum], v)
+	if b.results == nil {
+		b.results = map[string]bool{}
+	}
+	b.results[v] = true
+	g.shapes["body aggregate"] = true
 }
 
 func (g *generator) rule(r genRel, recursive bool) genRule {
@@ -445,6 +504,9 @@ func (g *generator) goal() genGoal {
 			b.bind(len(b.lits)-1, 0, g.constant(r.cols[0]))
 			g.shapes["bound goal"] = true
 		}
+	}
+	if g.chance(0.1) {
+		g.bodyAggregate(b, len(g.rels)+1)
 	}
 	all := b.all()
 	if len(all) > 0 && g.chance(0.2) {
@@ -702,7 +764,9 @@ func (c genCase) smaller() []genCase {
 // drop removes relation rel: its rules and every literal that reads it. A goal left with nothing
 // asks for the nodes instead.
 func (p *genProgram) drop(rel string) {
-	reads := func(l genLit) bool { return l.rel == rel }
+	reads := func(l genLit) bool {
+		return l.rel == rel || l.agg != nil && slices.ContainsFunc(l.agg.body, func(in genLit) bool { return in.rel == rel })
+	}
 	p.rules = slices.DeleteFunc(p.rules, func(r genRule) bool { return r.head == rel })
 	for i := range p.rules {
 		p.rules[i].body = slices.DeleteFunc(p.rules[i].body, reads)
@@ -794,7 +858,7 @@ func TestGeneratedProgramsAgree(t *testing.T) {
 			}
 		}
 	}
-	shapes := []string{"program", "recursion", "negation", "head aggregate", "goal aggregate", "bound goal", "set-bound goal"}
+	shapes := []string{"program", "recursion", "negation", "head aggregate", "goal aggregate", "body aggregate", "bound goal", "set-bound goal"}
 	var counts, issues []string
 	for _, sh := range shapes {
 		counts = append(counts, fmt.Sprintf("%s %d/%d", sh, compared[sh+"/plain"], compared[sh+"/witnessed"]))

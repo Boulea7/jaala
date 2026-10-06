@@ -17,7 +17,8 @@ import (
 //	goal        = literals [ "=>" projection [ "having" havings ] [ "order" "by" orders ]
 //	              [ "limit" count ] [ "offset" count ] ] ;
 //	literals    = literal { "," literal } ;
-//	literal     = atom | "not" atom | comparison ;    (* "not atom" = stratified negation *)
+//	literal     = atom | "not" atom | comparison | bodyagg ; (* "not atom" = stratified negation *)
+//	bodyagg     = variable "=" aggregate ":" "{" literals "}" ; (* per shared variable's value, #71 *)
 //	atom        = relation "(" [ term { "," term } ] ")" ;
 //	comparison  = term op term ;
 //	op          = "<" | "<=" | "=" | "!=" | ">" | ">=" ;
@@ -476,9 +477,13 @@ func parseLiterals(body string) ([]Literal, error) {
 	return lits, nil
 }
 
-// parseLiteral parses one literal: a "not R(...)" is a negated atom, another parenthesised piece is
-// a positive atom, anything else a comparison (only atoms carry parentheses).
+// parseLiteral parses one literal: a "not R(...)" is a negated atom, `?v = func(?x) : { body }` an
+// aggregate over a body of its own, another parenthesised piece a positive atom, anything else a
+// comparison.
 func parseLiteral(s string) (Literal, error) {
+	if parts := splitTop(s, ":"); len(parts) == 2 && strings.HasPrefix(strings.TrimSpace(parts[1]), "{") {
+		return parseBodyAggregate(parts[0], parts[1])
+	}
 	if rest, isNeg := strings.CutPrefix(strings.TrimSpace(s), "not "); isNeg {
 		atom, err := parseAtom(strings.TrimSpace(rest))
 		if err != nil {
@@ -498,6 +503,42 @@ func parseLiteral(s string) (Literal, error) {
 		return Literal{}, err
 	}
 	return Literal{Compare: &cmp}, nil
+}
+
+// parseBodyAggregate parses `?v = func([distinct] ?x) : { body }`, split at its top-level colon.
+func parseBodyAggregate(left, right string) (Literal, error) {
+	right = strings.TrimSpace(right)
+	if !strings.HasSuffix(right, "}") {
+		return Literal{}, fmt.Errorf("query: an aggregate's body %q must close with }", right)
+	}
+	inner := right[1 : len(right)-1]
+	sides := splitTop(left, "=")
+	if len(sides) != 2 {
+		return Literal{}, fmt.Errorf("query: %q must name the variable an aggregate binds, as ?v = count(?x) : { ... }", strings.TrimSpace(left))
+	}
+	v, err := parseTerm(sides[0])
+	if err != nil {
+		return Literal{}, err
+	}
+	if v.Var == "" || v.Var == "_" {
+		return Literal{}, fmt.Errorf("query: an aggregate binds a ?variable, not %s", v)
+	}
+	fn := strings.TrimSpace(sides[1])
+	if strings.IndexByte(fn, '(') < 0 {
+		return Literal{}, fmt.Errorf("query: %q is not an aggregate, as count(?x)", fn)
+	}
+	agg, err := parseAggregate(fn)
+	if err != nil {
+		return Literal{}, err
+	}
+	if strings.TrimSpace(inner) == "" {
+		return Literal{}, fmt.Errorf("query: the aggregate binding ?%s has an empty body", v.Var)
+	}
+	lits, err := parseLiterals(inner)
+	if err != nil {
+		return Literal{}, err
+	}
+	return Literal{Agg: &BodyAggregate{Result: v.Var, Agg: *agg.Agg, Body: Body{Literals: lits}}}, nil
 }
 
 func parseAtom(s string) (Atom, error) { return parseAtomArgs(s, parseTerm) }

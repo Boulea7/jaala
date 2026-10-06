@@ -452,6 +452,7 @@ func ExplainName(s string) string {
 		magicPrefix, "demand:",
 		supPrefix, "prefix:",
 		bindPrefix, "values:",
+		aggSep, ":",
 		deltaSep, "+",
 		fromSep, ":from",
 		"\x00answer", ":answer",

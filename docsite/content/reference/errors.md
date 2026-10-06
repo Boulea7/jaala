@@ -115,6 +115,28 @@ An aggregate is a function name and one variable in parentheses.
 
 {{ demo "demos/errors/malformed-aggregate.yaml" }}
 
+`query: … must name the variable an aggregate binds, as ?v = count(?x) : { ... }`
+
+An aggregate in a body, written with braces, binds a variable: `?n = count(?t) : { ... }`.
+
+`query: … is not an aggregate, as count(?x)`
+
+The right side of `=` before the braces is an aggregate function over one variable.
+
+`query: an aggregate binds a ?variable, not …`
+
+The left side is a variable, not `_` or a constant.
+
+`query: an aggregate's body … must close with }`
+
+The braces hold the aggregate's body and close it.
+
+`query: the aggregate binding ?… has an empty body`
+
+There's nothing in the braces to reduce.
+
+{{ demo "demos/errors/aggregate-binding-has-an-empty-body.yaml" }}
+
 `query: aggregate …(...) expects a ?variable, got …`
 
 An aggregate reduces a variable, not a constant.
@@ -338,6 +360,38 @@ An aggregate stands in a rule head or the projection, not in a body. Raised for 
 A cycle of rules passes through a `not`, so no order derives them.
 
 {{ demo "demos/errors/recursion-through-negation.yaml" }}
+
+`query: … uses ?… inside its own braces; the aggregate binds it`
+
+An aggregate in a body binds its variable once its braces are reduced, so they can't read it. A filter on the value goes after the braces.
+
+{{ demo "demos/errors/uses-inside-its-own-braces.yaml" }}
+
+`query: … holds another aggregate in its braces, which is not supported`
+
+Aggregates in a body don't nest yet. A rule can name the inner one's result, and the braces can read that rule.
+
+{{ demo "demos/errors/holds-another-aggregate.yaml" }}
+
+`query: … shares ?… with the rest of its body, so a relation outside the braces must bind it (one that doesn't need an aggregate's value)`
+
+A variable written both in the braces and outside them picks which group the braces reduce, so a relation outside has to bind it. One that reads an aggregate's value can't, since that value isn't known until the braces are reduced.
+
+{{ demo "demos/errors/shares-outside-the-braces.yaml" }}
+
+`query: … shares ?… with the rest of its body, so a relation inside the braces must bind it too`
+
+The braces group by what they share, so a relation inside them has to bind it, not only a comparison or a `not`.
+
+{{ demo "demos/errors/shares-inside-the-braces.yaml" }}
+
+`query: … aggregates ?…, which no relation in its braces binds`
+
+The variable an aggregate in a body reduces is bound by a relation inside its braces.
+
+`query: two aggregates bind ?…`
+
+Each aggregate in a body binds a variable of its own.
 
 `query: rules are not stratifiable (recursion through an aggregate: …)`
 

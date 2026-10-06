@@ -243,6 +243,16 @@ go list -deps ./... | grep '\.' | grep -v '^github.com/panyam/jaala' | grep -v '
   `list` the empty text. Never `""`, which reads as a value and keys as one (#62). Soufflé gives no
   tuple for a min over nothing, so its translator writes `souffleAbsent` there and skips, guards and
   reads back that sentinel as jaala treats absent.
+- **An aggregate in a body is lowered to rules before anything else runs** (`bodyagg.go`, #71).
+  `?v = f(?x) : { body }` becomes a domain relation of the shared variables (the clause's positive
+  relations that don't read an aggregate's value; no citations, no witness), a head aggregate over
+  the braces (no witness), and a value relation with a zero clause from `emptyAggregate` (#122). It
+  runs first in `evaluateOn` and `ValidateBound`, and in `resolveAll` per module, so every check and
+  both evaluators see ordinary rules; Naive and SemiNaive can't disagree about it, and only the
+  Soufflé step checks the lowering, which it writes in Soufflé's own form (a min or max as two
+  bodies). Helper names start with the aggregate as written and `aggSep`, so `displayName`, a
+  witness node and `whereRule` show `count(?n)` or the literal. A variable written only inside the
+  braces is theirs alone.
 - **Demand goes through negation and into it (#34).** If the rewritten program doesn't stratify
   (a recursive caller negating what it demands), `magic` redoes it with negated calls reading their
   relations in full. That usually stratifies, but the corpus found two cases where it doesn't (#93):
