@@ -95,6 +95,16 @@ go list -deps ./... | grep '\.' | grep -v '^github.com/panyam/jaala' | grep -v '
   order and `list` see one text. Never canonicalize a constant's `S` earlier (#65), and a host-bound
   column is filled in after, as bound. Two derivations of one derived tuple with different
   annotated spellings still keep the first (dedup is by value).
+- **Equality is an equivalence, with one key per value** (`valueEq`, `valueKey`, #162). Two numbers
+  compare by value (NaN equals NaN), a number and text when the text is the number's canonical form
+  (`numberKey`: `ftoa`, -0 as 0), and texts by text. So `"0"`, `0` and `00` are one value and `"00"`
+  is only itself. The index files each value under its one key (`tupleKey`), so a bucket is exact;
+  `unify` and `valsEqual` still decide each candidate. A change to `valueEq` must keep
+  `TestEqualityIsAnEquivalence` and `TestTheIndexFindsWhatAScanFinds` passing: the old rule (number
+  vs text by the number's spelling) made join and rule order decide answers.
+- **A variable's name is an ident and a number is decimal** (`checkVarName`, `isDecimal`, #163), as
+  the grammar comment in `parse.go` says. `strconv.ParseFloat` alone also takes inf, nan, hex and
+  `.5`. The parser slices rather than lexes; a tokenizer is filed separately.
 - **The answer order is a total order, and hosts see it.** `orderValues` ranks absent, then numbers by
   value, then text (#8). Comparing as numbers only when both are numbers cycles on a mixed column
   (2 < 10, "10" < "1a" < "2"). `dedupSort` sorts before it dedups, because dedup keys on text

@@ -263,11 +263,7 @@ func fanOut(b *Base, a *Atom, flags []bool) int {
 	if vars {
 		return len(rows) / max(len(idx), 1)
 	}
-	n := 0
-	for _, k := range tupleKeys(consts) {
-		n += len(idx[k])
-	}
-	return n
+	return len(idx[tupleKey(consts)])
 }
 
 // isCheck reports whether a literal only tests: a comparison or a filter.

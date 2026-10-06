@@ -365,17 +365,15 @@ func (b *Base) addTuple(rel string, t idbTuple) (bool, error) {
 	tuples := b.idb[rel]
 	x := b.idbIndexFor(rel, fullMask(len(t.vals)))
 	x.sync(tuples, fullMask(len(t.vals)))
-	for _, k := range tupleKeys(t.vals) {
-		for _, i := range x.buckets[k] {
-			if err := b.countWork(); err != nil {
-				return false, err
+	for _, i := range x.buckets[tupleKey(t.vals)] {
+		if err := b.countWork(); err != nil {
+			return false, err
+		}
+		if valsEqual(tuples[i].vals, t.vals) {
+			if b.canonical() && (t.wit != nil || t.parts != nil) {
+				return b.keepCanonical(rel, i, t), nil
 			}
-			if valsEqual(tuples[i].vals, t.vals) {
-				if b.canonical() && (t.wit != nil || t.parts != nil) {
-					return b.keepCanonical(rel, i, t), nil
-				}
-				return false, nil
-			}
+			return false, nil
 		}
 	}
 	b.idb[rel] = append(tuples, t)

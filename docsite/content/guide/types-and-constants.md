@@ -29,6 +29,8 @@ Numbers compare by value and text compares as text, which is the usual order for
 
 {{ demo "demos/guide/types-text-order.yaml" }}
 
+Text equals a number when the text is that number written the standard way, so `"1"` equals 1, and so does `1.0`, but `"01"` and `"1.0"` as text don't ([#162](https://github.com/panyam/jaala/issues/162)). Each value has exactly one standard form, which is what keeps equality consistent: if two values both equal a third, they equal each other, whichever order a join meets them in. It mostly matters in a column with no declared type, since in a typed one jaala reads the constant as the column's type first.
+
 A number and a piece of text have no order between them, so a comparison of one with the other never holds, whichever way round it's written:
 
 {{ demo "demos/guide/types-number-vs-text.yaml" }}

@@ -72,8 +72,10 @@ type ContextSource interface {
 //
 // Lookup may return facts that don't match, since the engine checks every one, but it must not leave
 // out one that does, or the answer silently loses it. Two values match when both carry a number and
-// the numbers are equal, so a bound N(1) matches a stored number spelled 1.0; when both are absent; or
-// otherwise when their text is equal. A source unsure how its index compares can return more.
+// the numbers are equal, so a bound N(1) matches a stored number spelled 1.0; when one carries a
+// number and the other's text is that number written canonically (as strconv.FormatFloat's 'g', -1
+// writes it, with -0 as 0), so text "1" matches N(1) and text "01" doesn't; when both are absent; and
+// when two texts are equal. A source unsure how its index compares can return more.
 //
 // What Lookup returns is kept for the one Eval that asked, so a relation the queries only ever probe
 // is never held whole by the Base. A call with nothing bound still reads the relation whole, through

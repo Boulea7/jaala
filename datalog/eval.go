@@ -907,7 +907,13 @@ func resolve(t Term, bnd *binding) (ns.Value, bool) {
 	return val, ok
 }
 
-// valueEq compares two values: numeric when both carry a number, string otherwise.
+// valueEq reports whether two values are the same value: two numbers when their numbers are equal,
+// a number and text when the text is the number written canonically (ftoa, -0 as 0), and two texts
+// when their text is. So "0", 0 and 00 are one value, and "00" is only itself. It is an equivalence
+// (#162): each value has one key (valueKey) and two values are equal exactly when their keys are, so
+// which of two equal values a derivation or a join meets first can't change what else equals it. The
+// old rule compared a number with text by the number's own spelling, which made "0" equal 0 and 0
+// equal 00 but not "0" equal 00, and an answer depend on rule and join order.
 //
 // ABSENT UNIFIES ONLY WITH ABSENT, which is what stops it colliding with the empty string. Two
 // unstated bounds ARE the same answer to "what does this row state", so this is true rather than
@@ -918,10 +924,45 @@ func valueEq(a, b ns.Value) bool {
 	if a.Absent || b.Absent {
 		return a.Absent && b.Absent
 	}
-	if a.Num != nil && b.Num != nil {
-		return *a.Num == *b.Num
+	switch {
+	case a.Num != nil && b.Num != nil:
+		return *a.Num == *b.Num || (*a.Num != *a.Num && *b.Num != *b.Num) // NaN is itself
+	case a.Num != nil:
+		return textIsNumber(b.S, *a.Num)
+	case b.Num != nil:
+		return textIsNumber(a.S, *b.Num)
 	}
 	return a.S == b.S
+}
+
+// textIsNumber reports whether s is n written canonically. It parses first, so text that isn't n
+// costs no allocation.
+func textIsNumber(s string, n float64) bool {
+	f, err := strconv.ParseFloat(s, 64)
+	if err != nil || (f != n && !(f != f && n != n)) {
+		return false
+	}
+	return s == numberKey(n)
+}
+
+// valueKey is the one key a value has under valueEq: absentKey for an absent value, a number's
+// canonical text, and text's own. A canonical text and its number share a key, as they are equal.
+func valueKey(v ns.Value) string {
+	switch {
+	case v.Absent:
+		return absentKey
+	case v.Num != nil:
+		return numberKey(*v.Num)
+	}
+	return v.S
+}
+
+// numberKey is n written canonically, with -0 as 0 (ftoa writes it "-0", #89).
+func numberKey(n float64) string {
+	if n == 0 {
+		n = 0
+	}
+	return ftoa(n)
 }
 
 // orderingOps are the comparisons that ask which of two values is LARGER. Equality and inequality are

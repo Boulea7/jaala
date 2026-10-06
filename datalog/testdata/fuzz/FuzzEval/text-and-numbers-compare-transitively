@@ -1,0 +1,2 @@
+go test fuzz v1
+string("z(\"0\") :- node(?a); z(0) :- weight(?x, ?b); z(00)")
