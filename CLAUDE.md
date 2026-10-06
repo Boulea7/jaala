@@ -15,9 +15,10 @@ pin fails the docs workflow. `make -C docsite check` builds it and runs its test
 
 ## Commands
 
-`./selfcheck.sh` runs the host-free checks at full size: the generated corpus at 5000 seeds and the
-work baselines (Soufflé when #23 lands). CI (`.github/workflows/ci.yml`) runs exactly these,
-and all must pass:
+`./selfcheck.sh` runs the host-free checks at full size: the generated corpus at 5000 seeds, the
+work baselines, fuzzing, and the same 5000 seeds against Soufflé when `souffle` is on PATH (it
+prints "could not run" otherwise). CI (`.github/workflows/ci.yml`) runs the set below, and a
+separate `souffle` job installs Soufflé 2.5's release `.deb` and compares 1000 seeds; all must pass:
 
 ```sh
 gofmt -l .                      # must print nothing
@@ -161,6 +162,18 @@ go list -deps ./... | grep '\.' | grep -v '^github.com/panyam/jaala' | grep -v '
   disagreement, so a known one can mask another: #90 hid about a tenth of the planned comparisons
   until it was fixed.
   `./selfcheck.sh` runs the corpus at 5000 seeds (#86).
+- **Naive is checked against Soufflé** (`souffle_test.go`, #23). The translator is test code, from
+  the parsed `Query` and its bound values to a Soufflé program whose relations carry a per-program
+  prefix, so a batch of 200 programs is one souffle run (batches run in parallel). Types come from
+  unification over every place a variable or constant sits, as Soufflé checks them. An aggregate
+  reads a helper relation of the body's bindings (every `_` named, so a binding is a tuple) or of
+  the group's distinct values, and gets a rule of its own: Soufflé 2.5 segfaults on a rule whose
+  body is two aggregates and nothing else. A variable bound to one value is a constant, as
+  `bindGoal` makes it (not a group key), and an aggregate goal with no group column writes jaala's
+  row over nothing explicitly. `order by` and `limit` are applied in Go with jaala's own order. A
+  program outside the fragment (`list`, a rule head `sum`/`min`/`max` with no group column) is
+  counted by reason, never dropped. `TestSouffleCatchesAWrongTranslation` drops negation on purpose
+  and requires a shrunk disagreement. Locally Soufflé is built from source on arm64 (no package).
 - **The query text is fuzzed** (`fuzz_test.go`, #89). `FuzzParse`: any text parses or fails with a
   `query:` error, and a parsed rule prints back as text that parses to the same rule. `FuzzEval`: a
   program that parses is validated and evaluated without a panic, every error keeps `query:`, and when
