@@ -120,8 +120,9 @@ func newEDBCache() *edbCache {
 	return &edbCache{tup: map[string]*edbRead{}, idx: map[idxKey]edbIndex{}}
 }
 
-// tuples returns rel's tuples, asking the Source the first time.
-func (c *edbCache) tuples(ctx context.Context, rel string, src ns.Source) ([]ns.Tuple, error) {
+// tuples returns rel's tuples, asking the Source the first time and normalizing what it read to types
+// (see normalizeTuples).
+func (c *edbCache) tuples(ctx context.Context, rel string, src ns.Source, types []ns.ArgType) ([]ns.Tuple, error) {
 	c.mu.Lock()
 	r, ok := c.tup[rel]
 	if !ok {
@@ -141,6 +142,7 @@ func (c *edbCache) tuples(ctx context.Context, rel string, src ns.Source) ([]ns.
 	if err != nil {
 		return nil, err
 	}
+	t = normalizeTuples(t, types)
 	r.tuples, r.done = t, true
 	return t, nil
 }

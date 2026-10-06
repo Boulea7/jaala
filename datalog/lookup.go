@@ -54,6 +54,7 @@ func (b *Base) lookup(atom *Atom, bnd *binding) (rows []ns.Tuple, ok bool, err e
 		}
 		return nil, true, fmt.Errorf("query: looking up %s: %w", atom.Relation, err)
 	}
+	rows = normalizeTuples(rows, b.argTypesOf(atom.Relation))
 	if r.looked == nil {
 		r.looked = map[string][]ns.Tuple{}
 	}

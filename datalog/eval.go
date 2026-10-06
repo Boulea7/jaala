@@ -146,9 +146,10 @@ func (b *Base) Work() int64 {
 // edbTuples returns a base relation's tuples, reading them from the Source once per Base.
 func (b *Base) edbTuples(rel string) ([]ns.Tuple, error) {
 	if b.edb == nil {
-		return readTuples(b.run.context(), b.src, rel)
+		t, err := readTuples(b.run.context(), b.src, rel)
+		return normalizeTuples(t, b.argTypesOf(rel)), err
 	}
-	return b.edb.tuples(b.run.context(), rel, b.src)
+	return b.edb.tuples(b.run.context(), rel, b.src, b.argTypesOf(rel))
 }
 
 // readTuples reads one relation from the Source, through TuplesContext when the Source can be
@@ -908,12 +909,16 @@ func resolve(t Term, bnd *binding) (ns.Value, bool) {
 }
 
 // valueEq reports whether two values are the same value: two numbers when their numbers are equal,
-// a number and text when the text is the number written canonically (ftoa, -0 as 0), and two texts
-// when their text is. So "0", 0 and 00 are one value, and "00" is only itself. It is an equivalence
-// (#162): each value has one key (valueKey) and two values are equal exactly when their keys are, so
-// which of two equal values a derivation or a join meets first can't change what else equals it. The
-// old rule compared a number with text by the number's own spelling, which made "0" equal 0 and 0
-// equal 00 but not "0" equal 00, and an answer depend on rule and join order.
+// two texts when their text is, and a number never equals text (#162). It is an equivalence: each
+// value has one key (valueKey) and two values are equal exactly when their keys are, so which of two
+// equal values a derivation or a join meets first can't change what else equals it. The old rule
+// compared a number with text by the number's own spelling, which made "0" equal 0 and 0 equal 00 but
+// not "0" equal 00, and an answer depend on rule and join order.
+//
+// A query's constant is read as its argument's type before evaluation (coerceConstants), and a
+// relation's tuples as their arguments' types when the Base reads them (normalizeTuples), so in a
+// typed argument a number and text never meet. In an untyped one, quotes and the host's ns.S or ns.N
+// decide.
 //
 // ABSENT UNIFIES ONLY WITH ABSENT, which is what stops it colliding with the empty string. Two
 // unstated bounds ARE the same answer to "what does this row state", so this is true rather than
@@ -927,35 +932,27 @@ func valueEq(a, b ns.Value) bool {
 	switch {
 	case a.Num != nil && b.Num != nil:
 		return *a.Num == *b.Num || (*a.Num != *a.Num && *b.Num != *b.Num) // NaN is itself
-	case a.Num != nil:
-		return textIsNumber(b.S, *a.Num)
-	case b.Num != nil:
-		return textIsNumber(a.S, *b.Num)
+	case a.Num != nil || b.Num != nil:
+		return false
 	}
 	return a.S == b.S
 }
 
-// textIsNumber reports whether s is n written canonically. It parses first, so text that isn't n
-// costs no allocation.
-func textIsNumber(s string, n float64) bool {
-	f, err := strconv.ParseFloat(s, 64)
-	if err != nil || (f != n && !(f != f && n != n)) {
-		return false
-	}
-	return s == numberKey(n)
-}
-
-// valueKey is the one key a value has under valueEq: absentKey for an absent value, a number's
-// canonical text, and text's own. A canonical text and its number share a key, as they are equal.
+// valueKey is the one key a value has under valueEq: absentKey for an absent value, numberPrefix and a
+// number's canonical text, and text's own. The prefix starts with a NUL, which no text from a Source
+// holds, so a number never shares a key with text.
 func valueKey(v ns.Value) string {
 	switch {
 	case v.Absent:
 		return absentKey
 	case v.Num != nil:
-		return numberKey(*v.Num)
+		return numberPrefix + numberKey(*v.Num)
 	}
 	return v.S
 }
+
+// numberPrefix starts a number's key (see valueKey).
+const numberPrefix = "\x00n"
 
 // numberKey is n written canonically, with -0 as 0 (ftoa writes it "-0", #89).
 func numberKey(n float64) string {

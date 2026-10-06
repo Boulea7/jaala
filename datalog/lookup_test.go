@@ -31,7 +31,8 @@ func (c *counting) whole(rel string) int {
 	return c.wholes[rel]
 }
 
-// looking is a counting Source that also answers Lookup, by scanning with the engine's equality. sloppy
+// looking is a counting Source that also answers Lookup, by scanning with the engine's equality over
+// each value read as its argument's declared type, as the LookupSource contract asks. sloppy
 // returns the whole relation from every lookup, which the contract allows; fail makes every lookup
 // fail with it.
 type looking struct {
@@ -57,11 +58,13 @@ func (l *looking) Lookup(ctx context.Context, rel string, bound map[int]ns.Value
 	if l.sloppy {
 		return all, nil
 	}
+	s, _ := l.Source.Schema(rel)
+	read := normalizeTuples(all, s.Types)
 	var out []ns.Tuple
-	for _, t := range all {
+	for k, t := range all {
 		ok := true
 		for i, v := range bound {
-			ok = ok && valueEq(t.Vals[i], v)
+			ok = ok && valueEq(read[k].Vals[i], v)
 		}
 		if ok {
 			out = append(out, t)
