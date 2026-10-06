@@ -80,9 +80,14 @@ func TestAggregateGroupsAndHaving(t *testing.T) {
 // An aggregate-only projection is one group by definition and answers even when nothing matched, as
 // SQL's COUNT(*) does (agni issue 726). A grouped one has no key to name a group by, so it does not.
 func TestAggregateOverNothing(t *testing.T) {
-	rows := eval(t, graph(), `edge(?a, "zzz") => count(?a), sum(?a), list(?a)`)
-	if len(rows) != 1 || rows[0].Bind["count(a)"].S != "0" || rows[0].Bind["sum(a)"].Num != nil || rows[0].Bind["list(a)"].S != "" {
-		t.Errorf("rows = %+v, want one row: count 0, sum with no value, list empty", rows)
+	rows := eval(t, graph(), `edge(?a, "zzz") => count(?a), sum(?a), list(?a), min(?a), max(?a)`)
+	if len(rows) != 1 {
+		t.Fatalf("rows = %+v, want one row", rows)
+	}
+	b := rows[0].Bind
+	if b["count(a)"].S != "0" || b["sum(a)"].Num == nil || *b["sum(a)"].Num != 0 || b["list(a)"].S != "" || b["list(a)"].Absent ||
+		!b["min(a)"].Absent || !b["max(a)"].Absent {
+		t.Errorf("row = %+v, want count 0, sum 0, list empty, min and max absent (#122)", b)
 	}
 	if rows := eval(t, graph(), `edge(?a, "zzz") => ?a, count(?a)`); len(rows) != 0 {
 		t.Errorf("grouped over nothing = %v, want no rows", rows)
