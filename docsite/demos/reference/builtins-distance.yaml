@@ -1,0 +1,3 @@
+fixture: deps
+query: package(?a), package(?b), ?a < ?b, str.distance(?a, ?b, ?d), ?d <= 1 => ?a, ?b, ?d
+expect: [[api, app, 1]]

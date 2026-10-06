@@ -13,7 +13,7 @@ import (
 //
 //	unknown relation "egde"; did you mean "edge"?
 //	unknown module "nett" in "nett.pin_count"; did you mean "net.pin_count"?
-//	"str" is a module, not a relation; it holds contains, glob, match, prefix, suffix
+//	"str" is a module, not a relation; it holds contains, distance, glob, match, prefix, suffix
 //	"pin" is a module, not a relation; it holds name, net; did you mean "component.pin"?
 //
 // A missing module is named as such because "unknown relation" would send the reader hunting a typo
