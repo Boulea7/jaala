@@ -3,8 +3,6 @@ package datalog
 import (
 	"errors"
 	"math/rand"
-	"slices"
-	"sort"
 	"strings"
 	"testing"
 
@@ -106,9 +104,6 @@ func FuzzEval(f *testing.F) {
 		keepsPrefix(t, "Naive", text, err)
 		_, diff, err := agree(q, b)
 		keepsPrefix(t, "agree", text, err)
-		if diff != "" && spelledApart(q, b) {
-			t.Skipf("known disagreement #148 (a number spelled two ways): %q", text)
-		}
 		if diff != "" {
 			t.Fatalf("%q: %s", text, diff)
 		}
@@ -116,58 +111,4 @@ func FuzzEval(f *testing.F) {
 			keepsPrefix(t, "SemiNaive", text, err)
 		}
 	})
-}
-
-// spelledApart reports whether every evaluator answers q with the same rows once each number is written
-// canonically, so a difference between them is only which spelling of a number reached the answer:
-// #148, counted rather than failed until it is fixed.
-func spelledApart(q Query, b *Base) bool {
-	var want []string
-	for i, ev := range []Evaluator{Naive{}, SemiNaive{WrittenOrder: true}, SemiNaive{}} {
-		rows, err := ev.Eval(bg, q, b)
-		if err != nil {
-			return false
-		}
-		var got []string
-		for _, r := range rows {
-			got = append(got, canonicalRow(r))
-		}
-		sort.Strings(got)
-		if i == 0 {
-			want = got
-		} else if !slices.Equal(got, want) {
-			return false
-		}
-	}
-	return true
-}
-
-// canonicalRow is a row's bindings with each number written as ftoa writes it.
-func canonicalRow(r Row) string {
-	keys := make([]string, 0, len(r.Bind))
-	for v, val := range r.Bind {
-		text := val.S
-		if val.Num != nil {
-			text = ftoa(*val.Num)
-		}
-		keys = append(keys, string(v)+"="+text)
-	}
-	sort.Strings(keys)
-	return strings.Join(keys, ",")
-}
-
-// #148, pinned: a number the goal spells 01 answers as 01 under the planned SemiNaive, which binds it
-// from the goal's demand, and as 1 under Naive, which reads it from the fact. FuzzEval counts this
-// case rather than failing on it, so once #148 is fixed this test fails, and it goes, with the skip.
-func TestANumberSpelledTwoWaysIsAKnownDisagreement(t *testing.T) {
-	v := fuzzVocabulary(t)
-	q := mustParse(t, `r0(0, ?x7, ?x7) :- edge(?01, ?00), weight(?0, ?x7); r0(0, 01, ?0)`)
-	b := baseFor(v)
-	_, diff, err := agree(q, b)
-	if err != nil || diff == "" {
-		t.Fatalf("#148 no longer disagrees (%v): drop this test and the skip in FuzzEval", err)
-	}
-	if !spelledApart(q, b) {
-		t.Errorf("the repro disagrees in more than spelling:\n%s", diff)
-	}
 }

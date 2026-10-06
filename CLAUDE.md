@@ -86,6 +86,15 @@ go list -deps ./... | grep '\.' | grep -v '^github.com/panyam/jaala' | grep -v '
 - **Nothing inside a module resolution may call `Vocabulary.Signature` or `Check`.** They run
   through the memo entry that is mid-computation, and `sync.Once` deadlocks on re-entry. That is
   why the validation base carries `sigs` while it checks module rules.
+- **An answer writes a plain number canonically, and data's spelling wins where two meet** (#148).
+  `bindArg` keeps, when a bound variable meets an equal number spelled differently, the spelling
+  `spelledBefore` ranks first: text saying more than the number (`3.3V`, a range), then a unit, then
+  shorter, then smaller text. That makes the choice a minimum, so it doesn't depend on join order.
+  `canonicalAnswers` then rewrites a value whose text only spells its number (`01`, `1.50`, `-0`) to
+  `ftoa`, in the goal's bindings and witnesses (copying shared nodes), before projection, so dedup,
+  order and `list` see one text. Never canonicalize a constant's `S` earlier (#65), and a host-bound
+  column is filled in after, as bound. Two derivations of one derived tuple with different
+  annotated spellings still keep the first (dedup is by value).
 - **The answer order is a total order, and hosts see it.** `orderValues` ranks absent, then numbers by
   value, then text (#8). Comparing as numbers only when both are numbers cycles on a mixed column
   (2 < 10, "10" < "1a" < "2"). `dedupSort` sorts before it dedups, because dedup keys on text
@@ -143,8 +152,7 @@ go list -deps ./... | grep '\.' | grep -v '^github.com/panyam/jaala' | grep -v '
   Naive answers within `fuzzBudget` all three evaluators must `agree`. Plain `go test` (so CI) runs the
   seeds and every input in `testdata/fuzz/`; `./selfcheck.sh` fuzzes each target for
   `JAALA_FUZZ_TIME` (30s). A failing input is written to `testdata/fuzz/<Target>/`: fix it, rename the
-  file for what it caught, and commit it. #148 (a number spelled two ways) is counted, not failed,
-  through `spelledApart`, with its repro pinned in `TestANumberSpelledTwoWaysIsAKnownDisagreement`.
+  file for what it caught, and commit it.
   Its first hour found a quadratic did-you-mean, a parser panic, `?_: T` not printing back,
   comparison and head-`_` cases the evaluators answered differently, and a `-0` the index missed.
 - **A comparison is checked where its body binds it, not where it is written** (#89). Every solve
