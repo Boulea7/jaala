@@ -337,11 +337,17 @@ releases are patch bumps on v0.1.x, breaking changes included, pre-1.0. agni con
 Issues are ranked by the mission they serve (labels `P0`–`P3`, `waiting`, `mission`,
 `mission:active`, `mission_<slug>`), and its tickets are linked as blocked-by. Most of jaala's
 missions unblock a host's active mission; such a mission closes when the host's half of its exercise
-passes too, so it can stay open after jaala's tickets close. `mission_selfcheck` (#86) is jaala's
-own: `./selfcheck.sh` checks the evaluators against generated programs and Soufflé, and cost against
-`Work()` baselines. `mission_docsite` (#104) is the documentation site, every example on it run by
+passes too, so it can stay open after jaala's tickets close. The active mission is
+`mission_aggregate_answers` (#172): an aggregate's answer means what the question meant, measured by
+the Soufflé step of `./selfcheck.sh` skipping no aggregate program. jaala's earlier two are closed:
+`mission_selfcheck` (#86, at v0.1.29) left `./selfcheck.sh` as the check to run on `main` after every
+merge and before every tag, and `mission_docsite` (#104) left the docs site with every example run by
 the engine. Several missions can be active at once (`queue.sh` prints them). A new issue gets a
 priority and a mission link when filed, or `waiting` with the trigger that would unpark it.
+
+Pushing a branch can get a PR opened for it under the owner's account (#168 was), titled and
+bodied from the commit. Check `gh pr list --head <branch>` before `gh pr create`, and edit that PR
+rather than opening a second one.
 
 A PR body closes only its own issue. GitHub reads any "fix", "fixes", "close", "closes" or "resolves"
 before `#N` as a closing keyword, even inside a phrase like "Engine fixes: #90", which closed #90 on
@@ -354,3 +360,10 @@ second. Cross-repo work is split by repo: jaala issues are worked from jaala ses
 from host sessions. A host that needs something jaala lacks files a jaala issue rather than working
 around it, and a release that breaks hosts gets an upgrade note on the issue they filed, with the
 exact lines each must change (as #7's v0.1.6 comment did for `Modes`).
+
+To see what a change does to a host before writing its upgrade note, run the host's own suite
+against `main` and against the branch through a scratch `go.work` (`use` the host checkout and a
+jaala worktree), and diff the failures: a failure in both is the host's or its environment's, one in
+the branch only is this change's (#161, #168). A host checkout pins an older tag, so a copy may need
+a small patch to build against `main` (agni's `Bind` call, for #132); patch a copy in the scratchpad,
+never the host's own checkout.
