@@ -5,14 +5,14 @@ Maintained by /checkpoint: one thread per branch, pruned when the branch merges.
 
 ## At a glance
 
-- Mission #86 `mission_selfcheck`, 13/16: #149 closed by #157. Next ready: #23 (Soufflé, P2),
-  #148 (a number spelled two ways, P2), #156 (a small derived relation scanned per probe, P3).
-  `./selfcheck.sh` passed on 4a8fc0d, merged main with #157 and #159 together (4999/4999, no known
-  disagreements, baselines within bounds, fuzz clean). #86 has no log comment for #157 yet.
-- Release: v0.1.25 is on f9ca116 (#155). #157 (#149) and #159 (`str.distance`, #77) are merged
-  and untagged; the next patch would go on 4a8fc0d. `str.distance` is additive and needs no
-  upgrade note; check whether #157 does before tagging.
-- Off-mission: #158 (case-insensitive `str.distance`, P3) filed from #77. #143 and #145 are
-  `waiting` but still carry priorities (queue.sh hygiene).
-- No open threads or PRs. This run dropped `str-distance` (#159, merged); `origin/str-distance`
-  still exists on the remote.
+- No active mission. #86 (`mission_selfcheck`) closed at v0.1.29 with every done-when met:
+  `./selfcheck.sh` ran all four steps on 3f4f5fd (corpus 4999/4999, baselines, fuzz, Soufflé
+  3857/5000, no disagreements), and CI's `test` and `souffle` jobs are green on main. `/retriage`
+  picks the next mission; the queue has only off-mission P3s.
+- Release: v0.1.29 is on 3f4f5fd. This session tagged v0.1.25 (#155), v0.1.26 (#157), v0.1.27
+  (#161), v0.1.28 (#168) and v0.1.29 (#170), each with its upgrade note on the issue it closed.
+- Parked as `waiting` when #86 closed, each with its trigger in a comment: #156, #167, #169.
+- Hygiene for `/retriage`: #104 is closed but still labelled `mission:active`; #143 and #145 are
+  `waiting` yet still carry priorities.
+- No open threads or PRs. This run replaced the `str-distance` checkpoint's glance (stale since
+  #157, #159 and the releases above).
