@@ -87,7 +87,12 @@ func modesText(bi ns.Builtin, a *Atom) string {
 }
 
 // whereRule names a rule for a checkModes message.
-func whereRule(r Rule) string { return fmt.Sprintf("rule %q", displayName(r.Head.Relation)) }
+func whereRule(r Rule) string {
+	if isAggHelper(r.Head.Relation) {
+		return "the aggregate " + r.text // a body aggregate's rule carries the literal as written
+	}
+	return fmt.Sprintf("rule %q", displayName(r.Head.Relation))
+}
 
 // plan reorders a query's rule bodies and goal so each literal runs once as much as possible is
 // bound, which is SemiNaive's default (see SemiNaive.WrittenOrder). It changes no answer: a body is a

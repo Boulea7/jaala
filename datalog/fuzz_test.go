@@ -25,6 +25,8 @@ var fuzzSeeds = []string{
 	`weight(?n, ?w), ?w >= 2 => ?n, sum(?w), max(?w)`,
 	`t(?n: node, ?w: number) :- weight(?n, ?w); t(?n, ?w), ?w != 3 => list(?n)`,
 	`path.reach("v1", ?x), not edge(?x, _) => ?x`,
+	`out(?n, ?c) :- node(?n), ?c = count(?m) : { edge(?n, ?m) }; out(?n, ?c), ?c < 1 => ?n`,
+	`node(?n), ?w = min(?v) : { weight(?n, ?v), ?v > 3 }, ?s = sum(distinct ?v) : { edge(?n, ?m), weight(?m, ?v) } => ?n, ?w, ?s`,
 	`edge(?a, ?b), ?a < ?b, ?b = "v3" => ?a`,
 	`r(?a, ?b) :- edge(?a, ?b); r("v0") => ?x`, // #133: a call one argument short panicked the planner
 	`imports(?a,,?b) => ?a`, // #129: an empty piece between commas

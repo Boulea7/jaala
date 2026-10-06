@@ -1,0 +1,3 @@
+fixture: deps
+query: "package(?p), ?n = count(?t) : { test(?t, ?p), ?n > 0 } => ?p"
+expect_error: "uses ?n inside its own braces"

@@ -1,0 +1,5 @@
+fixture: deps
+query: |
+  heaviest(?p, ?m) :- package(?p), ?m = max(?n) : { imports(?p, ?q), loc(?q, ?n) };
+  heaviest(?p, ?m) => ?p, ?m
+expect: [[api, "1500"], [app, "1200"], [auth, "1500"], [cache, "250"], [config, "400"], [db, "250"], [legacy, "100"], [log, "100"], [metrics, "100"], [util, absent]]

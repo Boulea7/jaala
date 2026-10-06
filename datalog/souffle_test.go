@@ -121,6 +121,9 @@ func translateSouffle(q Query, bind map[Var][]ns.Value, prefix string) (souffleT
 	if err != nil {
 		return souffleTranslation{}, err
 	}
+	if tr.err != nil {
+		return souffleTranslation{}, tr.err
+	}
 	out.prefix, out.text, out.q = prefix, tr.b.String(), q
 	return out, nil
 }
@@ -172,6 +175,7 @@ type souffler struct {
 	goalVK  map[Var]sKind
 	b       strings.Builder
 	aux     int
+	err     error // set by bodyAggregate, which can't return one
 }
 
 func (tr *souffler) decl(rel string, ks []sKind) {
@@ -242,6 +246,14 @@ func (u *sTypes) constrain(scope string, b Body) {
 		}
 	}
 	for _, l := range b.Literals {
+		if l.Agg != nil {
+			u.set(scope+string(l.Agg.Result), sNumber)
+			if f := l.Agg.Agg.Func; f != "count" && f != "list" {
+				u.set(scope+string(l.Agg.Agg.Var), sNumber)
+			}
+			u.constrain(scope, l.Agg.Body)
+			continue
+		}
 		a := l.Pos
 		if a == nil {
 			a = l.Neg
@@ -359,6 +371,11 @@ func bodyVars(b Body, extra []Term) []Var {
 			for _, t := range l.Neg.Args {
 				add(t)
 			}
+		case l.Agg != nil:
+			add(Term{Var: l.Agg.Result})
+			for _, v := range bodyVars(l.Agg.Body, []Term{{Var: l.Agg.Agg.Var}}) {
+				add(Term{Var: v})
+			}
 		default:
 			add(l.Compare.Left)
 			add(l.Compare.Right)
@@ -373,7 +390,9 @@ func bodyVars(b Body, extra []Term) []Var {
 // rule writes one rule: as it is, or for an aggregating head, over a helper relation of its body.
 func (tr *souffler) rule(r Rule, vk map[Var]sKind) error {
 	if !slices.ContainsFunc(r.Head.Args, func(t Term) bool { return t.Agg != nil }) {
-		fmt.Fprintf(&tr.b, "%s :- %s.\n", tr.atom(r.Head), tr.body(r.Body, vk))
+		for _, body := range tr.bodies(r.Body, vk) {
+			fmt.Fprintf(&tr.b, "%s :- %s.\n", tr.atom(r.Head), body)
+		}
 		return nil
 	}
 	var keys []Var
@@ -417,7 +436,9 @@ func (tr *souffler) aggregates(body Body, vk map[Var]sKind, keys []Var, terms []
 	named, cols, colKinds := tr.namedBody(body, vk)
 	all := fmt.Sprintf("all%d", n)
 	tr.decl(all, colKinds)
-	fmt.Fprintf(&tr.b, "%s%s(%s) :- %s.\n", tr.prefix, all, joinVars(cols), tr.body(named, vk))
+	for _, body := range tr.bodies(named, vk) {
+		fmt.Fprintf(&tr.b, "%s%s(%s) :- %s.\n", tr.prefix, all, joinVars(cols), body)
+	}
 	// local is v's name inside an aggregate's braces: the outer variable when v is a group key, which
 	// the keys relation binds, else a variable of its own.
 	local := func(v Var) string {
@@ -517,6 +538,11 @@ func (tr *souffler) namedBody(body Body, vk map[Var]sKind) (Body, []Var, []sKind
 	w := 0
 	for i, l := range body.Literals {
 		out.Literals[i] = l
+		if l.Agg != nil && !seen[l.Agg.Result] {
+			seen[l.Agg.Result] = true
+			cols = append(cols, l.Agg.Result)
+			kinds = append(kinds, vk[l.Agg.Result])
+		}
 		if l.Pos == nil {
 			continue
 		}
@@ -542,8 +568,140 @@ func (tr *souffler) namedBody(body Body, vk map[Var]sKind) (Body, []Var, []sKind
 	return out, cols, kinds
 }
 
-// body writes a rule body's literals. An ordering comparison also refuses souffleAbsent in a number
-// variable, as jaala's refuses absent.
+// bodies writes a rule body's literals, as one body or, for a min or max in a body aggregate, two:
+// Soufflé's min over nothing doesn't hold, where jaala's is absent, so a second body says the braces
+// matched no number and binds the value to souffleAbsent. Each such aggregate doubles the bodies.
+func (tr *souffler) bodies(b Body, vk map[Var]sKind) []string {
+	alts := [][]string{{}}
+	for i, l := range b.Literals {
+		var opts []string
+		switch {
+		case l.Agg != nil:
+			opts = tr.bodyAggregate(*l.Agg, sharedVars(b, i), vk)
+		default:
+			opts = []string{tr.body(Body{Literals: []Literal{l}}, vk)}
+		}
+		var next [][]string
+		for _, a := range alts {
+			for _, o := range opts {
+				next = append(next, append(slices.Clone(a), o))
+			}
+		}
+		alts = next
+	}
+	out := make([]string, len(alts))
+	for i, a := range alts {
+		out[i] = strings.Join(a, ", ")
+	}
+	return out
+}
+
+// sharedVars is what body aggregate i shares with the rest of its body.
+func sharedVars(b Body, i int) []Var {
+	elsewhere := map[Var]bool{}
+	for j, l := range b.Literals {
+		switch {
+		case j == i:
+		case l.Agg != nil:
+			elsewhere[l.Agg.Result] = true
+		default:
+			for _, v := range bodyVars(Body{Literals: []Literal{l}}, nil) {
+				elsewhere[v] = true
+			}
+		}
+	}
+	var out []Var
+	for _, v := range bodyVars(b.Literals[i].Agg.Body, nil) {
+		if elsewhere[v] {
+			out = append(out, v)
+		}
+	}
+	return out
+}
+
+// bodyAggregate writes Soufflé's own aggregate for `?v = f(?x) : { body }`, over a helper relation of
+// the braces' bindings (every _ named, as for a head aggregate), with the shared variables the outer
+// ones. It returns the literal, or for min and max the literal and its over-nothing alternative.
+func (tr *souffler) bodyAggregate(a BodyAggregate, shared []Var, vk map[Var]sKind) []string {
+	tr.aux++
+	n := tr.aux
+	named, cols, colKinds := tr.namedBody(a.Body, vk)
+	all := fmt.Sprintf("ball%d", n)
+	tr.decl(all, colKinds)
+	for _, body := range tr.bodies(named, vk) {
+		fmt.Fprintf(&tr.b, "%s%s(%s) :- %s.\n", tr.prefix, all, joinVars(cols), body)
+	}
+	// Soufflé reduces a variable of the braces' own, so a shared ?x is reduced through a local one
+	// equal to it.
+	x := a.Agg.Var
+	local := "L_" + string(x)
+	same := ""
+	if slices.Contains(shared, x) {
+		same = ", " + local + " = " + souffleVar(x)
+	}
+	keyed := func(rel string, extra Var) string {
+		args := make([]string, len(cols))
+		for i, c := range cols {
+			switch {
+			case slices.Contains(shared, c):
+				args[i] = souffleVar(c)
+			case c == extra:
+				args[i] = local
+			default:
+				args[i] = "_"
+			}
+		}
+		out := fmt.Sprintf("%s%s(%s)", tr.prefix, rel, strings.Join(args, ", "))
+		if extra != "" {
+			out += same
+		}
+		return out
+	}
+	switch {
+	case a.Agg.Func == "list":
+		tr.fail(unsupported("list"))
+		return []string{"true"}
+	case a.Agg.Func != "count" && vk[x] != sNumber:
+		tr.fail(unsupported("%s over symbols", a.Agg.Func))
+		return []string{"true"}
+	}
+	over := keyed(all, x)
+	if a.Agg.Distinct || a.Agg.Func == "min" || a.Agg.Func == "max" {
+		dist := fmt.Sprintf("bdist%d", n)
+		tr.decl(dist, append(keyKinds(shared, vk), vk[x]))
+		args := strings.Join(append(varsOf(shared), local), ", ")
+		fmt.Fprintf(&tr.b, "%s%s(%s) :- %s.\n", tr.prefix, dist, args, keyed(all, x))
+		over = fmt.Sprintf("%s%s(%s)", tr.prefix, dist, args)
+	}
+	if vk[x] == sNumber && (a.Agg.Func != "count" || a.Agg.Distinct) {
+		over += ", " + local + " != " + souffleAbsent // jaala skips an absent value
+	}
+	res := souffleVar(a.Result)
+	switch {
+	case a.Agg.Func == "count" && !a.Agg.Distinct:
+		return []string{fmt.Sprintf("%s = count : { %s }", res, keyed(all, ""))}
+	case a.Agg.Func == "count":
+		return []string{fmt.Sprintf("%s = count : { %s }", res, over)}
+	case a.Agg.Func == "sum":
+		return []string{fmt.Sprintf("%s = sum %s : { %s }", res, local, over)}
+	}
+	some := fmt.Sprintf("bsome%d", n)
+	tr.decl(some, keyKinds(shared, vk))
+	fmt.Fprintf(&tr.b, "%s%s(%s) :- %s.\n", tr.prefix, some, joinVars(shared), over)
+	return []string{
+		fmt.Sprintf("%s = %s %s : { %s }", res, a.Agg.Func, local, over),
+		fmt.Sprintf("!%s%s(%s), %s = %s", tr.prefix, some, joinVars(shared), res, souffleAbsent),
+	}
+}
+
+func (tr *souffler) fail(err error) {
+	if tr.err == nil {
+		tr.err = err
+	}
+}
+
+// body writes a body with no body aggregate. An ordering comparison also refuses souffleAbsent in a
+// number variable, as jaala's refuses absent.
 func (tr *souffler) body(b Body, vk map[Var]sKind) string {
 	var out []string
 	for _, l := range b.Literals {
@@ -598,7 +756,10 @@ func (tr *souffler) goal(q Query, body Body, one map[Var]ns.Value) (souffleTrans
 			}
 		}
 		tr.decl("answer", cols)
-		fmt.Fprintf(&tr.b, "%sanswer(%s) :- %s.\n.output %sanswer\n", tr.prefix, strings.Join(head, ", "), tr.body(body, vk), tr.prefix)
+		for _, b := range tr.bodies(body, vk) {
+			fmt.Fprintf(&tr.b, "%sanswer(%s) :- %s.\n", tr.prefix, strings.Join(head, ", "), b)
+		}
+		fmt.Fprintf(&tr.b, ".output %sanswer\n", tr.prefix)
 		return souffleTranslation{cols: cols}, nil
 	}
 	var keys []Var
@@ -1078,6 +1239,19 @@ func TestSouffleTranslation(t *testing.T) {
 		{`r(min(?w)) :- weight(_, ?w); r(?m), ?m < 5 => ?m`, nil, []string{
 			"p_agg1_0(-999999) :- !p_some1_0().",
 			"p_answer(V_m) :- p_r(V_m), V_m < 5, V_m != -999999.",
+		}},
+		// A body aggregate is Soufflé's own over the braces' bindings. Its min over nothing doesn't hold,
+		// so a second body binds souffleAbsent; a shared ?w is reduced through a local equal to it.
+		{`node(?n), ?m = min(?w) : { weight(?n, ?w) } => ?n, ?m`, nil, []string{
+			"p_ball1(V_n, V_w) :- p_weight(V_n, V_w).",
+			"p_answer(V_n, V_m) :- p_node(V_n), V_m = min L_w : { p_bdist1(V_n, L_w), L_w != -999999 }.",
+			"p_answer(V_n, V_m) :- p_node(V_n), !p_bsome1(V_n), V_m = -999999.",
+		}},
+		{`weight(?n, ?w), ?s = sum(?w) : { weight(_, ?w) } => ?s`, nil, []string{
+			"V_s = sum L_w : { p_ball1(_, V_w), L_w = V_w, L_w != -999999 }",
+		}},
+		{`node(?n), ?c = count(?m) : { edge(?n, ?m) } => ?n, ?c`, nil, []string{
+			"p_answer(V_n, V_c) :- p_node(V_n), V_c = count : { p_ball1(V_n, _) }.",
 		}},
 		{`weight(_, ?w) => min(?w) having min(?w) < 5`, nil, []string{
 			"p_answer(A1_0) :- p_agg1_0(A1_0), A1_0 < 5, A1_0 != -999999.",

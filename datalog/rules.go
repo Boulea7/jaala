@@ -148,6 +148,9 @@ func (b *Base) validateRule(r Rule) error {
 		// misspelled relation from one nobody installed, and answering "unknown" there would be a
 		// statement about the query that the vocabulary has no standing to make (see Validate).
 		if len(b.reg.BaseRelations()) > 0 && !b.knownRelation(rel) {
+			if isAggHelper(r.Head.Relation) {
+				return fmt.Errorf("query: %s reads %s", whereRule(r), b.reg.Unknown(rel))
+			}
 			return fmt.Errorf("query: rule %q reads %s", r.Head.Relation, b.reg.Unknown(rel))
 		}
 	}
@@ -272,9 +275,12 @@ func (b *Base) applyRule(r Rule) (bool, error) {
 			vals[j] = val
 		}
 		t := idbTuple{vals: vals, cites: dedupStrings(bnd.cites)}
+		if isAggDomain(r.Head.Relation) {
+			t.cites = nil // what a body aggregate was asked about, not evidence (see isAggDomain)
+		}
 		if b.witnessing() && isSupplementary(r.Head.Relation) {
 			t.parts = append([]placed(nil), bnd.wit...)
-		} else if b.witnessing() && !isMagic(r.Head.Relation) && !isBindSet(r.Head.Relation) {
+		} else if b.witnessing() && !isMagic(r.Head.Relation) && !isBindSet(r.Head.Relation) && !isAggDomain(r.Head.Relation) {
 			text := r.text
 			if text == "" {
 				text = r.String()
@@ -333,7 +339,7 @@ func (b *Base) applyAggregate(r Rule, pos, negs []Literal) (bool, error) {
 			}
 		}
 		t := idbTuple{vals: vals, cites: row.Cites}
-		if b.witnessing() {
+		if b.witnessing() && !isAggReduce(r.Head.Relation) {
 			text := r.text
 			if text == "" {
 				text = r.String()
@@ -468,7 +474,9 @@ func stratify(rules []Rule, arity map[string]int) ([][]string, error) {
 			break
 		}
 		if round == n {
-			if cycle := strictCycle(edges, func(e depEdge) bool { return e.neg }); len(cycle) > 0 {
+			// A body aggregate's zero clause negates its reduction, which climbs as the aggregate does,
+			// so a cycle through one is reported as through the aggregate.
+			if cycle := strictCycle(edges, func(e depEdge) bool { return e.neg && !isAggReduce(e.to) }); len(cycle) > 0 {
 				return nil, fmt.Errorf("query: rules are not stratifiable (recursion through negation: %s)", strings.Join(cycle, ", "))
 			}
 			return nil, fmt.Errorf("query: rules are not stratifiable (recursion through an aggregate: %s)", strings.Join(strictCycle(edges, func(e depEdge) bool { return e.agg }), ", "))

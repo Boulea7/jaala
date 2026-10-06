@@ -235,6 +235,10 @@ func evaluateOn(b *Base, gen int64, q Query, o evalOptions, rewrite func(*Base, 
 	if err := b.run.done(); err != nil {
 		return nil, err
 	}
+	q, err := lowerBodyAggregates(q, "")
+	if err != nil {
+		return nil, err
+	}
 	written := q
 	q, cols, err := bindGoal(q, o.bind)
 	if err != nil {
