@@ -38,3 +38,9 @@ When a column holds both, the answer still has to come back in one order, so jaa
 {{ demo "demos/guide/types-mixed-column.yaml" }}
 
 That order is the same every time, for the same facts and the same query, which is what lets a host compare two answers line by line. The [ordering]({{.Site.PathPrefix}}/guide/ordering/) page has the rest of it.
+
+An answer writes a plain number one way, the way Go's `%g` would, however the query or the source spelled it. So `1.50` comes back as `1.5`, `01` as `1`, and `1.0` and `1` are the same row ([#148](https://github.com/panyam/jaala/issues/148)):
+
+{{ demo "demos/guide/types-number-spelling.yaml" }}
+
+Text that says more than the number is kept as the source wrote it. A host storing a voltage as `3.3V` with the number 3.3 gets `3.3V` back, and so does a query that asked about `3.3`, since where two spellings of one number meet, the one saying more wins. A value the host bound with `Bind` comes back exactly as bound.

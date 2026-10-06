@@ -1,0 +1,5 @@
+fixture: deps
+program: |
+  limit(?team, 1.50) :- owner(_, ?team);
+query: limit(?team, ?l) => ?team, ?l
+expect: [[data, "1.5"], [platform, "1.5"], [security, "1.5"], [web, "1.5"]]

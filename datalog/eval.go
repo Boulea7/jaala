@@ -352,6 +352,7 @@ func evaluateOn(b *Base, gen int64, q Query, o evalOptions, rewrite func(*Base, 
 	if err != nil {
 		return nil, err
 	}
+	canonicalAnswers(raw)
 	if b.canonical() {
 		// Bindings that project to one row keep the first one's citations (dedupSort is stable), so
 		// under CanonicalCites they arrive in the order of their derivations (see compareBindings).
@@ -781,11 +782,119 @@ func bindArg(bnd *binding, arg Term, val ns.Value) bool {
 		return true
 	default:
 		if bound, ok := bnd.vals[arg.Var]; ok {
-			return valueEq(val, bound)
+			if !valueEq(val, bound) {
+				return false
+			}
+			if val.Num != nil && bound.Num != nil && (val.S != bound.S || val.BaseUnit != bound.BaseUnit) && spelledBefore(val, bound) {
+				bnd.vals[arg.Var] = val
+			}
+			return true
 		}
 		bnd.vals[arg.Var] = val
 		return true
 	}
+}
+
+// A number can reach a variable spelled several ways: a query's 01 or 3.3, a fact's 1 or 3.3V. Which
+// one the variable keeps must not depend on the order the evaluator met them in (#148), so when two
+// spellings of one number meet, the variable keeps the one spelledBefore ranks first, and an answer
+// then writes a plain number canonically (canonicalAnswers). Text that says more than the number, a
+// unit or a range, ranks first, so it reaches the answer as the data spelled it.
+
+// spelledBefore reports whether a ranks before b among spellings of one number: text that says more
+// than the number before text that only spells it, then a unit before none, then shorter text, then
+// the smaller text.
+func spelledBefore(a, b ns.Value) bool {
+	if pa, pb := spellsNumber(a), spellsNumber(b); pa != pb {
+		return pb
+	}
+	if (a.BaseUnit != "") != (b.BaseUnit != "") {
+		return a.BaseUnit != ""
+	}
+	if len(a.S) != len(b.S) {
+		return len(a.S) < len(b.S)
+	}
+	return a.S < b.S
+}
+
+// spellsNumber reports whether v's text is only a spelling of its number, such as 01 or 1.50 for 1.5,
+// rather than text saying more, such as 3.3V.
+func spellsNumber(v ns.Value) bool {
+	if v.Num == nil {
+		return false
+	}
+	f, err := strconv.ParseFloat(v.S, 64)
+	return err == nil && f == *v.Num
+}
+
+// canonicalNumber is v with a plain number's text written as ftoa writes it, so 01 and 1.0 answer as 1.
+// Any other value is returned as it is.
+func canonicalNumber(v ns.Value) ns.Value {
+	if !spellsNumber(v) {
+		return v
+	}
+	n := *v.Num
+	if n == 0 {
+		n = 0 // -0 is 0
+	}
+	if c := ftoa(n); c != v.S {
+		v.S = c
+	}
+	return v
+}
+
+// canonicalAnswers writes each plain number the goal's solutions hold canonically, in their bindings
+// and their witnesses, before they are projected, grouped, deduplicated and ordered: an answer is the
+// same text whichever spelling of a number its evaluator met (#148). A host-bound column is filled in
+// after, so it keeps the value as bound.
+func canonicalAnswers(raw []*binding) {
+	for _, bnd := range raw {
+		for v, val := range bnd.vals {
+			if c := canonicalNumber(val); c.S != val.S {
+				bnd.vals[v] = c
+			}
+		}
+		for i, p := range bnd.wit {
+			bnd.wit[i].node = canonicalWitness(p.node)
+		}
+	}
+}
+
+// canonicalWitness is w with every plain number in it written canonically, copying only the nodes that
+// change, since a node can be shared by other derivations.
+func canonicalWitness(w *Witness) *Witness {
+	if w == nil {
+		return nil
+	}
+	var vals []ns.Value
+	for i, v := range w.Values {
+		if c := canonicalNumber(v); c.S != v.S {
+			if vals == nil {
+				vals = append([]ns.Value(nil), w.Values...)
+			}
+			vals[i] = c
+		}
+	}
+	var kids []*Witness
+	for i, k := range w.Children {
+		if c := canonicalWitness(k); c != k {
+			if kids == nil {
+				kids = append([]*Witness(nil), w.Children...)
+			}
+			kids[i] = c
+		}
+	}
+	if vals == nil && kids == nil {
+		return w
+	}
+	out := *w
+	if vals != nil {
+		out.Values = vals
+	}
+	if kids != nil {
+		out.Children = kids
+	}
+	return &out
 }
 
 // resolve reads a term's value under the binding: a constant is itself, a bound variable its
