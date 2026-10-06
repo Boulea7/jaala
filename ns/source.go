@@ -71,9 +71,13 @@ type ContextSource interface {
 // positions, from 0, to the values the call binds them to.
 //
 // Lookup may return facts that don't match, since the engine checks every one, but it must not leave
-// out one that does, or the answer silently loses it. Two values match when both carry a number and
-// the numbers are equal, so a bound N(1) matches a stored number spelled 1.0; when both are absent; or
-// otherwise when their text is equal. A source unsure how its index compares can return more.
+// out one that does, or the answer silently loses it. A bound value is already read as its argument's
+// declared type, and a stored value matches when, read as that type too, it is the same value: two
+// numbers when the numbers are equal (a bound N(1) matches a stored 1.0), two texts when the text is,
+// and a number never text. Read as its type means what the engine does with what Lookup returns: in a
+// number argument text is read as its number, and in a text or entity argument a number as its text,
+// so a pin stored as N(3) matches a bound "3". A source whose stored kinds match its declared types
+// compares as stored. A source unsure how its index compares can return more.
 //
 // What Lookup returns is kept for the one Eval that asked, so a relation the queries only ever probe
 // is never held whole by the Base. A call with nothing bound still reads the relation whole, through

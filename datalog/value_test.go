@@ -3,7 +3,6 @@ package datalog
 import (
 	"fmt"
 	"math"
-	"slices"
 	"testing"
 
 	"github.com/panyam/jaala/ns"
@@ -131,13 +130,9 @@ func TestCompareStillEqualsAcrossKinds(t *testing.T) {
 // used to be "" — the same bucket a stated empty string files under. A probe for one would find the
 // other, and only the exact comparison downstream would reject it.
 func TestAbsentDoesNotCollideInIndex(t *testing.T) {
-	a := valueKeys(absentV())
-	e := valueKeys(ns.Value{S: ""})
-	if len(a) != 1 || len(e) != 1 {
-		t.Fatalf("want one key each, got absent=%v empty=%v", a, e)
-	}
-	if a[0] == e[0] {
-		t.Errorf("absent and empty-string share the index bucket %q", a[0])
+	// One key each is now true by construction: a value has exactly one key (valueKey, #162).
+	if a, e := valueKey(absentV()), valueKey(ns.Value{S: ""}); a == e {
+		t.Errorf("absent and empty-string share the index bucket %q", a)
 	}
 }
 
@@ -145,8 +140,8 @@ func TestAbsentDoesNotCollideInIndex(t *testing.T) {
 // does (#89, found by FuzzEval, where a rule head's -0 never met the goal's 0 once the relation was
 // big enough to index). control: Unindexed finds it by scanning.
 func TestNegativeZeroSharesAnIndexKeyWithZero(t *testing.T) {
-	if !slices.ContainsFunc(valueKeys(ns.N(math.Copysign(0, -1))), func(k string) bool { return slices.Contains(valueKeys(ns.N(0)), k) }) {
-		t.Errorf("valueKeys(-0) = %v and valueKeys(0) = %v share no key", valueKeys(ns.N(math.Copysign(0, -1))), valueKeys(ns.N(0)))
+	if neg, zero := valueKey(ns.N(math.Copysign(0, -1))), valueKey(ns.N(0)); neg != zero {
+		t.Errorf("valueKey(-0) = %q and valueKey(0) = %q differ", neg, zero)
 	}
 	src := ns.NewMemSource().Declare("w", "node", "n")
 	for i := 0; i < 2*IndexMinTuples; i++ {

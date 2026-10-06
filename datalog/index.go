@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"github.com/panyam/jaala/ns"
 	"strconv"
+	"strings"
 	"sync"
 	"sync/atomic"
 )
@@ -15,17 +16,9 @@ import (
 // conjunction was an unindexed nested loop: quadratic, and the shape of nearly every rule. These
 // indexes turn the bound positions of an atom into a bucket lookup.
 //
-// # The index NARROWS candidates, it does not decide matches
-//
-// That split is load-bearing, not caution. valueEq compares numerically when BOTH values carry a
-// number and by string otherwise, which makes it non-transitive: {S:"10.0",Num:10} equals
-// {S:"10",Num:10} numerically, which equals {S:"10",Num:nil} by string, while the first and last
-// are unequal. No hash can reproduce that, because hashing forces an equivalence relation onto a
-// comparison that is not one.
-//
-// So a bucket may only ever be a SUPERSET of the matches: unify (EDB) and valsEqual (IDB) still
-// decide, exactly as before. False positives cost a comparison. A false NEGATIVE would silently
-// drop a row, which reads as a clean result, so the keying below is deliberately generous.
+// Each value has one key (valueKey), and valueEq is key equality (#162), so a bucket holds exactly
+// the tuples whose bound values equal the probe's. unify (EDB) and valsEqual (IDB) still decide each
+// candidate, which costs a comparison and guards the index against a key that drifts from valueEq.
 
 // patternMask marks which positional arguments of an atom are bound at solve time — a constant, or
 // a variable the binding already carries. Wildcards and unbound variables are free. Positions past
@@ -45,67 +38,22 @@ type idxKey struct {
 	mask patternMask
 }
 
-// valueKeys returns every bucket key one value may be filed or found under: its string, plus the
-// canonical string of its number when it carries one.
-//
-// Both sides use this, and that symmetry is the correctness argument. Any two values valueEq
-// considers equal share at least one key:
-//
-//	both numeric, same number  -> both carry ftoa(num)
-//	otherwise, equal strings   -> both carry S
-//
-// which are exactly valueEq's two branches. So a match can never fall in a bucket the probe does
-// not look in. The reverse is not guaranteed and does not need to be: extra candidates are rejected
-// by the exact comparison that still runs.
-//
-// A numeric value built with N or NU is already canonical (its S is ftoa of its number), so this
-// usually returns one key. It is a query constant like `10.0`, or a rule head deriving one, that produces
-// two.
-func valueKeys(v ns.Value) []string {
-	// An absent field must not share a bucket with a legitimately empty string, or a probe for one
-	// would find the other and the exact comparison would then have to reject it. The sentinel is a
-	// byte no fact value can contain, so it cannot collide with real content.
-	if v.Absent {
-		return []string{absentKey}
-	}
-	if v.Num == nil {
-		return []string{v.S}
-	}
-	n := *v.Num
-	if n == 0 {
-		n = 0 // -0 equals 0, and ftoa writes it "-0" (#89)
-	}
-	if canon := ftoa(n); canon != v.S {
-		return []string{v.S, canon}
-	}
-	return []string{v.S}
-}
-
 // absentKey is the index bucket an ABSENT value files under. A NUL byte cannot appear in a fact
 // value read from any supported source, so it is unreachable as real content, which is what makes it
 // safe as a sentinel rather than merely unlikely.
 const absentKey = "\x00absent"
 
-// tupleKeys expands values into every bucket key the tuple may be filed or found under: the cross
-// product of each value's keys. One key in the common case, and bounded by 2^k for k values that
-// carry a non-canonical number, with k at most the relation's arity.
-//
-// Each segment is length-prefixed so the encoding is injective: without it ("a|b","c") and
-// ("a","b|c") would collide. Collisions would only cost comparisons rather than correctness, but
-// they are free to avoid.
-func tupleKeys(vals []ns.Value) []string {
-	keys := []string{""}
+// tupleKey is the bucket key of values: each value's key, length-prefixed so the encoding is
+// injective (without it ("a|b","c") and ("a","b|c") would collide).
+func tupleKey(vals []ns.Value) string {
+	var sb strings.Builder
 	for _, v := range vals {
-		vks := valueKeys(v)
-		next := make([]string, 0, len(keys)*len(vks))
-		for _, prefix := range keys {
-			for _, s := range vks {
-				next = append(next, prefix+strconv.Itoa(len(s))+":"+s)
-			}
-		}
-		keys = next
+		k := valueKey(v)
+		sb.WriteString(strconv.Itoa(len(k)))
+		sb.WriteByte(':')
+		sb.WriteString(k)
 	}
-	return keys
+	return sb.String()
 }
 
 // boundArgs reads the atom's bound positions under the current binding, returning the mask and the
@@ -172,8 +120,9 @@ func newEDBCache() *edbCache {
 	return &edbCache{tup: map[string]*edbRead{}, idx: map[idxKey]edbIndex{}}
 }
 
-// tuples returns rel's tuples, asking the Source the first time.
-func (c *edbCache) tuples(ctx context.Context, rel string, src ns.Source) ([]ns.Tuple, error) {
+// tuples returns rel's tuples, asking the Source the first time and normalizing what it read to types
+// (see normalizeTuples).
+func (c *edbCache) tuples(ctx context.Context, rel string, src ns.Source, types []ns.ArgType) ([]ns.Tuple, error) {
 	c.mu.Lock()
 	r, ok := c.tup[rel]
 	if !ok {
@@ -193,6 +142,7 @@ func (c *edbCache) tuples(ctx context.Context, rel string, src ns.Source) ([]ns.
 	if err != nil {
 		return nil, err
 	}
+	t = normalizeTuples(t, types)
 	r.tuples, r.done = t, true
 	return t, nil
 }
@@ -290,9 +240,8 @@ func buildEDBIndex(tuples []ns.Tuple, mask patternMask) edbIndex {
 				vals = append(vals, v)
 			}
 		}
-		for _, k := range tupleKeys(vals) {
-			idx[k] = append(idx[k], pos)
-		}
+		k := tupleKey(vals)
+		idx[k] = append(idx[k], pos)
 	}
 	return idx
 }
@@ -321,22 +270,7 @@ func (b *Base) edbCandidates(atom *Atom, tuples []ns.Tuple, bnd *binding) (pos [
 		return nil, true
 	}
 	idx := b.edb.get(atom.Relation, tuples, mask)
-	keys := tupleKeys(vals)
-	if len(keys) == 1 {
-		return idx[keys[0]], false // the common path: the bucket IS the candidate list, no copy
-	}
-	// Several keys only arise for a non-canonical numeric value. A tuple is filed under each of its
-	// own keys, so the buckets can overlap and the union has to be deduplicated by position.
-	seen := map[int]bool{}
-	for _, k := range keys {
-		for _, p := range idx[k] {
-			if !seen[p] {
-				seen[p] = true
-				pos = append(pos, p)
-			}
-		}
-	}
-	return pos, false
+	return idx[tupleKey(vals)], false // the bucket is the candidate list, no copy
 }
 
 // idbIndex is the derived-relation analogue, and it must be INCREMENTAL: an IDB relation grows
@@ -363,9 +297,8 @@ func (x *idbIndex) sync(tuples []idbTuple, mask patternMask) {
 				vals = append(vals, v)
 			}
 		}
-		for _, k := range tupleKeys(vals) {
-			x.buckets[k] = append(x.buckets[k], x.n)
-		}
+		k := tupleKey(vals)
+		x.buckets[k] = append(x.buckets[k], x.n)
 	}
 }
 
@@ -396,31 +329,13 @@ func (b *Base) idbCandidates(atom *Atom, bnd *binding) []idbTuple {
 	}
 	x := b.idbIndexFor(atom.Relation, mask)
 	x.sync(tuples, mask)
-	keys := tupleKeys(vals)
-	if len(keys) == 1 {
-		return gatherTuples(tuples, x.buckets[keys[0]], nil)
-	}
-	// Overlapping buckets, so deduplicate by position. Only reachable for a non-canonical numeric
-	// value; see valueKeys.
-	seen := make(map[int]bool, len(keys))
-	var out []idbTuple
-	for _, k := range keys {
-		out = append(out, gatherTuples(tuples, x.buckets[k], seen)...)
-	}
-	return out
+	return gatherTuples(tuples, x.buckets[tupleKey(vals)])
 }
 
-// gatherTuples materializes the tuples at the given positions, skipping any already taken when seen
-// is non-nil.
-func gatherTuples(tuples []idbTuple, pos []int, seen map[int]bool) []idbTuple {
+// gatherTuples materializes the tuples at the given positions.
+func gatherTuples(tuples []idbTuple, pos []int) []idbTuple {
 	out := make([]idbTuple, 0, len(pos))
 	for _, p := range pos {
-		if seen != nil {
-			if seen[p] {
-				continue
-			}
-			seen[p] = true
-		}
 		out = append(out, tuples[p])
 	}
 	return out

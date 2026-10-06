@@ -29,6 +29,8 @@ Numbers compare by value and text compares as text, which is the usual order for
 
 {{ demo "demos/guide/types-text-order.yaml" }}
 
+A number never equals text, so `"1"` and `1` are different values, and quotes are what make a constant text ([#162](https://github.com/panyam/jaala/issues/162)). That only bites in a column with no declared type. In a typed one, jaala reads both sides as the column's type: the query's constants before evaluating, and the source's facts as it reads them, so a pin a source stored as the number 3 reads as `"3"` in a pin column, and a count stored as the text `"0010"` reads as 10 in a number column. Keeping kinds apart is what makes equality consistent: if two values both equal a third, they equal each other, whichever order a join meets them in.
+
 A number and a piece of text have no order between them, so a comparison of one with the other never holds, whichever way round it's written:
 
 {{ demo "demos/guide/types-number-vs-text.yaml" }}

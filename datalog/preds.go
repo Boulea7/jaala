@@ -60,6 +60,7 @@ func extendBuiltin(bi ns.Builtin, atom *Atom, bnd *binding, b *Base, yield func(
 		if len(vals) != len(atom.Args) {
 			return fmt.Errorf("query: internal: %s emitted %d values for %d arguments", atom.Relation, len(vals), len(atom.Args))
 		}
+		vals, _ = normalizeValues(vals, bi.Types) // read as its declared types, as a relation's tuples are
 		next := bnd.clone()
 		for j, arg := range atom.Args {
 			if !bindArg(next, arg, vals[j]) {

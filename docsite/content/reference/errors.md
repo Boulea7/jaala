@@ -79,6 +79,10 @@ Before v0.1.24 the parser dropped empty arguments and literals and ran what was 
 
 A `?` with no name after it.
 
+`query: variable ?…: a variable's name is letters, digits and _`
+
+A variable whose name has anything else in it, such as `?a.b` or the `?)(` a stray parenthesis makes. Relations can have dots and hyphens in their names; variables can't.
+
 {{ demo "demos/errors/empty-variable-name.yaml" }}
 
 `query: unterminated string …`

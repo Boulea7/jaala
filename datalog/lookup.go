@@ -54,6 +54,7 @@ func (b *Base) lookup(atom *Atom, bnd *binding) (rows []ns.Tuple, ok bool, err e
 		}
 		return nil, true, fmt.Errorf("query: looking up %s: %w", atom.Relation, err)
 	}
+	rows = normalizeTuples(rows, b.argTypesOf(atom.Relation))
 	if r.looked == nil {
 		r.looked = map[string][]ns.Tuple{}
 	}
@@ -65,14 +66,14 @@ func (b *Base) lookup(atom *Atom, bnd *binding) (rows []ns.Tuple, ok bool, err e
 }
 
 // lookupKey is a lookup's key in the Eval's cache: the relation, the bound positions, and their values'
-// text. A number spelled two ways is looked up twice, which costs a call but never a match.
+// keys (valueKey), so a number and text never share an entry (#162).
 func lookupKey(rel string, mask patternMask, vals []ns.Value) string {
 	var sb strings.Builder
 	sb.WriteString(rel)
 	sb.WriteByte(0)
 	sb.WriteString(strconv.FormatUint(uint64(mask), 16))
 	for _, v := range vals {
-		k := keyText(v)
+		k := valueKey(v)
 		sb.WriteByte(0)
 		sb.WriteString(strconv.Itoa(len(k)))
 		sb.WriteByte(':')

@@ -32,8 +32,9 @@ import (
 //	count       = digit { digit } ;
 //	term        = variable | string | number ;
 //	variable    = "?" ident | "_" ;
+//	ident       = ( letter | digit | "_" ) { letter | digit | "_" } ;  (* ASCII *)
 //	string      = '"' { char } '"' ;
-//	number      = [ "+" | "-" ] digit { digit } [ "." digit { digit } ] ;
+//	number      = [ "+" | "-" ] digit { digit } [ "." digit { digit } ] [ ( "e" | "E" ) [ "+" | "-" ] digit { digit } ] ;
 //	relation    = ident { "." | "-" | ident } ;       (* a path: net.max_voltage, component-on-net *)
 //
 // A "#" outside a string starts a comment that runs to the end of the line.
@@ -564,8 +565,8 @@ func parseTerm(s string) (Term, error) {
 		return Term{Var: "_"}, nil
 	case s[0] == '?':
 		name := s[1:]
-		if name == "" {
-			return Term{}, fmt.Errorf("query: empty variable name")
+		if err := checkVarName(name); err != nil {
+			return Term{}, err
 		}
 		return Term{Var: Var(name)}, nil
 	case s[0] == '"':
@@ -574,7 +575,7 @@ func parseTerm(s string) (Term, error) {
 		}
 		return Term{Const: &ns.Value{S: s[1 : len(s)-1]}}, nil
 	default:
-		if f, err := strconv.ParseFloat(s, 64); err == nil {
+		if f, err := strconv.ParseFloat(s, 64); err == nil && isDecimal(s) {
 			return Term{Const: &ns.Value{S: s, Num: &f}}, nil
 		}
 		return Term{}, fmt.Errorf("query: bare identifier %q — a term must be a ?variable, a \"string\", or a number", s)
@@ -610,7 +611,61 @@ func parseSelItem(p string) (Term, error) {
 	if p == "" || p[0] != '?' || len(p) == 1 {
 		return Term{}, fmt.Errorf("query: projection column %q must be a ?variable or an aggregate", p)
 	}
+	if err := checkVarName(p[1:]); err != nil {
+		return Term{}, err
+	}
 	return Term{Var: Var(p[1:])}, nil
+}
+
+// checkVarName refuses a variable name that isn't an ident (#163): letters, digits and _, so `?)(`
+// is an error rather than a variable named ")(".
+func checkVarName(name string) error {
+	if name == "" {
+		return fmt.Errorf("query: empty variable name")
+	}
+	for i := 0; i < len(name); i++ {
+		if c := name[i]; !(c == '_' || (c >= '0' && c <= '9') || (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z')) {
+			return fmt.Errorf("query: variable ?%s: a variable's name is letters, digits and _", name)
+		}
+	}
+	return nil
+}
+
+// isDecimal reports whether s is a number as the grammar spells one: digits, an optional fraction and
+// an optional exponent, after an optional sign. strconv.ParseFloat also reads inf, nan, hex floats and
+// a bare leading or trailing dot, which the language doesn't (#163).
+func isDecimal(s string) bool {
+	i := 0
+	if i < len(s) && (s[i] == '+' || s[i] == '-') {
+		i++
+	}
+	digits := func() int {
+		n := 0
+		for i < len(s) && s[i] >= '0' && s[i] <= '9' {
+			i++
+			n++
+		}
+		return n
+	}
+	if digits() == 0 {
+		return false
+	}
+	if i < len(s) && s[i] == '.' {
+		i++
+		if digits() == 0 {
+			return false
+		}
+	}
+	if i < len(s) && (s[i] == 'e' || s[i] == 'E') {
+		i++
+		if i < len(s) && (s[i] == '+' || s[i] == '-') {
+			i++
+		}
+		if digits() == 0 {
+			return false
+		}
+	}
+	return i == len(s)
 }
 
 // parseAggregate parses func([distinct] ?x), the form an aggregate takes in a projection, a having
@@ -628,6 +683,9 @@ func parseAggregate(p string) (Term, error) {
 	}
 	if len(inner) < 2 || inner[0] != '?' {
 		return Term{}, fmt.Errorf("query: aggregate %s(...) expects a ?variable, got %q", fn, inner)
+	}
+	if err := checkVarName(inner[1:]); err != nil {
+		return Term{}, err
 	}
 	return Term{Agg: &Aggregate{Func: fn, Var: Var(inner[1:]), Distinct: distinct}}, nil
 }

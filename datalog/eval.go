@@ -146,9 +146,10 @@ func (b *Base) Work() int64 {
 // edbTuples returns a base relation's tuples, reading them from the Source once per Base.
 func (b *Base) edbTuples(rel string) ([]ns.Tuple, error) {
 	if b.edb == nil {
-		return readTuples(b.run.context(), b.src, rel)
+		t, err := readTuples(b.run.context(), b.src, rel)
+		return normalizeTuples(t, b.argTypesOf(rel)), err
 	}
-	return b.edb.tuples(b.run.context(), rel, b.src)
+	return b.edb.tuples(b.run.context(), rel, b.src, b.argTypesOf(rel))
 }
 
 // readTuples reads one relation from the Source, through TuplesContext when the Source can be
@@ -837,8 +838,9 @@ func canonicalNumber(v ns.Value) ns.Value {
 	if n == 0 {
 		n = 0 // -0 is 0
 	}
-	if c := ftoa(n); c != v.S {
-		v.S = c
+	var buf [32]byte
+	if c := strconv.AppendFloat(buf[:0], n, 'g', -1, 64); string(c) != v.S {
+		v.S = string(c) // allocates only when the text changes, so a generator's rows mostly don't
 	}
 	return v
 }
@@ -907,7 +909,17 @@ func resolve(t Term, bnd *binding) (ns.Value, bool) {
 	return val, ok
 }
 
-// valueEq compares two values: numeric when both carry a number, string otherwise.
+// valueEq reports whether two values are the same value: two numbers when their numbers are equal,
+// two texts when their text is, and a number never equals text (#162). It is an equivalence: each
+// value has one key (valueKey) and two values are equal exactly when their keys are, so which of two
+// equal values a derivation or a join meets first can't change what else equals it. The old rule
+// compared a number with text by the number's own spelling, which made "0" equal 0 and 0 equal 00 but
+// not "0" equal 00, and an answer depend on rule and join order.
+//
+// A query's constant is read as its argument's type before evaluation (coerceConstants), and a
+// relation's tuples as their arguments' types when the Base reads them (normalizeTuples), so in a
+// typed argument a number and text never meet. In an untyped one, quotes and the host's ns.S or ns.N
+// decide.
 //
 // ABSENT UNIFIES ONLY WITH ABSENT, which is what stops it colliding with the empty string. Two
 // unstated bounds ARE the same answer to "what does this row state", so this is true rather than
@@ -918,10 +930,37 @@ func valueEq(a, b ns.Value) bool {
 	if a.Absent || b.Absent {
 		return a.Absent && b.Absent
 	}
-	if a.Num != nil && b.Num != nil {
-		return *a.Num == *b.Num
+	switch {
+	case a.Num != nil && b.Num != nil:
+		return *a.Num == *b.Num || (*a.Num != *a.Num && *b.Num != *b.Num) // NaN is itself
+	case a.Num != nil || b.Num != nil:
+		return false
 	}
 	return a.S == b.S
+}
+
+// valueKey is the one key a value has under valueEq: absentKey for an absent value, numberPrefix and a
+// number's canonical text, and text's own. The prefix starts with a NUL, which no text from a Source
+// holds, so a number never shares a key with text.
+func valueKey(v ns.Value) string {
+	switch {
+	case v.Absent:
+		return absentKey
+	case v.Num != nil:
+		return numberPrefix + numberKey(*v.Num)
+	}
+	return v.S
+}
+
+// numberPrefix starts a number's key (see valueKey).
+const numberPrefix = "\x00n"
+
+// numberKey is n written canonically, with -0 as 0 (ftoa writes it "-0", #89).
+func numberKey(n float64) string {
+	if n == 0 {
+		n = 0
+	}
+	return ftoa(n)
 }
 
 // orderingOps are the comparisons that ask which of two values is LARGER. Equality and inequality are
@@ -1324,7 +1363,7 @@ func passesHaving(row Row, having []Compare) (bool, error) {
 func groupKeyOf(keyVars []Var, bnd *binding) string {
 	var b strings.Builder
 	for _, kv := range keyVars {
-		b.WriteString(keyText(bnd.vals[kv]))
+		b.WriteString(valueKey(bnd.vals[kv]))
 		b.WriteByte('\x1f')
 	}
 	return b.String()
@@ -1350,10 +1389,11 @@ func groupValues(a Aggregate, rows []*binding) []string {
 			continue
 		}
 		if a.Distinct {
-			if seen[val.S] {
+			k := valueKey(val)
+			if seen[k] {
 				continue
 			}
-			seen[val.S] = true
+			seen[k] = true
 		}
 		vals = append(vals, val)
 	}
@@ -1518,14 +1558,15 @@ func rowKey(r Row, sel []Var) string {
 	for _, v := range sel {
 		b.WriteString(string(v))
 		b.WriteByte('=')
-		b.WriteString(keyText(r.Bind[v]))
+		b.WriteString(valueKey(r.Bind[v]))
 		b.WriteByte('\x1f')
 	}
 	return b.String()
 }
 
-// keyText is a value's text as an answer or group key: N(1) and S("1") key alike, as they join alike,
-// but an absent value keys apart from the empty string, as valueEq and the index keep it (#62).
+// keyText is a value's text, with an absent value apart from the empty string (#62), for ordering
+// derivations under CanonicalCites. Answers, groups and distinct key on valueKey, as equality does,
+// so a derived column holding both 1 and "1" answers both (#162).
 func keyText(v ns.Value) string {
 	if v.Absent {
 		return absentKey

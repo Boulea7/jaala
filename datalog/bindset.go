@@ -60,7 +60,8 @@ func (b *Base) bindSets(q Query, bind map[Var][]ns.Value) (Query, error) {
 
 // checkBoundValue checks one value of a set-bound variable as a constant in its place in the goal
 // would be: coerced to each argument's type, and against each argument's closed Domain. It returns the
-// value to store, read as a number if any of its places coerced it to one.
+// value to store, read as a number if any of its places coerced it to one, else as text if one read it
+// as text, since a relation's values there are text (normalizeTuples) and text never equals a number.
 func (b *Base) checkBoundValue(t *typer, goal Body, v Var, val ns.Value) (ns.Value, error) {
 	one := substBody(goal, func(term Term) Term {
 		if term.Var == v {
@@ -73,11 +74,18 @@ func (b *Base) checkBoundValue(t *typer, goal Body, v Var, val ns.Value) (ns.Val
 	if err != nil {
 		return val, err
 	}
-	stored := val
+	stored, asNumber := val, false
 	for i, l := range one.Literals {
 		for j, term := range literalTerms(goal.Literals[i]) {
-			if c := literalTerms(l)[j].Const; term.Var == v && c != nil && c.Num != nil {
-				stored = *c
+			c := literalTerms(l)[j].Const
+			if term.Var != v || c == nil {
+				continue
+			}
+			switch {
+			case c.Num != nil:
+				stored, asNumber = *c, true
+			case !asNumber:
+				stored = *c // read as text, as a relation's values in that argument are (normalizeTuples)
 			}
 		}
 		a, written := l.Pos, goal.Literals[i].Pos

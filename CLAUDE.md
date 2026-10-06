@@ -95,11 +95,26 @@ go list -deps ./... | grep '\.' | grep -v '^github.com/panyam/jaala' | grep -v '
   order and `list` see one text. Never canonicalize a constant's `S` earlier (#65), and a host-bound
   column is filled in after, as bound. Two derivations of one derived tuple with different
   annotated spellings still keep the first (dedup is by value).
+- **Equality is strict and an equivalence, with one key per value** (`valueEq`, `valueKey`, #162).
+  Two numbers compare by value (NaN equals NaN, -0 is 0), two texts by text, and a number never
+  equals text. A number's key is `numberPrefix` plus its canonical text, so the index (`tupleKey`)
+  files each value under one key and a bucket is exact; `unify` and `valsEqual` still decide.
+  Kinds can be strict because both sides are read as the argument's declared type: constants by
+  `coerceConstants`, set-bound values by `checkBoundValue` (as text where a place reads text), and
+  a Source's tuples by `normalizeTuples` as the Base reads them, whole or through `Lookup`, which
+  also writes every plain number canonically, and a generator's emitted rows by its Builtin's
+  `Types` (`normalizeValues`). The old rule (number vs text by the number's spelling) made join and
+  rule order decide answers. Answers, groups, `distinct` and the Lookup cache key on `valueKey` too,
+  so a derived column holding both `1` and `"1"` answers both; only `CanonicalCites`' derivation
+  order still reads `keyText`.
+- **A variable's name is an ident and a number is decimal** (`checkVarName`, `isDecimal`, #163), as
+  the grammar comment in `parse.go` says. `strconv.ParseFloat` alone also takes inf, nan, hex and
+  `.5`. The parser slices rather than lexes; a tokenizer is filed separately.
 - **The answer order is a total order, and hosts see it.** `orderValues` ranks absent, then numbers by
   value, then text (#8). Comparing as numbers only when both are numbers cycles on a mixed column
-  (2 < 10, "10" < "1a" < "2"). `dedupSort` sorts before it dedups, because dedup keys on text
-  (`N(1)` and `S("1")` are one row) and the survivor must not depend on arrival. An absent value
-  keys apart from `""` (`keyText`, the index's `absentKey`, #62), in answers and in groups. `order by`, `limit`
+  (2 < 10, "10" < "1a" < "2"). `dedupSort` sorts before it dedups on `valueKey`, so the survivor
+  doesn't depend on arrival, and `1` and `"1"` are two rows (#162). An absent value keys apart from
+  `""` (`valueKey`'s `absentKey`, #62), in answers and in groups. `order by`, `limit`
   and `offset` apply last, against the columns as written, so a host-bound variable is still one.
   Moving the default order changes agni's goldens, so it ships with an upgrade note.
 - **Comments use agni's circuit vocabulary on purpose** (`doc.go` says so). Host-specific test
