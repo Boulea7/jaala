@@ -337,7 +337,9 @@ releases are patch bumps on v0.1.x, breaking changes included, pre-1.0. agni con
 Issues are ranked by the mission they serve (labels `P0`–`P3`, `waiting`, `mission`,
 `mission:active`, `mission_<slug>`), and its tickets are linked as blocked-by. Most of jaala's
 missions unblock a host's active mission; such a mission closes when the host's half of its exercise
-passes too, so it can stay open after jaala's tickets close. jaala's own two are closed:
+passes too, so it can stay open after jaala's tickets close. The active mission is
+`mission_aggregate_answers` (#172): an aggregate's answer means what the question meant, measured by
+the Soufflé step of `./selfcheck.sh` skipping no aggregate program. jaala's earlier two are closed:
 `mission_selfcheck` (#86, at v0.1.29) left `./selfcheck.sh` as the check to run on `main` after every
 merge and before every tag, and `mission_docsite` (#104) left the docs site with every example run by
 the engine. Several missions can be active at once (`queue.sh` prints them). A new issue gets a
