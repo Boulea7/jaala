@@ -16,24 +16,8 @@ import "github.com/panyam/jaala/ns"
 func normalizeTuples(tuples []ns.Tuple, types []ns.ArgType) []ns.Tuple {
 	var out []ns.Tuple
 	for i, t := range tuples {
-		var vals []ns.Value
-		for j, v := range t.Vals {
-			n := v
-			if j < len(types) {
-				if c, ok := coerceValue(v, types[j]); ok {
-					n = c
-				}
-			}
-			n = canonicalNumber(n)
-			if sameValue(n, v) {
-				continue
-			}
-			if vals == nil {
-				vals = append([]ns.Value(nil), t.Vals...)
-			}
-			vals[j] = n
-		}
-		if vals == nil {
+		vals, changed := normalizeValues(t.Vals, types)
+		if !changed {
 			continue
 		}
 		if out == nil {
@@ -45,6 +29,33 @@ func normalizeTuples(tuples []ns.Tuple, types []ns.ArgType) []ns.Tuple {
 		return tuples
 	}
 	return out
+}
+
+// normalizeValues is one row's values read as types (see normalizeTuples): vals itself when nothing
+// changes, else a copy, and whether it changed. A generator's emitted rows go through it too, typed by
+// its Builtin's Types.
+func normalizeValues(vals []ns.Value, types []ns.ArgType) ([]ns.Value, bool) {
+	var out []ns.Value
+	for j, v := range vals {
+		n := v
+		if j < len(types) {
+			if c, ok := coerceValue(v, types[j]); ok {
+				n = c
+			}
+		}
+		n = canonicalNumber(n)
+		if sameValue(n, v) {
+			continue
+		}
+		if out == nil {
+			out = append([]ns.Value(nil), vals...)
+		}
+		out[j] = n
+	}
+	if out == nil {
+		return vals, false
+	}
+	return out, true
 }
 
 // sameValue reports whether a and b are the same value written the same way.

@@ -838,8 +838,9 @@ func canonicalNumber(v ns.Value) ns.Value {
 	if n == 0 {
 		n = 0 // -0 is 0
 	}
-	if c := ftoa(n); c != v.S {
-		v.S = c
+	var buf [32]byte
+	if c := strconv.AppendFloat(buf[:0], n, 'g', -1, 64); string(c) != v.S {
+		v.S = string(c) // allocates only when the text changes, so a generator's rows mostly don't
 	}
 	return v
 }
@@ -1362,7 +1363,7 @@ func passesHaving(row Row, having []Compare) (bool, error) {
 func groupKeyOf(keyVars []Var, bnd *binding) string {
 	var b strings.Builder
 	for _, kv := range keyVars {
-		b.WriteString(keyText(bnd.vals[kv]))
+		b.WriteString(valueKey(bnd.vals[kv]))
 		b.WriteByte('\x1f')
 	}
 	return b.String()
@@ -1388,10 +1389,11 @@ func groupValues(a Aggregate, rows []*binding) []string {
 			continue
 		}
 		if a.Distinct {
-			if seen[val.S] {
+			k := valueKey(val)
+			if seen[k] {
 				continue
 			}
-			seen[val.S] = true
+			seen[k] = true
 		}
 		vals = append(vals, val)
 	}
@@ -1556,14 +1558,15 @@ func rowKey(r Row, sel []Var) string {
 	for _, v := range sel {
 		b.WriteString(string(v))
 		b.WriteByte('=')
-		b.WriteString(keyText(r.Bind[v]))
+		b.WriteString(valueKey(r.Bind[v]))
 		b.WriteByte('\x1f')
 	}
 	return b.String()
 }
 
-// keyText is a value's text as an answer or group key: N(1) and S("1") key alike, as they join alike,
-// but an absent value keys apart from the empty string, as valueEq and the index keep it (#62).
+// keyText is a value's text, with an absent value apart from the empty string (#62), for ordering
+// derivations under CanonicalCites. Answers, groups and distinct key on valueKey, as equality does,
+// so a derived column holding both 1 and "1" answers both (#162).
 func keyText(v ns.Value) string {
 	if v.Absent {
 		return absentKey

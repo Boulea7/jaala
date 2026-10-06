@@ -95,8 +95,9 @@ func TestAnAbsentValueIsNotTheEmptyString(t *testing.T) {
 	same := ns.NewMemSource().Declare("v", "x")
 	same.Add("v", ns.Tuple{Vals: []ns.Value{ns.N(1)}})
 	same.Add("v", ns.Tuple{Vals: []ns.Value{ns.S("1")}})
-	if rows := eval(t, same, `v(?x) => ?x`); len(rows) != 1 {
-		t.Errorf("control: N(1) and S(\"1\") answer %v, want one row", binds(rows))
+	// N(1) and S("1") are different values (#162), so they answer as two rows, the number first.
+	if rows := eval(t, same, `v(?x) => ?x`); len(rows) != 2 || rows[0].Bind["x"].Num == nil || rows[1].Bind["x"].Num != nil {
+		t.Errorf("control: N(1) and S(\"1\") answer %v, want two rows, the number first", binds(rows))
 	}
 }
 
@@ -233,8 +234,8 @@ func TestAKeywordInsideANameOrStringIsNotAClause(t *testing.T) {
 }
 
 // The default order holds whatever order the facts arrive in, and agrees across evaluators (eval runs
-// all three through both()). N(1) and S("1") are one value to dedup, and the number is the one kept
-// whichever arrived first.
+// all three through both()). N(1) and S("1") are two values (#162), each answered once, the number
+// among the numbers and the text among the text.
 func TestTheDefaultOrderDoesNotDependOnInsertionOrder(t *testing.T) {
 	r := rand.New(rand.NewSource(8))
 	pool := []ns.Value{ns.Absent(), ns.N(0), ns.N(1), ns.N(2), ns.N(10), ns.N(-3), ns.N(2.5), ns.S("1"), ns.S("b"), ns.S("B"), ns.S("1a")}
@@ -252,7 +253,7 @@ func TestTheDefaultOrderDoesNotDependOnInsertionOrder(t *testing.T) {
 		}
 		return b.String()
 	}
-	const want = "absent n:-3 n:0 n:1 n:2 n:2.5 n:10 s:1a s:B s:b "
+	const want = "absent n:-3 n:0 n:1 n:2 n:2.5 n:10 s:1 s:1a s:B s:b "
 	for trial := 0; trial < 20; trial++ {
 		src := ns.NewMemSource().Declare("v", "x")
 		for _, i := range r.Perm(len(pool)) {

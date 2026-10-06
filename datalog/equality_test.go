@@ -1,6 +1,7 @@
 package datalog
 
 import (
+	"context"
 	"fmt"
 	"math"
 	"strings"
@@ -188,6 +189,67 @@ func TestAVariableIsAnIdentAndANumberIsDecimal(t *testing.T) {
 	for _, text := range []string{`weight(?x_7, ?_a), node(?0)`, `weight(?n, 1e-9)`, `weight(?n, -2.5)`, `weight(?n, +3)`, `weight(?n, 1E6)`, `weight(?n, 007)`} {
 		if _, err := Parse(text); err != nil {
 			t.Errorf("control: %s: %v", text, err)
+		}
+	}
+}
+
+// A derived column can hold both kinds when its rules read differently typed columns, and then 1 and
+// "1" are two values in the answer too, as in a join: two rows, two groups, and two distinct values.
+func TestADerivedColumnAnswersANumberAndItsTextApart(t *testing.T) {
+	src := ns.NewMemSource().
+		DeclareSchema("count", ns.Schema{Arity: 1, Labels: []string{"n"}, Types: []ns.ArgType{{Type: ns.TypeNumber}}}).
+		DeclareSchema("name", ns.Schema{Arity: 1, Labels: []string{"s"}, Types: []ns.ArgType{{Type: ns.TypeString}}})
+	src.Add("count", ns.Tuple{Vals: []ns.Value{ns.N(1)}})
+	src.Add("name", ns.Tuple{Vals: []ns.Value{ns.S("1")}})
+	const either = `w(?x) :- count(?x); w(?x) :- name(?x); `
+	if rows := eval(t, src, either+`w(?x) => ?x`); len(rows) != 2 || rows[0].Bind["x"].Num == nil || rows[1].Bind["x"].Num != nil {
+		t.Errorf("rows: %v, want 1 then \"1\"", binds(rows))
+	}
+	if got := col(eval(t, src, either+`w(?x) => count(distinct ?x)`), "count(distinct x)"); got != "2" {
+		t.Errorf("count(distinct): %s, want 2", got)
+	}
+	if rows := eval(t, src, either+`w(?x) => ?x, count(?x)`); len(rows) != 2 {
+		t.Errorf("groups: %v, want two", binds(rows))
+	}
+}
+
+// What a Lookup returned for 1 is not what it returns for "1": the Eval's cache keys them apart, so a
+// call for each finds its own facts. control: reading the relation whole finds both.
+func TestALookupKeysANumberAndItsTextApart(t *testing.T) {
+	src := ns.NewMemSource().Declare("k", "x", "tag").Declare("q", "x")
+	src.Add("k", ns.Tuple{Vals: []ns.Value{ns.N(1), ns.S("num")}})
+	src.Add("k", ns.Tuple{Vals: []ns.Value{ns.S("1"), ns.S("text")}})
+	src.Add("q", ns.Tuple{Vals: []ns.Value{ns.N(1)}})
+	src.Add("q", ns.Tuple{Vals: []ns.Value{ns.S("1")}})
+	v := std(src)
+	for _, b := range []*Base{baseFor(v), MustBase(v, lookingAt(src))} {
+		rows, err := both(mustParse(t, `q(?x), k(?x, ?t) => ?t`), b)
+		if err != nil || col(rows, "t") != "num,text" {
+			t.Errorf("%T: tags %q, %v; want num,text", b.src, col(rows, "t"), err)
+		}
+	}
+}
+
+// A generator's rows are read as its declared types, as a relation's are: one declaring a pin
+// emits N(3), which joins the text "3" a pin relation holds. control: the same generator declaring no
+// types keeps the number, which doesn't.
+func TestAGeneratorsRowsAreReadAsItsDeclaredTypes(t *testing.T) {
+	for _, c := range []struct {
+		types []ns.ArgType
+		want  string
+	}{{[]ns.ArgType{{Kind: "pin"}}, "U1"}, {nil, ""}} {
+		src := ns.NewMemSource().DeclareSchema("pin", ns.Schema{Arity: 2, Labels: []string{"ref", "pin"}, Types: []ns.ArgType{{Kind: "component"}, {Kind: "pin"}}})
+		src.Add("pin", ns.Tuple{Vals: []ns.Value{ns.S("U1"), ns.S("3")}})
+		v := std(src)
+		err := v.AddPredicate("probe", ns.Builtin{Arity: 1, Types: c.types, Modes: [][]bool{{false}}, Gen: func(_ context.Context, _ ns.Source, _ []ns.Arg, emit func([]ns.Value, []string) error) error {
+			return emit([]ns.Value{ns.N(3)}, nil)
+		}})
+		if err != nil {
+			t.Fatal(err)
+		}
+		rows, err := both(mustParse(t, `probe(?p), pin(?r, ?p) => ?r`), baseFor(v))
+		if err != nil || col(rows, "r") != c.want {
+			t.Errorf("types %v: %q, %v; want %q", c.types, col(rows, "r"), err, c.want)
 		}
 	}
 }
