@@ -30,8 +30,10 @@ import (
 //	comparisons                 as written: Soufflé orders symbols by their bytes, as jaala orders text
 //	count, sum, min, max        an aggregate over a helper relation of the body's bindings (every _
 //	                            named, so a binding is a tuple) or of the group's distinct values
-//	an aggregate goal with no   Soufflé's min and max give no row over nothing; jaala answers one row,
-//	group column                count 0 and the rest empty, so that row is written out explicitly
+//	absent                      a number column holds souffleAbsent where jaala holds absent (a min
+//	                            or max with no numbers, #122): min, max, sum and a distinct count
+//	                            skip it as jaala's do, an ordering comparison refuses it, and a min
+//	                            or max with no numbers writes it, where Soufflé would give no tuple
 //	order by, limit             applied in Go, with jaala's own order, to Soufflé's answer set
 //	Bind                        one value as the constant it is in jaala; several as a relation
 //	types                       by unification over every place a variable or constant sits, as
@@ -76,10 +78,11 @@ type souffleTranslation struct {
 	text   string
 	q      Query
 	cols   []sKind // the answer relation's columns
-	// asText marks an aggregate goal with no group column, whose answer columns are written as
-	// symbols so its row over nothing can hold jaala's empty value.
-	asText bool
 }
+
+// souffleAbsent stands for an absent value in a number column. The generator's numbers are 0 to 9
+// and their sums small, so no value it computes is this one.
+const souffleAbsent = "-999999"
 
 // translateSouffle writes q, with bind's values for goal variables, as a Soufflé program whose relations
 // are prefixed with prefix. Facts are read from <prefix>edge.facts and so on.
@@ -370,20 +373,13 @@ func bodyVars(b Body, extra []Term) []Var {
 // rule writes one rule: as it is, or for an aggregating head, over a helper relation of its body.
 func (tr *souffler) rule(r Rule, vk map[Var]sKind) error {
 	if !slices.ContainsFunc(r.Head.Args, func(t Term) bool { return t.Agg != nil }) {
-		fmt.Fprintf(&tr.b, "%s :- %s.\n", tr.atom(r.Head), tr.body(r.Body))
+		fmt.Fprintf(&tr.b, "%s :- %s.\n", tr.atom(r.Head), tr.body(r.Body, vk))
 		return nil
 	}
 	var keys []Var
 	for _, a := range r.Head.Args {
 		if a.Agg == nil && a.Var != "" {
 			keys = append(keys, a.Var)
-		}
-	}
-	if len(keys) == 0 {
-		for _, a := range r.Head.Args {
-			if a.Agg != nil && a.Agg.Func != "count" {
-				return unsupported("a rule head %s with no group column", a.Agg.Func)
-			}
 		}
 	}
 	aggs, err := tr.aggregates(r.Body, vk, keys, r.Head.Args)
@@ -404,23 +400,24 @@ func (tr *souffler) rule(r Rule, vk map[Var]sKind) error {
 
 // souffleAggs is the literals that read a head's or a goal's aggregates, each into a variable.
 type souffleAggs struct {
-	lits     []string       // the group's keys relation, then one aggregate relation per aggregate
-	result   map[int]string // position -> the variable holding that aggregate
-	nonEmpty string         // with no group key: a nullary relation holding when the body has a binding
+	lits   []string       // the group's keys relation, then one aggregate relation per aggregate
+	result map[int]string // position -> the variable holding that aggregate
 }
 
 // aggregates writes, for a body grouped by keys, a helper relation holding each binding (every _ given
 // a name, so bindings that differ only there are separate tuples, as jaala counts them), the group
 // keys, per distinct aggregate a relation of its group's distinct values, and per aggregate a relation
 // of its value by group. Each aggregate gets a rule of its own, since Soufflé 2.5 crashes on a rule
-// whose body is two aggregates and nothing else.
+// whose body is two aggregates and nothing else. Every group, and with no group key the one group
+// even over nothing, gets a tuple: count and sum give 0 over nothing, and a min or max with no
+// numbers gets souffleAbsent from a rule of its own.
 func (tr *souffler) aggregates(body Body, vk map[Var]sKind, keys []Var, terms []Term) (souffleAggs, error) {
 	tr.aux++
 	n := tr.aux
 	named, cols, colKinds := tr.namedBody(body, vk)
 	all := fmt.Sprintf("all%d", n)
 	tr.decl(all, colKinds)
-	fmt.Fprintf(&tr.b, "%s%s(%s) :- %s.\n", tr.prefix, all, joinVars(cols), tr.body(named))
+	fmt.Fprintf(&tr.b, "%s%s(%s) :- %s.\n", tr.prefix, all, joinVars(cols), tr.body(named, vk))
 	// local is v's name inside an aggregate's braces: the outer variable when v is a group key, which
 	// the keys relation binds, else a variable of its own.
 	local := func(v Var) string {
@@ -451,9 +448,6 @@ func (tr *souffler) aggregates(body Body, vk map[Var]sKind, keys []Var, terms []
 		fmt.Fprintf(&tr.b, "%s%s(%s) :- %s.\n", tr.prefix, keysRel, joinVars(keys), keyed(all, ""))
 		group = []string{fmt.Sprintf("%s%s(%s)", tr.prefix, keysRel, joinVars(keys))}
 		out.lits = append(out.lits, group[0])
-	} else {
-		out.nonEmpty = fmt.Sprintf("%snonempty%d", tr.prefix, n)
-		fmt.Fprintf(&tr.b, ".decl %s()\n%s() :- %s.\n", out.nonEmpty, out.nonEmpty, keyed(all, ""))
 	}
 	for i, t := range terms {
 		a := t.Agg
@@ -475,15 +469,30 @@ func (tr *souffler) aggregates(body Body, vk map[Var]sKind, keys []Var, terms []
 			fmt.Fprintf(&tr.b, "%s%s(%s) :- %s.\n", tr.prefix, dist, args, keyed(all, a.Var))
 			over = fmt.Sprintf("%s%s(%s)", tr.prefix, dist, args)
 		}
+		numbers := over // the values jaala reduces: it skips an absent one, except in a plain count
+		if vk[a.Var] == sNumber && (a.Func != "count" || a.Distinct) {
+			numbers = over + ", " + local(a.Var) + " != " + souffleAbsent
+		}
 		res := fmt.Sprintf("A%d_%d", n, i)
-		expr := fmt.Sprintf("%s = count : { %s }", res, over)
-		if a.Func != "count" {
-			expr = fmt.Sprintf("%s = %s %s : { %s }", res, a.Func, local(a.Var), over)
+		expr := fmt.Sprintf("%s = count : { %s }", res, numbers)
+		if a.Func == "count" && !a.Distinct {
+			expr = fmt.Sprintf("%s = count : { %s }", res, over)
+		} else if a.Func != "count" {
+			expr = fmt.Sprintf("%s = %s %s : { %s }", res, a.Func, local(a.Var), numbers)
 		}
 		aggRel := fmt.Sprintf("agg%d_%d", n, i)
 		tr.decl(aggRel, append(keyKinds(keys, vk), sNumber))
 		head := strings.Join(append(varsOf(keys), res), ", ")
 		fmt.Fprintf(&tr.b, "%s%s(%s) :- %s.\n", tr.prefix, aggRel, head, strings.Join(append(slices.Clone(group), expr), ", "))
+		if a.Func == "min" || a.Func == "max" {
+			// Soufflé gives no tuple for a group with no numbers; jaala's is absent.
+			some := fmt.Sprintf("some%d_%d", n, i)
+			tr.decl(some, keyKinds(keys, vk))
+			fmt.Fprintf(&tr.b, "%s%s(%s) :- %s.\n", tr.prefix, some, joinVars(keys), numbers)
+			absent := strings.Join(append(varsOf(keys), souffleAbsent), ", ")
+			not := fmt.Sprintf("!%s%s(%s)", tr.prefix, some, joinVars(keys))
+			fmt.Fprintf(&tr.b, "%s%s(%s) :- %s.\n", tr.prefix, aggRel, absent, strings.Join(append(slices.Clone(group), not), ", "))
+		}
 		out.lits = append(out.lits, fmt.Sprintf("%s%s(%s)", tr.prefix, aggRel, head))
 		out.result[i] = res
 	}
@@ -533,8 +542,9 @@ func (tr *souffler) namedBody(body Body, vk map[Var]sKind) (Body, []Var, []sKind
 	return out, cols, kinds
 }
 
-// body writes a rule body's literals.
-func (tr *souffler) body(b Body) string {
+// body writes a rule body's literals. An ordering comparison also refuses souffleAbsent in a number
+// variable, as jaala's refuses absent.
+func (tr *souffler) body(b Body, vk map[Var]sKind) string {
 	var out []string
 	for _, l := range b.Literals {
 		switch {
@@ -547,6 +557,13 @@ func (tr *souffler) body(b Body) string {
 		default:
 			c := l.Compare
 			out = append(out, souffleTerm(c.Left)+" "+c.Op+" "+souffleTerm(c.Right))
+			if orderingOps[c.Op] {
+				for _, t := range []Term{c.Left, c.Right} {
+					if t.Var != "" && vk[t.Var] == sNumber {
+						out = append(out, souffleVar(t.Var)+" != "+souffleAbsent)
+					}
+				}
+			}
 		}
 	}
 	return strings.Join(out, ", ")
@@ -581,7 +598,7 @@ func (tr *souffler) goal(q Query, body Body, one map[Var]ns.Value) (souffleTrans
 			}
 		}
 		tr.decl("answer", cols)
-		fmt.Fprintf(&tr.b, "%sanswer(%s) :- %s.\n.output %sanswer\n", tr.prefix, strings.Join(head, ", "), tr.body(body), tr.prefix)
+		fmt.Fprintf(&tr.b, "%sanswer(%s) :- %s.\n.output %sanswer\n", tr.prefix, strings.Join(head, ", "), tr.body(body, vk), tr.prefix)
 		return souffleTranslation{cols: cols}, nil
 	}
 	var keys []Var
@@ -600,11 +617,8 @@ func (tr *souffler) goal(q Query, body Body, one map[Var]ns.Value) (souffleTrans
 	}
 	args := make([]string, len(sel))
 	cols := make([]sKind, len(sel))
-	asText := len(keys) == 0
 	for i, t := range sel {
 		switch val, bound := one[t.Var]; {
-		case t.Agg != nil && asText:
-			args[i], cols[i] = "to_string("+aggs.result[i]+")", sSymbol
 		case t.Agg != nil:
 			args[i], cols[i] = aggs.result[i], sNumber
 		case bound:
@@ -614,34 +628,13 @@ func (tr *souffler) goal(q Query, body Body, one map[Var]ns.Value) (souffleTrans
 		}
 	}
 	tr.decl("answer", cols)
-	lits := aggs.lits
-	if asText {
-		lits = append([]string{aggs.nonEmpty + "()"}, lits...)
-	}
-	fmt.Fprintf(&tr.b, "%sanswer(%s) :- %s.\n", tr.prefix, strings.Join(args, ", "), strings.Join(append(lits, filter...), ", "))
-	if asText && len(q.Having) == 0 {
-		// jaala answers one row over nothing: count 0, the other aggregates empty, and a bound column
-		// its value.
-		empty := make([]string, len(sel))
-		for i, t := range sel {
-			switch {
-			case t.Agg == nil:
-				empty[i] = souffleConst(one[t.Var])
-			case t.Agg.Func == "count":
-				empty[i] = `"0"`
-			default:
-				empty[i] = `""`
-			}
-		}
-		fmt.Fprintf(&tr.b, "%sanswer(%s) :- !%s().\n", tr.prefix, strings.Join(empty, ", "), aggs.nonEmpty)
-	}
+	fmt.Fprintf(&tr.b, "%sanswer(%s) :- %s.\n", tr.prefix, strings.Join(args, ", "), strings.Join(append(aggs.lits, filter...), ", "))
 	fmt.Fprintf(&tr.b, ".output %sanswer\n", tr.prefix)
-	return souffleTranslation{cols: cols, asText: asText}, nil
+	return souffleTranslation{cols: cols}, nil
 }
 
-// having writes each group filter as a constraint on the aggregate's variable. Over nothing jaala's
-// row fails any having the generator writes (count 0, or an empty value, against at least 1), so the
-// row over nothing is left out when there is one.
+// having writes each group filter as a constraint on the aggregate's variable, which refuses
+// souffleAbsent under an ordering comparison, as jaala's having refuses absent.
 func (tr *souffler) having(hs []Compare, sel []Term, aggs souffleAggs) ([]string, error) {
 	var out []string
 	for _, h := range hs {
@@ -652,6 +645,9 @@ func (tr *souffler) having(hs []Compare, sel []Term, aggs souffleAggs) ([]string
 			return nil, unsupported("having on an unselected aggregate or a non-number")
 		}
 		out = append(out, aggs.result[i]+" "+h.Op+" "+souffleTerm(h.Right))
+		if orderingOps[h.Op] {
+			out = append(out, aggs.result[i]+" != "+souffleAbsent)
+		}
 	}
 	return out, nil
 }
@@ -749,11 +745,11 @@ func souffleRows(tr souffleTranslation, data string) []Row {
 			}
 			var v ns.Value
 			switch {
-			case tr.cols[i] == sNumber, tr.asText && t.Agg != nil && f != "":
+			case tr.cols[i] == sNumber && f == souffleAbsent:
+				v = ns.Absent()
+			case tr.cols[i] == sNumber:
 				n, _ := strconv.ParseFloat(f, 64)
 				v = ns.N(n)
-			case tr.asText && t.Agg != nil:
-				v = ns.Value{}
 			default:
 				v = ns.S(f)
 			}
@@ -774,6 +770,8 @@ func renderRows(rows []Row, sel []Term) []string {
 		for j, t := range sel {
 			v := r.Bind[colLabel(t)]
 			switch {
+			case v.Absent:
+				cells[j] = "absent"
 			case v.Num != nil:
 				cells[j] = "n:" + v.S
 			default:
@@ -1063,17 +1061,26 @@ func TestSouffleTranslation(t *testing.T) {
 			`p_answer("v1", V_b) :- p_edge("v1", V_b).`,
 		}},
 		{`weight(?n, ?w) => ?n, sum(?w)`, map[Var][]ns.Value{"n": {ns.S("v3")}}, []string{
-			`p_answer("v3", "") :- !p_nonempty1().`,
+			`p_answer("v3", A1_1) :- p_agg1_1(A1_1).`,
 		}},
 		{`edge(?a, _) => ?a, count(?a)`, nil, []string{
 			"p_all1(V_a, V_w1) :- p_edge(V_a, V_w1).",
 			"A1_1 = count : { p_all1(V_a, _) }",
 		}},
 		{`weight(_, ?w) => sum(distinct ?w), max(?w)`, nil, []string{
-			"A1_0 = sum L_w : { p_dist1_0(L_w) }",
-			"A1_1 = max L_w : { p_dist1_1(L_w) }",
-			"p_answer(to_string(A1_0), to_string(A1_1)) :- p_nonempty1(),",
-			`p_answer("", "") :- !p_nonempty1().`,
+			"A1_0 = sum L_w : { p_dist1_0(L_w), L_w != -999999 }",
+			"A1_1 = max L_w : { p_dist1_1(L_w), L_w != -999999 }",
+			"p_some1_1() :- p_dist1_1(L_w), L_w != -999999.",
+			"p_agg1_1(-999999) :- !p_some1_1().",
+			"p_answer(A1_0, A1_1) :- p_agg1_0(A1_0), p_agg1_1(A1_1).",
+		}},
+		// A min with no numbers is absent in a rule head too, so a comparison reading it refuses it.
+		{`r(min(?w)) :- weight(_, ?w); r(?m), ?m < 5 => ?m`, nil, []string{
+			"p_agg1_0(-999999) :- !p_some1_0().",
+			"p_answer(V_m) :- p_r(V_m), V_m < 5, V_m != -999999.",
+		}},
+		{`weight(_, ?w) => min(?w) having min(?w) < 5`, nil, []string{
+			"p_answer(A1_0) :- p_agg1_0(A1_0), A1_0 < 5, A1_0 != -999999.",
 		}},
 	} {
 		got, err := tr(c.text, c.bind)
@@ -1094,7 +1101,6 @@ func TestSouffleTranslation(t *testing.T) {
 		{`r(?x) :- node(?x); r(?w) :- weight(_, ?w); r(?x) => ?x`, "a value is used as both a symbol and a number"},
 		{`r(?a, ?b, ?a) :- edge(?a, _), weight(_, ?b); r(?x, ?y, ?y) => ?x`, "a value is used as both a symbol and a number"},
 
-		{`r(sum(?w)) :- weight(_, ?w); r(?s) => ?s`, "a rule head sum with no group column"},
 		{`node(?n) => ?n limit 1 offset 1`, "offset"},
 	} {
 		_, err := tr(c.text, nil)

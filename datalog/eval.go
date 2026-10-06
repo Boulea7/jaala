@@ -1429,7 +1429,8 @@ func numericValues(a Aggregate, rows []*binding) []float64 {
 }
 
 // reduce computes one aggregate over a group's bindings: count is how many; list joins them; min/max/
-// sum are over their numeric value (a row whose value is non-numeric is skipped). Distinct reduces the
+// sum are over their numeric value (a row whose value is non-numeric is skipped, and with none left
+// sum is 0 and min and max absent). Distinct reduces the
 // group's distinct values of the aggregated variable instead of one entry per binding, which changes
 // count, sum and list, and leaves min and max where they were.
 func reduce(a Aggregate, rows []*binding) ns.Value {
@@ -1448,7 +1449,12 @@ func reduce(a Aggregate, rows []*binding) ns.Value {
 	}
 	nums := numericValues(a, rows)
 	if len(nums) == 0 {
-		return ns.Value{}
+		// No numbers, over nothing or over text (#122): a sum of none is 0, as a count of none is,
+		// and there is no least or greatest, so min and max are absent rather than a made-up "".
+		if a.Func == "sum" {
+			return ns.N(0)
+		}
+		return ns.Absent()
 	}
 	r := nums[0]
 	switch a.Func {

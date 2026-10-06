@@ -23,13 +23,13 @@ A group exists only when some row has its key, so a package with no tests has no
 
 `list` gathers a group's values, sorted the way answers are, and `list(distinct ?x)` drops the repeats.
 
-## Numbers only, for now
+## Numbers only
 
 `sum`, `min` and `max` reduce the group's numbers. Over numbers they do what you'd expect:
 
 {{ demo "demos/guide/aggregation-min-max.yaml" }}
 
-A group with no numbers in that column answers an empty value instead. That happens over a text column, like package names, and the same happens to `sum` over a group with no rows at all (below). It's a gap rather than a design, and [#122](https://github.com/panyam/jaala/issues/122) tracks giving it a proper answer, so don't rely on it:
+A group with no numbers in that column has no least or greatest, so `min` and `max` answer `absent`, and `sum` answers 0, as it would over no rows at all (below). That happens over a text column, like package names ([#122](https://github.com/panyam/jaala/issues/122)). `absent` sorts first and is never equal to the empty string, and a comparison like `?m < 5` or `having min(?p) < 5` is false for it, so it can't pass for a number:
 
 {{ demo "demos/guide/aggregation-min-text.yaml" }}
 
@@ -43,7 +43,7 @@ A comparison in the goal can't do this, since it runs on each row before there's
 
 ## An aggregate over nothing
 
-With no plain variables in the projection, the whole answer is a single group, and that group exists even when no row matched. So an aggregate over nothing still answers one row, with `count` at zero:
+With no plain variables in the projection, the whole answer is a single group, and that group exists even when no row matched. So an aggregate over nothing still answers one row, with `count` and `sum` at zero and `min` and `max` absent:
 
 {{ demo "demos/guide/aggregation-empty.yaml" }}
 

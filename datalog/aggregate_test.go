@@ -85,6 +85,51 @@ func TestAnAggregateRuleOverNothing(t *testing.T) {
 	}
 }
 
+// min, max and sum reduce numbers. With none, over a text column or over nothing, sum is 0 and min
+// and max are absent, never the empty text they used to make up (#122).
+func TestAnAggregateWithNoNumbers(t *testing.T) {
+	render := func(rows []Row, labels ...Var) []string {
+		var out []string
+		for _, r := range rows {
+			var cells []string
+			for _, l := range labels {
+				switch v := r.Bind[l]; {
+				case v.Absent:
+					cells = append(cells, "absent")
+				case v.Num != nil:
+					cells = append(cells, "n:"+v.S)
+				default:
+					cells = append(cells, "s:"+v.S)
+				}
+			}
+			out = append(out, strings.Join(cells, " "))
+		}
+		return out
+	}
+	for _, c := range []struct {
+		text   string
+		labels []Var
+		want   []string
+	}{
+		// control: over the pin numbers each part has a min.
+		{`pin(?r, _, ?n) => ?r, min(?n)`, []Var{"r", "min(n)"}, []string{"s:C1 n:1", "s:R1 n:1", "s:R2 n:1", "s:U1 n:1"}},
+		{`pin(?r, ?net, _), ?r = "U1" => ?r, min(?net), max(?net), sum(?net)`, []Var{"r", "min(net)", "max(net)", "sum(net)"}, []string{"s:U1 absent absent n:0"}},
+		{`pin(_, "NOPE", ?n) => min(?n), max(?n), sum(?n)`, []Var{"min(n)", "max(n)", "sum(n)"}, []string{"absent absent n:0"}},
+		// In a rule head too, and a reader sees absent: it unifies only with absent, and has no order.
+		{`lo(min(?n)) :- pin(_, "NOPE", ?n); lo(?m) => ?m`, []Var{"m"}, []string{"absent"}},
+		{`lo(min(?n)) :- pin(_, "NOPE", ?n); lo(?m), ?m < 5 => ?m`, []Var{"m"}, nil},
+		{`lo(min(?n)) :- pin(_, "NOPE", ?n); w(?x) :- lo(?x); w("") :- pin("R1", "GND", _); w(?x) => ?x`, []Var{"x"}, []string{"absent", "s:"}},
+		{`tot(sum(?n)) :- pin(_, "NOPE", ?n); tot(?s), ?s < 5 => ?s`, []Var{"s"}, []string{"n:0"}},
+		// having reads the same values: a sum of nothing is under 5, a min of nothing is not.
+		{`pin(_, "NOPE", ?n) => sum(?n) having sum(?n) < 5`, []Var{"sum(n)"}, []string{"n:0"}},
+		{`pin(_, "NOPE", ?n) => min(?n) having min(?n) < 5`, []Var{"min(n)"}, nil},
+	} {
+		if got := render(eval(t, netlist(), c.text), c.labels...); !reflect.DeepEqual(got, c.want) {
+			t.Errorf("%s: %v, want %v", c.text, got, c.want)
+		}
+	}
+}
+
 func TestAConstantInAnAggregatingHead(t *testing.T) {
 	got := cols(eval(t, netlist(), `tally(?r, "nets", count(distinct ?n)) :- pin(?r, ?n, _); tally("U1", ?k, ?c) => ?k, ?c`), "k", "c")
 	if want := []string{"nets 3"}; !reflect.DeepEqual(got, want) {

@@ -238,6 +238,11 @@ go list -deps ./... | grep '\.' | grep -v '^github.com/panyam/jaala' | grep -v '
   (`aggregateFixes`, #78): `count`, `list`, and `sum`/`min`/`max` over a typed number. Over an
   untyped column those stay `Inferred`. A constant in any head leaves its column untyped (#84), so
   a default clause like `r(?n, 0)` needs the type declared on another clause (`?c: number`).
+- **`min`, `max` and `sum` reduce numbers, and with none they answer `absent` and 0** (`reduce`,
+  #122), over a text column or over nothing, in a goal and in a rule head alike; `count` is 0 and
+  `list` the empty text. Never `""`, which reads as a value and keys as one (#62). Soufflé gives no
+  tuple for a min over nothing, so its translator writes `souffleAbsent` there and skips, guards and
+  reads back that sentinel as jaala treats absent.
 - **Demand goes through negation and into it (#34).** If the rewritten program doesn't stratify
   (a recursive caller negating what it demands), `magic` redoes it with negated calls reading their
   relations in full. That usually stratifies, but the corpus found two cases where it doesn't (#93):
