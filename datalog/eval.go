@@ -1475,8 +1475,8 @@ func reduce(a Aggregate, rows []*binding) ns.Value {
 
 // dedupSort sorts the answer rows in the default order, column by column, and removes duplicates
 // (same projected text), so a query is a deterministic view. Sorting comes first and the first row of
-// each key in sorted order is kept: N(1) and S("1") are one value to a join, and keeping whichever
-// arrived first would put the survivor among the numbers or among the text by insertion order.
+// each key (valueKey) in sorted order is kept, so which row survives doesn't depend on the order the
+// rows arrived in. N(1) and S("1") are two values (#162), and answer as two rows.
 func dedupSort(rows []Row, sel []Var) []Row {
 	sort.SliceStable(rows, func(i, j int) bool {
 		for _, v := range sel {
