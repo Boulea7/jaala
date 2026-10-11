@@ -14,8 +14,10 @@ import (
 //     at the first would be a partial answer that looks complete.
 //   - Rules that disagree about a head position give it no type, rather than the first rule's. A
 //     column typed from whichever rule was written first is wrong for the other rule's rows.
-//   - A rule that reaches back into a relation already being typed abstains rather than vetoing, so a
-//     transitive closure is typed by its base case instead of losing its type to its recursive one.
+//   - A rule that reaches back into a relation already being typed abstains rather than vetoing when
+//     only the cycle binds its head variable, so a transitive closure is typed by its base case
+//     instead of losing its type to its recursive one. A recursive rule that binds the head variable
+//     outside the cycle votes like any other, since those values come from somewhere else.
 //   - A kind that varies per row stays per row through a head, when the head carries the argument
 //     that says the kind. agni collapsed this case to no type; a head declaring KindFrom can carry it.
 type typer struct {
@@ -155,9 +157,9 @@ func (t *typer) ofHead(rel string, j int, seen map[string]bool) ns.ArgType {
 			untyped = true // a constant head argument names a value, not a kind
 			continue
 		}
-		if hv.Var == "" || hv.Var == "_" || bodyTouches(r.Body, next) {
+		if hv.Var == "" || hv.Var == "_" || bodyTouches(r.Body, next) && !boundOutsideCycle(hv.Var, r.Body, next) {
 			closed = false
-			continue // recursive: no new information, so it abstains rather than vetoing
+			continue // only the cycle binds it: no new information, so it abstains rather than vetoing
 		}
 		vt := t.ofVar(hv.Var, r.Body, next)
 		if len(vt.Domain) == 0 {
@@ -413,4 +415,19 @@ func ColumnKinds(q Query, reg *ns.Vocabulary) ([]ColumnKind, error) {
 		out[i] = ColumnKind{Kind: vt.Kind, KindFrom: vt.kindVar, Owner: vt.owner, Type: vt.Type, Unit: vt.Unit}
 	}
 	return out, nil
+}
+
+// boundOutsideCycle reports whether a positive literal outside the cycle binds v.
+func boundOutsideCycle(v Var, body Body, seen map[string]bool) bool {
+	for _, lit := range body.Literals {
+		if lit.Pos == nil || seen[lit.Pos.Relation] {
+			continue
+		}
+		for _, a := range lit.Pos.Args {
+			if a.Var == v {
+				return true
+			}
+		}
+	}
+	return false
 }
