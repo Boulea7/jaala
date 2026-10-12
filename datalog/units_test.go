@@ -27,7 +27,8 @@ func params() *ns.MemSource {
 	return src
 }
 
-// withUnits writes each row's columns as text, a number with its unit in brackets, absent as -.
+// withUnits writes each row's columns as text, a number with its unit in brackets, absent as - with
+// the row's Why for it, if any, in parentheses.
 func withUnits(rows []Row, cols ...string) []string {
 	var out []string
 	for _, r := range rows {
@@ -35,6 +36,8 @@ func withUnits(rows []Row, cols ...string) []string {
 		for _, c := range cols {
 			v := r.Bind[Var(c)]
 			switch {
+			case v.Absent && r.Why[Var(c)] != "":
+				vals = append(vals, "-("+r.Why[Var(c)]+")")
 			case v.Absent:
 				vals = append(vals, "-")
 			case v.BaseUnit != "":
@@ -52,16 +55,16 @@ func TestAnAggregateOverMixedUnitsIsAbsent(t *testing.T) {
 	rows := eval(t, params(), `param(?p, _, ?v) => ?p, max(?v), min(?v), sum(?v), count(?v)`)
 	got := withUnits(rows, "p", "max(v)", "min(v)", "sum(v)", "count(v)")
 	want := []string{
-		"U1 - - - 3",
+		"U1 -(mixed units: A, V, ohm) -(mixed units: A, V, ohm) -(mixed units: A, V, ohm) 3",
 		"U2 3[V] 2[V] 5[V] 2", // control: one unit reduces, and keeps it
 		"U3 2[V] 1.25[V] 3.25[V] 2",
-		"U4 - - - 2",
+		"U4 -(mixed units: A, V) -(mixed units: A, V) -(mixed units: A, V) 2",
 	}
 	if !reflect.DeepEqual(got, want) {
 		t.Errorf("per part = %v, want %v", got, want)
 	}
 	rows = eval(t, params(), `param(?p, _, ?v) => ?p, sum(distinct ?v)`)
-	if got, want := withUnits(rows, "p", "sum(distinct v)"), []string{"U1 -", "U2 5[V]", "U3 3.25[V]", "U4 -"}; !reflect.DeepEqual(got, want) {
+	if got, want := withUnits(rows, "p", "sum(distinct v)"), []string{"U1 -(mixed units: A, V, ohm)", "U2 5[V]", "U3 3.25[V]", "U4 -(mixed units: A, V)"}; !reflect.DeepEqual(got, want) {
 		t.Errorf("sum(distinct) = %v, want %v: U4's 5 V and 5 A are one number in two units", got, want)
 	}
 }
@@ -91,5 +94,35 @@ func TestNumberPartsSayWhatAMixedAggregateMeans(t *testing.T) {
 	want := []string{"U1 A 0.5[A]", "U1 V 5[V]", "U1 ohm 10000[ohm]", "U3 - 2", "U3 V 1.25[V]", "U4 A 5[A]", "U4 V 5[V]"}
 	if got := withUnits(rows, "p", "u", "max(v)"); !reflect.DeepEqual(got, want) {
 		t.Errorf("max per unit = %v, want %v", got, want)
+	}
+}
+
+// An aggregate a rule stores keeps only its value, so a goal reading it sees absent with no reason.
+func TestWhyIsSetOnAGoalsOwnAggregates(t *testing.T) {
+	for _, c := range []struct {
+		query string
+		cols  []string
+		want  []string
+	}{
+		{`param(?p, ?s, _), ?p = "U2" => ?p, min(?s), sum(?s)`, []string{"min(s)", "sum(s)"}, []string{"-(no numbers) 0"}},
+		{`param(?p, _, ?v), ?p = "U9" => max(?v), count(?v)`, []string{"max(v)", "count(v)"}, []string{"-(no rows) 0"}},
+		{`peak(?p, max(?v)) :- param(?p, _, ?v); peak("U1", ?m) => ?m`, []string{"m"}, []string{"-"}},
+	} {
+		if got := withUnits(eval(t, params(), c.query), c.cols...); !reflect.DeepEqual(got, c.want) {
+			t.Errorf("%s = %v, want %v", c.query, got, c.want)
+		}
+	}
+	rows := eval(t, params(), `param(?p, _, ?v) => ?p having max(?v) != 99`)
+	if got := withUnits(rows, "p"); !reflect.DeepEqual(got, []string{"U1", "U2", "U3", "U4"}) {
+		t.Fatalf("having = %v, want every part: absent isn't 99", got)
+	}
+	for _, r := range rows {
+		if len(r.Why) != 0 {
+			t.Errorf("%v carries Why %v for a column only having read", r.Bind, r.Why)
+		}
+	}
+	rows = eval(t, params(), `param(?p, _, ?v), ?p = "U2" => ?p, max(?v)`)
+	if len(rows) != 1 || rows[0].Why != nil {
+		t.Errorf("a row with no absent column has Why %v, want nil", rows)
 	}
 }

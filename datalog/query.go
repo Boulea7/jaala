@@ -183,6 +183,12 @@ type Row struct {
 	// Witness says how the row holds, one node per goal literal in written order, when the Eval asked
 	// for witnesses (see Witnesses). It is nil otherwise, and on an aggregate row.
 	Witness []*Witness
+	// Why says why an aggregate column is absent, keyed like Bind: "no rows" (a group over nothing),
+	// "no numbers" (min or max over text) or "mixed units: A, V" (min, max or sum over numbers in
+	// different units, #80). A host shows it beside the absent value. It is nil when no column is
+	// absent, and an aggregate a rule stores keeps only its value, so it's set on a goal's own
+	// aggregates.
+	Why map[Var]string
 }
 
 // v builds a variable term; k builds a constant string term. Kept unexported helpers for tests and

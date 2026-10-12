@@ -246,8 +246,10 @@ go list -deps ./... | grep '\.' | grep -v '^github.com/panyam/jaala' | grep -v '
   `absent` (#80), and otherwise the result keeps the group's unit; a number with no unit takes the
   group's, as in a comparison. `numericValues` reads units before `distinct` dedups (5 V and 5 A are
   one number). A query that means something across units says so with `num.value` (strip the unit)
-  or `num.unit` (group by it). The corpus writes no units, so the Soufflé step can't see this;
-  `units_test.go` and the guide's examples are what check it.
+  or `num.unit` (group by it). An absent result from a goal's own aggregate says why in `Row.Why`,
+  keyed like `Bind` ("no rows", "no numbers", "mixed units: A, V"); a rule's aggregate stores only its
+  value, and a `having`-only column drops its reason with its value. The corpus writes no units, so
+  the Soufflé step can't see this; `units_test.go` and the guide's examples are what check it.
 - **An aggregate in a body is lowered to rules before anything else runs** (`bodyagg.go`, #71).
   `?v = f(?x) : { body }` becomes a domain relation of the shared variables (the clause's positive
   relations that don't read an aggregate's value; no citations, no witness), a head aggregate over
