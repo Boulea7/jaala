@@ -145,7 +145,10 @@ go list -deps ./... | grep '\.' | grep -v '^github.com/panyam/jaala' | grep -v '
   as a pass. Likewise a `-run '^Name$'` that matches no test passes; run by prefix and check the
   test actually ran. Restore mutated files in a `finally` and give each run a timeout. Mutate back
   to the exact old code: one that also loosened a neighbouring check (#89's head `_`) was caught by
-  that check under another message, and the saved fuzz input "survived" for the wrong reason.
+  that check under another message, and the saved fuzz input "survived" for the wrong reason. A
+  test that loops until a condition (paging until a short page) needs a bound, or a mutation hangs
+  it rather than failing it (#194). And a test comparing two APIs one of which is built on the other
+  can't fail: `Eval` is `EvalTable` converted, so the table's test checks its content directly.
 - **Give a test a control that proves its fixture can tell the cases apart.** Most surviving
   mutations here were fixtures that could not: a recursion guard tested only with two-rule
   relations, a column-order test whose sort orders coincided, a "free" call the planner bound, a
@@ -191,7 +194,9 @@ go list -deps ./... | grep '\.' | grep -v '^github.com/panyam/jaala' | grep -v '
   row over nothing explicitly. `order by` and `limit` are applied in Go with jaala's own order. A
   program outside the fragment (`list`, a rule head `sum`/`min`/`max` with no group column) is
   counted by reason, never dropped. `TestSouffleCatchesAWrongTranslation` drops negation on purpose
-  and requires a shrunk disagreement. Locally Soufflé is built from source on arm64 (no package).
+  and requires a shrunk disagreement. Locally Soufflé is built from source on arm64 (no package); on
+  x86_64, extract CI's release `.deb` (`dpkg-deb -x`) into a scratch directory and put its
+  `usr/bin` on `PATH` for `./selfcheck.sh`, which otherwise prints "could not run".
 - **The query text is fuzzed** (`fuzz_test.go`, #89). `FuzzParse`: any text parses or fails with a
   `query:` error, and a parsed rule prints back as text that parses to the same rule. `FuzzEval`: a
   program that parses is validated and evaluated without a panic, every error keeps `query:`, and when
@@ -372,16 +377,22 @@ Merge the PR, then run the CI set and `./selfcheck.sh` on the merged `main` (PRs
 together were never tested together), then put an annotated tag on the merge commit and push it
 (`git tag -a v0.1.N <merge-sha>`, `git push origin v0.1.N`). The owner picks the version. So far
 releases are patch bumps on v0.1.x, breaking changes included, pre-1.0. agni consumes tags only
-(`go get github.com/panyam/jaala@vX`), never a `replace`.
+(`go get github.com/panyam/jaala@vX`), never a `replace`. The tag's annotation is the release
+notes: write it as a short list of what changed, then publish the page with
+`gh release create v0.1.N --title v0.1.N --notes-from-tag --latest` (from v0.1.32; earlier tags
+have no page), and put the upgrade note on the issue a host filed or the PR's own issue.
 
 ## Issues and missions
 
 Issues are ranked by the mission they serve (labels `P0`–`P3`, `waiting`, `mission`,
 `mission:active`, `mission_<slug>`), and its tickets are linked as blocked-by. Most of jaala's
 missions unblock a host's active mission; such a mission closes when the host's half of its exercise
-passes too, so it can stay open after jaala's tickets close. The active mission is
-`mission_aggregate_answers` (#172): an aggregate's answer means what the question meant, measured by
-the Soufflé step of `./selfcheck.sh` skipping no aggregate program. jaala's earlier two are closed:
+passes too, so it can stay open after jaala's tickets close. Two are active:
+`mission_aggregate_answers` (#172), an aggregate's answer means what the question meant, measured by
+the Soufflé step of `./selfcheck.sh` skipping no aggregate program; and `mission_browser_memory`
+(#193), a browser tab answers a large design's query within its memory, measured by the `Memory`
+benchmark's peak heap in use (not `B/op`, which the join's short-lived bindings dominate) and agni
+#896. jaala's earlier two are closed:
 `mission_selfcheck` (#86, at v0.1.29) left `./selfcheck.sh` as the check to run on `main` after every
 merge and before every tag, and `mission_docsite` (#104) left the docs site with every example run by
 the engine. Several missions can be active at once (`queue.sh` prints them). A new issue gets a
@@ -391,7 +402,9 @@ Pushing a branch can get a PR opened for it under the owner's account (#168 was)
 bodied from the commit. Check `gh pr list --head <branch>` before `gh pr create`, and edit that PR
 rather than opening a second one. A PR from an outside contributor gets the owner's review before
 it merges, however green its CI: such PRs tend to settle a ticket's open questions on their own
-(#184). Deleting an open PR's head branch closes it unmerged (#187 was closed that way), so check
+(#184). When `main` moves under one, merge `main` into its branch (maintainers may push to it)
+rather than rebasing, so the contributor's commit stays as written, and say so on the PR with what
+the conflict resolution kept. Deleting an open PR's head branch closes it unmerged (#187 was closed that way), so check
 `gh pr view N --json state` says `MERGED` before cleaning up a branch.
 
 A PR body closes only its own issue. GitHub reads any "fix", "fixes", "close", "closes" or "resolves"

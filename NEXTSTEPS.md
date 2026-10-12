@@ -5,17 +5,18 @@ Maintained by /checkpoint: one thread per branch, pruned when the branch merges.
 
 ## At a glance
 
-- Mission #172 `mission_aggregate_answers`, 3/7. #84 is the last unmet done-when line, and its PR
-  (#184) waits on the contributor; #128's (#185) too. #80 (P3, mixed-unit aggregates) is the one
-  mission ticket with no PR, so it's next for us (`/start-pr 80`). Exercise last ran at bb2398a
-  (works); one code PR (#187) merged since, its CI Soufflé job green.
-- #186 (a recursive clause binding its head variable outside the cycle was ignored when typing) is
-  fixed on `main` by #187, untagged. Tag it with #84 so agni takes one signature change, not two;
-  #187's PR body carries the upgrade note.
-- External PRs, both from Boulea7, both changes requested on 2026-10-11:
-  - #184 (#84): rebase onto #187 and drop `headProbe`; a bare number takes the column's one unit;
-    `Inferred` and `ns/types.go` unchanged; reword the `bodyagg.go` comment (still true for min/max).
-  - #185 (#128): `order by` doubles the `query:` prefix too (`parseOrderBy`); one shared wrapper.
-  - Before #184 merges: agni's suite through a scratch `go.work`, and the 5000-seed Soufflé step.
-- This run: replaced the v0.1.31 glance (no open PRs then). `origin/recursive-clause-types` is
-  merged (#187) and can be deleted.
+- Mission #193 `mission_browser_memory`: jaala's tickets (#120, #194, #195) closed by #196, released
+  in v0.1.33. It stays open for agni #896 (GND's neighbourhood with `limit 50`, `Total`, `After`)
+  passing on v0.1.33, which is agni's work. Exercise at a635277: works (peak heap 3.9 MB where
+  v0.1.32 held 190 to 950 MB; the 2,000,000 budget that ran wasm out of memory completes).
+- Mission #172 `mission_aggregate_answers`, 4/7. Its open tickets wait on an outside contributor
+  (Boulea7): #84 through PR #184, #128 through PR #185, both with changes requested on 2026-10-11
+  and a "main moved" comment on 2026-10-12 (#184 had main merged into it, eb96c03). The owner reviews
+  every outside PR before merge. #82 is `waiting` and listed under "Not in this mission" but still
+  linked as #172's blocker, which would keep the mission open: unlink it or move it at the next
+  retriage.
+- Releases: v0.1.32 (#187, #191) and v0.1.33 (#196) are tagged with release pages; v0.1.33 is
+  Latest. Upgrade notes are on #80, #186 and #194.
+- Filed this session, off-mission: #190 (P3, a comparison across two declared units refused before
+  running) and #192 (P3, units in the generated corpus).
+- No open threads of ours. This run replaced the post-#186 glance.
