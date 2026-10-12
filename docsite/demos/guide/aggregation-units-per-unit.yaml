@@ -1,0 +1,4 @@
+facts: |
+  param("U1", "vmax", 5V); param("U1", "vmin", 1.8V); param("U1", "imax", 0.5A); param("U1", "rpull", 10000ohm)
+query: param("U1", _, ?v), num.unit(?v, ?u) => ?u, max(?v)
+expect: [[A, 0.5A], [V, 5V], [ohm, 10000ohm]]
