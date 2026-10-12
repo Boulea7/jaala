@@ -1,0 +1,5 @@
+fixture: deps
+program: |
+  at_least(?p, ?min) :- loc(?p, ?n), ?n >= ?min;
+query: at_least(?p, ?min) => ?p
+expect_error: "at_least's ?min is an input argument, and the call in the query doesn't bind it"

@@ -1,0 +1,6 @@
+fixture: deps
+program: |
+  # the packages with at least ?min lines; the caller says how many
+  at_least(?p, ?min) :- loc(?p, ?n), ?n >= ?min;
+query: at_least(?p, 500) => ?p
+expect: [[api], [auth], [db], [legacy]]

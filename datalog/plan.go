@@ -17,7 +17,15 @@ import (
 // body, whether it runs the body as written (Naive) or plans it (SemiNaive), and Validate reports it
 // without evaluating. where names the body for the message: a rule's head, or "the query".
 func checkModes(b *Base, where string, body Body) error {
+	return checkModesFrom(b, where, body, nil)
+}
+
+// checkModesFrom is checkModes for a body whose inputs (see inputsOf) its caller binds.
+func checkModesFrom(b *Base, where string, body Body, inputs map[Var][]ns.Value) error {
 	bound := map[Var]bool{}
+	for v := range inputs {
+		bound[v] = true
+	}
 	done := make([]bool, len(body.Literals))
 	for changed := true; changed; {
 		changed = false

@@ -74,6 +74,8 @@ func ValidateBound(q Query, reg *ns.Vocabulary, vars ...Var) error {
 		return validateWithoutVocabulary(q, reg, written, bind, sel, cols)
 	}
 	b := newValidationBase(reg)
+	b.inputRels = inputRelations(q.Rules)
+	b.inputRels = inputRelations(q.Rules)
 	if _, _, err := b.checkRules(q.Rules); err != nil {
 		return err
 	}
@@ -94,13 +96,17 @@ func ValidateBound(q Query, reg *ns.Vocabulary, vars ...Var) error {
 	if err := b.checkNegatedRelations(negs); err != nil {
 		return err
 	}
-	if err := checkWrittenAnchors(written.Goal, q.Rules, bind); err != nil {
+	if err := checkWrittenAnchors(written.Goal, q.Rules, bind, b.inputRels); err != nil {
 		return err
 	}
 	if err := validateSelect(sel, q.Having, q.Goal); err != nil {
 		return err
 	}
-	return validateOrder(cols, written)
+	if err := validateOrder(cols, written); err != nil {
+		return err
+	}
+	_, err = lowerInputs(q, bind) // every call binds its inputs (#200)
+	return err
 }
 
 // validateWithoutVocabulary is Validate minus the checks that need a relation catalog installed.
@@ -110,6 +116,7 @@ func ValidateBound(q Query, reg *ns.Vocabulary, vars ...Var) error {
 // for a caller that built its rule before any relation was installed.
 func validateWithoutVocabulary(q Query, reg *ns.Vocabulary, written Query, bind map[Var][]ns.Value, sel, cols []Term) error {
 	b := newValidationBase(reg)
+	b.inputRels = inputRelations(q.Rules)
 	if _, _, err := b.checkRules(q.Rules); err != nil {
 		return err
 	}
@@ -117,13 +124,17 @@ func validateWithoutVocabulary(q Query, reg *ns.Vocabulary, written Query, bind 
 	if err := b.checkNegatedRelations(negs); err != nil {
 		return err
 	}
-	if err := checkWrittenAnchors(written.Goal, q.Rules, bind); err != nil {
+	if err := checkWrittenAnchors(written.Goal, q.Rules, bind, b.inputRels); err != nil {
 		return err
 	}
 	if err := validateSelect(sel, q.Having, q.Goal); err != nil {
 		return err
 	}
-	return validateOrder(cols, written)
+	if err := validateOrder(cols, written); err != nil {
+		return err
+	}
+	_, err := lowerInputs(q, bind) // every call binds its inputs (#200)
+	return err
 }
 
 // checkLiterals applies checkAtom to every relation-bearing literal, positive or negated. A

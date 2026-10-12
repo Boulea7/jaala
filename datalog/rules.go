@@ -154,7 +154,8 @@ func (b *Base) validateRule(r Rule) error {
 			return fmt.Errorf("query: rule %q reads %s", r.Head.Relation, b.reg.Unknown(rel))
 		}
 	}
-	if err := checkModes(b, whereRule(r), r.Body); err != nil {
+	inputs := inputsBound(r, b.inputRels) // a caller's arguments (#200), which every call has to bind
+	if err := checkModesFrom(b, whereRule(r), r.Body, inputs); err != nil {
 		return err
 	}
 	if err := checkNoAggregates(whereRule(r), r.Body); err != nil {
@@ -163,6 +164,9 @@ func (b *Base) validateRule(r Rule) error {
 	bound := map[Var]bool{}
 	for _, vv := range positiveVars(r.Body) {
 		bound[vv] = true
+	}
+	for v := range inputs {
+		bound[v] = true
 	}
 	for _, arg := range r.Head.Args {
 		if arg.Agg != nil {
@@ -180,7 +184,7 @@ func (b *Base) validateRule(r Rule) error {
 			return fmt.Errorf("query: rule %q head variable ?%s is not bound by a positive body relation", r.Head.Relation, arg.Var)
 		}
 	}
-	return checkComparisons(r.Body)
+	return checkComparisonsFrom(r.Body, inputs)
 }
 
 // checkComparisons refuses a comparison over a variable no positive literal of its body binds. Such a
@@ -189,7 +193,15 @@ func (b *Base) validateRule(r Rule) error {
 // comparisons into rules of their own (#89). Checked on every rule as linked and on the goal, as a
 // projected variable is (validateSelect), it fails the same way for every evaluator and for Validate.
 func checkComparisons(body Body) error {
+	return checkComparisonsFrom(body, nil)
+}
+
+// checkComparisonsFrom is checkComparisons for a body whose inputs its caller binds.
+func checkComparisonsFrom(body Body, inputs map[Var][]ns.Value) error {
 	bound := map[Var]bool{}
+	for v := range inputs {
+		bound[v] = true
+	}
 	for _, v := range positiveVars(body) {
 		bound[v] = true
 	}

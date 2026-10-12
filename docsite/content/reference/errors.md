@@ -175,6 +175,20 @@ Wraps an error in one of `order by`'s columns, with that error's own text.
 
 An ordering comparison between two sides whose units are both known and differ, such as volts against amps, can never hold, so it's refused before anything runs ([#190](https://github.com/panyam/jaala/issues/190)), in the goal, a rule, a library module (at `Check`) or a `having`. A unit is known for a constant the host bound with one, or for a variable every relation binding it declares in that unit. A source declares units in its relations' schemas, so this comes from a host's data rather than the docs' examples, whose facts declare none. Where the data alone mixes units, the comparison is false at run time instead.
 
+`query: …'s ?… is an input argument, and the call in … doesn't bind it`
+
+A rule that takes an argument from its caller needs every call to bind it, with a value or a variable the call's own clause binds ([#200](https://github.com/panyam/jaala/issues/200)).
+
+{{ demo "demos/errors/is-an-input-argument.yaml" }}
+
+`query: … takes an argument from its caller, so … can't negate it`
+
+Such a rule is answered by writing its body into each call, and a `not` over a body of several literals has no form to write.
+
+`query: … counts its bindings, and …, which takes an argument from its caller, binds variables its head drops, so the count would include them; count(distinct ...) counts its tuples`
+
+Writing a rule's body into a caller that counts bindings would count each value of the variables the rule's head leaves out. `count(distinct …)` counts what the rule holds.
+
 `query: after takes values, as in …, and … is not one`
 
 `after` lists the values a page continues from, one per `order by` column, not variables.
