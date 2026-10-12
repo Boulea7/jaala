@@ -90,12 +90,16 @@ go list -deps ./... | grep '\.' | grep -v '^github.com/panyam/jaala' | grep -v '
 - **An answer writes a plain number canonically, and data's spelling wins where two meet** (#148).
   `bindArg` keeps, when a bound variable meets an equal number spelled differently, the spelling
   `spelledBefore` ranks first: text saying more than the number (`3.3V`, a range), then a unit, then
-  shorter, then smaller text. That makes the choice a minimum, so it doesn't depend on join order.
+  the unit's text (`A` before `V`), then shorter, then smaller text. That makes the choice a minimum, so it doesn't depend on join order.
   `canonicalAnswers` then rewrites a value whose text only spells its number (`01`, `1.50`, `-0`) to
   `ftoa`, in the goal's bindings and witnesses (copying shared nodes), before projection, so dedup,
   order and `list` see one text. Never canonicalize a constant's `S` earlier (#65), and a host-bound
-  column is filled in after, as bound. Two derivations of one derived tuple with different
-  annotated spellings still keep the first (dedup is by value).
+  column is filled in after, as bound. The same rule decides everywhere two equal values meet
+  (#201): two derivations of one derived tuple store the better annotation of each value
+  (`firstAnnotations` in `addTuple`, whichever derivation `keepCanonical` keeps), and a tuple whose
+  annotation changes is listed revised so its consumers read it again, in plain evaluation too;
+  an answer row's survivor, a group's key and a distinct value break a value tie the same way
+  (`order.survives`, `valueBefore`). Without it, `Witnesses` answered `9 A` where plain answered `9`.
 - **Equality is strict and an equivalence, with one key per value** (`valueEq`, `valueKey`, #162).
   Two numbers compare by value (NaN equals NaN, -0 is 0), two texts by text, and a number never
   equals text. A number's key is `numberPrefix` plus its canonical text, so the index (`tupleKey`)

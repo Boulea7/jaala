@@ -788,6 +788,9 @@ func spelledBefore(a, b ns.Value) bool {
 	if (a.BaseUnit != "") != (b.BaseUnit != "") {
 		return a.BaseUnit != ""
 	}
+	if a.BaseUnit != b.BaseUnit {
+		return a.BaseUnit < b.BaseUnit // 5 A before 5 V, so two units of one number are decided too (#201)
+	}
 	if len(a.S) != len(b.S) {
 		return len(a.S) < len(b.S)
 	}
