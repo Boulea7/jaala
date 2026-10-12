@@ -186,7 +186,11 @@ go list -deps ./... | grep '\.' | grep -v '^github.com/panyam/jaala' | grep -v '
   hides), and so does a fixed bug, whose line then goes. A program is classified by its first
   disagreement, so a known one can mask another: #90 hid about a tenth of the planned comparisons
   until it was fixed.
-  `./selfcheck.sh` runs the corpus at 5000 seeds (#86).
+  `./selfcheck.sh` runs the corpus at 5000 seeds (#86). About 30% of graphs give their weights
+  units (#192), half all in volts and half a mix of volts, amps and none (`genUnits`, drawn from a
+  source seeded by the graph so a seed's program is unchanged). Soufflé has no units, so
+  `corpusCase` compares a mixed seed with its units left off, and a single unit as it is (answers
+  compare by text).
 - **Naive is checked against Soufflé** (`souffle_test.go`, #23). The translator is test code, from
   the parsed `Query` and its bound values to a Soufflé program whose relations carry a per-program
   prefix, so a batch of 200 programs is one souffle run (batches run in parallel). Types come from
@@ -275,8 +279,11 @@ go list -deps ./... | grep '\.' | grep -v '^github.com/panyam/jaala' | grep -v '
   one number). A query that means something across units says so with `num.value` (strip the unit)
   or `num.unit` (group by it). An absent result from a goal's own aggregate says why in `Row.Why`,
   keyed like `Bind` ("no rows", "no numbers", "mixed units: A, V"); a rule's aggregate stores only its
-  value, and a `having`-only column drops its reason with its value. The corpus writes no units, so
-  the Soufflé step can't see this; `units_test.go` and the guide's examples are what check it. An
+  value, and a `having`-only column drops its reason with its value. The corpus gives some graphs'
+  weights units (#192), and its control requires answers holding a unit, and from 1000 seeds (so
+  `./selfcheck.sh`, not CI's 300) an aggregate absent over mixed units, which a unit-blind
+  `accumulator` fails; `units_test.go` and the guide's examples
+  check the rules themselves. An
   ordering comparison whose two sides have known, different units is refused before running
   (`checkComparisonUnits`, #190), in the goal, rules, `having` and modules (at `Check`): a
   variable's unit is known only when every positive atom binding it declares that unit, since a

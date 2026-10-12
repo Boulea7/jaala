@@ -1040,6 +1040,7 @@ type souffleRun struct {
 	skipped  map[string]int // by reason
 	diffs    []string       // each disagreement, shrunk
 	refused  []string       // translations Soufflé refused
+	unitless int            // programs whose mixed units were left off for Soufflé (#192)
 }
 
 // compareSeeds runs seeds first..first+n-1 through Naive and Soufflé, in batches of programs run in
@@ -1049,7 +1050,10 @@ func compareSeeds(t *testing.T, bin string, first int64, n int) souffleRun {
 	run := souffleRun{compared: map[string]int{}, skipped: map[string]int{}}
 	var cases []souffleCase
 	for seed := first; seed < first+int64(n); seed++ {
-		c := corpusCase(seed)
+		c, unitless := corpusCase(seed)
+		if unitless {
+			run.unitless++
+		}
 		sc, why, err := prepareSouffle(c, fmt.Sprintf("p%d_", seed))
 		if err != nil {
 			t.Fatalf("seed %d: %v\n%s", seed, err, c.prog)
@@ -1174,7 +1178,7 @@ func TestSouffleAgreesWithNaive(t *testing.T) {
 	for _, r := range sortedKeys(run.skipped) {
 		reasons = append(reasons, fmt.Sprintf("%s %d", r, run.skipped[r]))
 	}
-	t.Logf("%d seeds\n compared with Soufflé: %s\n skipped: %s\n disagreements: %d", seeds, strings.Join(counts, ", "), strings.Join(reasons, ", "), len(run.diffs))
+	t.Logf("%d seeds\n compared with Soufflé: %s\n skipped: %s\n mixed units left off for Soufflé: %d\n disagreements: %d", seeds, strings.Join(counts, ", "), strings.Join(reasons, ", "), run.unitless, len(run.diffs))
 	if seeds >= 50 {
 		for _, s := range []string{"program", "recursion", "negation", "head aggregate", "goal aggregate", "bound goal"} {
 			if run.compared[s] == 0 {
@@ -1204,10 +1208,17 @@ func TestSouffleCatchesAWrongTranslation(t *testing.T) {
 }
 
 // corpusCase is the generated corpus's program for seed, as TestGeneratedProgramsAgree builds it.
-func corpusCase(seed int64) genCase {
+// Soufflé's numbers have no units, so a seed whose weights carry several (or a unit beside none) is
+// compared over the same facts without them (#192); a single unit compares as it is, since answers
+// are compared by their text.
+func corpusCase(seed int64) (genCase, bool) {
 	rnd := rand.New(rand.NewSource(seed))
 	facts := genGraph(rnd)
-	return genCase{prog: (&generator{rnd: rnd, nodes: facts.n}).program(), facts: facts}
+	mixed := facts.mixedUnits()
+	if mixed {
+		facts.units = nil
+	}
+	return genCase{prog: (&generator{rnd: rnd, nodes: facts.n}).program(), facts: facts}, mixed
 }
 
 // The translation, checked without Soufflé so CI's main job covers it: a rule, negation and a
