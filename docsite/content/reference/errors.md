@@ -171,6 +171,10 @@ It is `order by`.
 
 Wraps an error in one of `order by`'s columns, with that error's own text.
 
+`query: … in … compares number[…] with number[…], which never holds`
+
+An ordering comparison between two sides whose units are both known and differ, such as volts against amps, can never hold, so it's refused before anything runs ([#190](https://github.com/panyam/jaala/issues/190)), in the goal, a rule, a library module (at `Check`) or a `having`. A unit is known for a constant the host bound with one, or for a variable every relation binding it declares in that unit. A source declares units in its relations' schemas, so this comes from a host's data rather than the docs' examples, whose facts declare none. Where the data alone mixes units, the comparison is false at run time instead.
+
 `query: after takes values, as in …, and … is not one`
 
 `after` lists the values a page continues from, one per `order by` column, not variables.

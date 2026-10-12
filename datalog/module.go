@@ -208,6 +208,9 @@ func resolveAll(v *ns.Vocabulary) (*resolution, error) {
 				if err := b.validateNegations(rule.Body, negs); err != nil {
 					return nil, fail(i, fmt.Errorf("%w (in module rule %q)", err, displayName(rule.Head.Relation)))
 				}
+				if err := t.checkUnits(whereRule(rule), rule.Head.Relation, rule.Body); err != nil {
+					return nil, fail(i, err)
+				}
 			}
 		}
 	}
