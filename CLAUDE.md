@@ -159,6 +159,9 @@ go list -deps ./... | grep '\.' | grep -v '^github.com/panyam/jaala' | grep -v '
   citation-leak fixture whose first derivation happened to follow the leaked path, a `ValidateBound`
   test with no closed-Domain argument (#68, which shipped). A `control:`
   assertion (Naive walks n times; the plan does start with the reordered literal) catches that.
+  A corpus control that counts a rare case has to hold at CI's 300 seeds, not only at the 1000 or
+  5000 it was tried at: #192's mixed-units control passed at 1000 and failed CI's default, so it
+  applies from 1000 seeds. Run `go test ./datalog` at its default before pushing a new control.
   **Inlining hides rewrites**: a single-rule relation is folded into its caller, so a test of how
   demand, planning or the fixpoint treat a derived relation gives it two rules or runs with
   `Witnesses()` (which turns inlining off). A cost test needs a fixture where the old cost shows:
