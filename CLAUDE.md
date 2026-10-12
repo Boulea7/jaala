@@ -426,6 +426,8 @@ exact lines each must change (as #7's v0.1.6 comment did for `Modes`).
 To see what a change does to a host before writing its upgrade note, run the host's own suite
 against `main` and against the branch through a scratch `go.work` (`use` the host checkout and a
 jaala worktree), and diff the failures: a failure in both is the host's or its environment's, one in
-the branch only is this change's (#161, #168). A host checkout pins an older tag, so a copy may need
+the branch only is this change's (#161, #168). Diff the whole sorted list of failing test names
+(`grep '^--- FAIL' | sed 's/ (.*//' | sort -u`), never a `head` of it: a truncated list reported 9
+of agni's 13 environmental failures for #196. A host checkout pins an older tag, so a copy may need
 a small patch to build against `main` (agni's `Bind` call, for #132); patch a copy in the scratchpad,
 never the host's own checkout.
