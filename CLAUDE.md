@@ -291,6 +291,16 @@ go list -deps ./... | grep '\.' | grep -v '^github.com/panyam/jaala' | grep -v '
   (`checkComparisonUnits`, #190), in the goal, rules, `having` and modules (at `Check`): a
   variable's unit is known only when every positive atom binding it declares that unit, since a
   value from a unitless binder compares with any.
+- **A rule can take an argument from its caller** (`inputs.go`, #200): a head variable no positive
+  body literal binds, which a comparison or a `not` reads, is an input (`inputsOf`; a call to an
+  input relation binds only its other arguments, so `inputRelations` grows to a fixpoint). Only a
+  relation with one rule, a head of distinct variables, no aggregate and no recursion qualifies;
+  anything else keeps today's `head variable ?x is not bound` error. The written-program checks
+  treat inputs as bound (`inputsBound`, `b.inputRels`), then `lowerInputs` inlines each call into
+  its caller just before the evaluator reads the rules, so all three evaluators see ordinary rules,
+  and refuses a call that doesn't bind an input, a negated call, and a counting caller of a
+  projecting input relation (#139's multiplicity). Validate and module resolution (at `Check`) run
+  the same lowering for its errors. `ArgSig.Input` marks the argument.
 - **An aggregate in a body is lowered to rules before anything else runs** (`bodyagg.go`, #71).
   `?v = f(?x) : { body }` becomes a domain relation of the shared variables (the clause's positive
   relations that don't read an aggregate's value; no citations, no witness), a head aggregate over

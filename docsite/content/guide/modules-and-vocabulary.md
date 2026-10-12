@@ -1,6 +1,6 @@
 ---
 title: "Modules and the vocabulary"
-description: "How a host names everything a query can call: modules of rules by path, private members, docs and signatures, and the errors Check reports."
+description: "How a host names everything a query can call: modules of rules by path, private members, docs and signatures, rules that take an argument from their caller, and the errors Check reports."
 prev: {url: "/jaala/guide/host-options/", title: "Host options"}
 next: {url: "/jaala/guide/absent-values/", title: "Absent values"}
 ---
@@ -20,6 +20,18 @@ A module lives at a path, and its members are named under it: `deps.depends_on`.
 ## Docs and signatures
 
 The comment lines above a member's first rule are its doc, and `Lookup` returns it with the member's signature and the origin the host gave when adding the module, usually a file name. A signature lists the member's arguments with their types, declared in a rule head or inferred through its rules, which is what a host shows when it lists what's available to query.
+
+## Arguments from the caller
+
+A rule can take an argument from whoever calls it ([#200](https://github.com/panyam/jaala/issues/200)). A head variable no relation in the body binds, which a comparison or a `not` reads instead, is an input: the rule has no answer of its own for it, and each call supplies one. Here the caller says how many lines a package needs:
+
+{{ demo "demos/guide/modules-input-argument.yaml" }}
+
+jaala answers such a rule per call, by writing its body into the caller with the argument filled in, so `at_least(?p, 500)` runs as `loc(?p, ?n), ?n >= 500`. A call can pass a value, a variable the rest of its own clause binds (in any order, since a comparison waits for what it compares), or a variable the host binds. One that leaves the argument unbound is refused before anything runs:
+
+{{ demo "demos/guide/modules-input-argument-unbound.yaml" }}
+
+That's how a library offers a question with a blank in it, such as "which nodes span line N of this file", without a predicate in Go. `Lookup` marks the argument with `Input` in the member's signature. A few shapes aren't supported yet. The rule has to be its relation's only one and can't call itself, which leaves its unbound variable the error it always was. A call can't be negated. And a caller counting its bindings (`count`, `sum` or `list` without `distinct`) can't call one whose body binds variables its head drops, since writing the body in would count those too.
 
 ## Mistakes in a module
 

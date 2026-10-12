@@ -65,6 +65,10 @@ type Base struct {
 	// validation base inside module resolution sets it, since the memoized signatures are not
 	// available until that resolution finishes.
 	sigs map[string][]ns.ArgSig
+	// inputRels, set only inside module resolution, are the members that take an argument from their
+	// caller (#200), whose own rules are checked with those arguments bound. Elsewhere lowerInputs
+	// has inlined them before any check reads the program.
+	inputRels map[string]Rule
 }
 
 // NewBase builds a fact base that answers with v's names over src's facts. A host composes and
@@ -267,6 +271,9 @@ func evaluateOn(b *Base, gen int64, q Query, o evalOptions, rewrite func(*Base, 
 	if err != nil {
 		return nil, err
 	}
+	// A rule taking an argument from its caller (#200) is checked as written with that argument bound,
+	// then inlined into each call before the evaluator reads the rules.
+	b.inputRels = inputRelations(q.Rules)
 	if q, err = coerceConstants(q, b.reg); err != nil {
 		return nil, err
 	}
@@ -276,7 +283,7 @@ func evaluateOn(b *Base, gen int64, q Query, o evalOptions, rewrite func(*Base, 
 	if b.witnessing() {
 		q = tagWritten(q)
 	}
-	if err := checkWrittenAnchors(written.Goal, q.Rules, o.bind); err != nil {
+	if err := checkWrittenAnchors(written.Goal, q.Rules, o.bind, b.inputRels); err != nil {
 		return nil, err
 	}
 	if err := b.checkWrittenArity(q); err != nil {
@@ -288,7 +295,7 @@ func evaluateOn(b *Base, gen int64, q Query, o evalOptions, rewrite func(*Base, 
 	// Modes are checked on the program as linked, before any rewrite, so an evaluator that inlines a
 	// rule away still refuses what its body could never run, with the message Validate gives.
 	for _, r := range q.Rules {
-		if err := checkModes(b, whereRule(r), r.Body); err != nil {
+		if err := checkModesFrom(b, whereRule(r), r.Body, inputsBound(r, b.inputRels)); err != nil {
 			return nil, err
 		}
 	}
@@ -309,6 +316,15 @@ func evaluateOn(b *Base, gen int64, q Query, o evalOptions, rewrite func(*Base, 
 			}
 		}
 		e.linked = q
+	}
+	if len(b.inputRels) > 0 {
+		b.idbArity = map[string]int{}
+		if _, _, err := b.checkRules(q.Rules); err != nil {
+			return nil, err
+		}
+		if q, err = lowerInputs(q, o.bind); err != nil {
+			return nil, err
+		}
 	}
 	if rewrite != nil {
 		// The rules are checked as linked too, before the rewrite renames them, so an error names
@@ -382,10 +398,16 @@ func splitNegations(lits []Literal) (pos, negs []Literal) {
 // fixpoint) already guarantees a negated IDB relation is fully derived before the rule or goal that
 // negates it runs, so the filter is safe.
 func (b *Base) validateNegations(body Body, negs []Literal) error {
+	return b.validateNegationsFrom(body, negs, nil)
+}
+
+// validateNegationsFrom is validateNegations for a body whose inputs its caller binds, which anchor
+// a negation as the host's bound variables anchor the goal's.
+func (b *Base) validateNegationsFrom(body Body, negs []Literal, inputs map[Var][]ns.Value) error {
 	if err := b.checkNegatedRelations(negs); err != nil {
 		return err
 	}
-	return checkAnchored(body, nil)
+	return checkAnchored(body, inputs)
 }
 
 // checkNegatedRelations is validateNegations without the anchoring check, for a body a rewrite may
@@ -493,9 +515,9 @@ func (b *Base) checkWrittenArity(q Query) error {
 // written in the goal does), and the rules before a rewrite inlines or renames them (#92). Checked
 // after, a bound anchor became a constant and an inlined body's anchor a renamed variable, so a
 // negation anchored as written was refused, naming a variable nobody wrote.
-func checkWrittenAnchors(goal Body, rules []Rule, bind map[Var][]ns.Value) error {
+func checkWrittenAnchors(goal Body, rules []Rule, bind map[Var][]ns.Value, inputRels map[string]Rule) error {
 	for _, r := range rules {
-		if err := checkAnchored(r.Body, nil); err != nil {
+		if err := checkAnchored(r.Body, inputsBound(r, inputRels)); err != nil {
 			return err
 		}
 	}
