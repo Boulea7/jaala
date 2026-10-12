@@ -1,6 +1,6 @@
 ---
 title: "Aggregation"
-description: "Groups, counting rows against counting values, having, an aggregate in a rule's head, and what an aggregate answers over nothing."
+description: "Groups, counting rows against counting values, units, having, an aggregate in a rule's head, and what an aggregate answers over nothing."
 prev: {url: "/jaala/guide/negation/", title: "Negation"}
 next: {url: "/jaala/guide/ordering/", title: "Ordering"}
 ---
@@ -32,6 +32,20 @@ A group exists only when some row has its key, so a package with no tests has no
 A group with no numbers in that column has no least or greatest, so `min` and `max` answer `absent`, and `sum` answers 0, as it would over no rows at all (below). That happens over a text column, like package names ([#122](https://github.com/panyam/jaala/issues/122)). `absent` sorts first and is never equal to the empty string, and a comparison like `?m < 5` or `having min(?p) < 5` is false for it, so it can't pass for a number:
 
 {{ demo "demos/guide/aggregation-min-text.yaml" }}
+
+## Units
+
+A number can carry a unit (`5V`, `0.5A`), and `sum`, `min` and `max` read it. Over numbers in one unit the answer keeps that unit. Over numbers in different units there's no answer: the largest of 5 volts, half an amp and ten thousand ohms isn't a question, so all three are `absent` ([#80](https://github.com/panyam/jaala/issues/80)), the way a comparison between volts and amps never holds. A number without a unit goes with the group's, as it does in a comparison, and `count` and `list` don't look at units at all:
+
+{{ demo "demos/guide/aggregation-units.yaml" }}
+
+A query that does mean something across units says so. `num.value` strips each number's unit, so the reduce is over plain numbers:
+
+{{ demo "demos/guide/aggregation-units-value.yaml" }}
+
+and `num.unit` makes the unit part of the group's key, for one answer per unit:
+
+{{ demo "demos/guide/aggregation-units-per-unit.yaml" }}
 
 ## Filtering groups
 

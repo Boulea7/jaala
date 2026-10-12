@@ -9,7 +9,7 @@ import (
 func TestParseFacts(t *testing.T) {
 	facts, err := ParseFacts(`# a comment
 edge("a", "b"); edge("b;c", "#d").
-weight("a", 1.5)`)
+weight("a", 1.5); vmax("U1", 3.3V)`)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -17,14 +17,20 @@ weight("a", 1.5)`)
 	for _, f := range facts {
 		got = append(got, f.Text)
 	}
-	want := `edge("a", "b") | edge("b;c", "#d") | weight("a", 1.5)`
+	want := `edge("a", "b") | edge("b;c", "#d") | weight("a", 1.5) | vmax("U1", 3.3V)`
 	if strings.Join(got, " | ") != want {
 		t.Errorf("parsed %q, want %q", strings.Join(got, " | "), want)
 	}
 	if facts[2].Args[1].Num == nil || *facts[2].Args[1].Num != 1.5 {
 		t.Errorf("weight's second argument should be the number 1.5: %+v", facts[2].Args[1])
 	}
-	for _, bad := range []string{`edge("a", b)`, `edge "a"`, `ok("a")` + "\n" + `(`} {
+	if v := facts[3].Args[1]; v.Num == nil || *v.Num != 3.3 || v.BaseUnit != "V" {
+		t.Errorf("vmax's second argument should be 3.3 in V: %+v", v)
+	}
+	if v := facts[2].Args[1]; v.BaseUnit != "" {
+		t.Errorf("weight's 1.5 has unit %q, want none", v.BaseUnit)
+	}
+	for _, bad := range []string{`edge("a", b)`, `edge("a", V)`, `edge "a"`, `ok("a")` + "\n" + `(`} {
 		if _, err := ParseFacts(bad); err == nil || !strings.Contains(err.Error(), "facts line") {
 			t.Errorf("ParseFacts(%q) = %v, want an error naming its line", bad, err)
 		}

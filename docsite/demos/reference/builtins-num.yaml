@@ -1,0 +1,4 @@
+facts: |
+  reading("r1", 5V); reading("r2", 0.5A); reading("r3", 7)
+query: reading(?r, ?x), num.value(?x, ?n), num.unit(?x, ?u) => ?r, ?n, ?u
+expect: [[r1, "5", V], [r2, "0.5", A], [r3, "7", absent]]

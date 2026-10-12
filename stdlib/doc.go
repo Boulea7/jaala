@@ -1,6 +1,7 @@
 // Package stdlib is jaala's standard vocabulary: the predicates every host gets unless it composes
 // its own set. Strings registers the string tests under str (str.contains, str.prefix, str.suffix,
-// str.glob, str.match), Absent registers absent at the root, and Register registers both.
+// str.glob, str.match), Numbers registers num.value and num.unit, which split a number from its unit,
+// Absent registers absent at the root, and Register registers all three.
 //
 // Reach builds a transitive-closure predicate from a host's own walk: it runs from whichever end a
 // query binds, refuses a call that binds neither (through its Modes), and cites each answer's path in

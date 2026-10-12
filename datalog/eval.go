@@ -1412,14 +1412,22 @@ func groupValues(a Aggregate, rows []*binding) []string {
 // numericValues is min/max/sum's input: the numeric value of Var across the group, deduped when the
 // aggregate says distinct. Dedup is on the VALUE, so two bindings carrying the same number contribute
 // once — which is what makes sum(distinct ?v) the sum of the distinct values rather than of the
-// distinct rows that happen to hold them.
-func numericValues(a Aggregate, rows []*binding) []float64 {
+// distinct rows that happen to hold them. It also reports the group's unit, read from every number
+// before dedup (5 V and 5 A are one number but two units), and mixed when two numbers carry different
+// units (#80). A number with no unit takes the group's, as in a comparison.
+func numericValues(a Aggregate, rows []*binding) (nums []float64, unit string, mixed bool) {
 	seen := map[float64]bool{}
-	var nums []float64
 	for _, bnd := range rows {
 		val, ok := bnd.vals[a.Var]
 		if !ok || val.Num == nil {
 			continue
+		}
+		if val.BaseUnit != "" {
+			if unit == "" {
+				unit = val.BaseUnit
+			} else if unit != val.BaseUnit {
+				return nil, "", true
+			}
 		}
 		if a.Distinct {
 			if seen[*val.Num] {
@@ -1429,12 +1437,13 @@ func numericValues(a Aggregate, rows []*binding) []float64 {
 		}
 		nums = append(nums, *val.Num)
 	}
-	return nums
+	return nums, unit, false
 }
 
 // reduce computes one aggregate over a group's bindings: count is how many; list joins them; min/max/
 // sum are over their numeric value (a row whose value is non-numeric is skipped, and with none left
-// sum is 0 and min and max absent). Distinct reduces the
+// sum is 0 and min and max absent). Over numbers in different units there is no least, greatest or
+// total, so all three are absent (#80); otherwise the result carries the group's unit. Distinct reduces the
 // group's distinct values of the aggregated variable instead of one entry per binding, which changes
 // count, sum and list, and leaves min and max where they were.
 func reduce(a Aggregate, rows []*binding) ns.Value {
@@ -1451,7 +1460,10 @@ func reduce(a Aggregate, rows []*binding) ns.Value {
 	if a.Func == "list" {
 		return ns.Value{S: strings.Join(groupValues(a, rows), listSep)}
 	}
-	nums := numericValues(a, rows)
+	nums, unit, mixed := numericValues(a, rows)
+	if mixed {
+		return ns.Absent()
+	}
 	if len(nums) == 0 {
 		// No numbers, over nothing or over text (#122): a sum of none is 0, as a count of none is,
 		// and there is no least or greatest, so min and max are absent rather than a made-up "".
@@ -1480,7 +1492,7 @@ func reduce(a Aggregate, rows []*binding) ns.Value {
 			r += x
 		}
 	}
-	return ns.Value{S: ftoa(r), Num: &r}
+	return ns.Value{S: ftoa(r), Num: &r, BaseUnit: unit}
 }
 
 // dedupSort sorts the answer rows in the default order, column by column, and removes duplicates

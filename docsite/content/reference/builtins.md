@@ -1,13 +1,13 @@
 ---
 title: "Built-ins"
-description: "Everything the standard library adds to a vocabulary: string tests, edit distance and absent, read from its registry."
+description: "Everything the standard library adds to a vocabulary: string tests, edit distance, a number's value and unit, and absent, read from its registry."
 ---
 
 `stdlib.Register` adds these to a vocabulary. The table is built from the registry itself when the site is built, with each name's signature and the doc it was registered with.
 
 {{ builtins }}
 
-All but `str.distance` are tests: each holds or it doesn't, and binds nothing. So every argument needs a value from the rest of the goal, pretty much the way a comparison does. jaala's planner runs a test once its arguments are bound, wherever you wrote it in the goal, and refuses one whose arguments nothing binds:
+All but `str.distance`, `num.value` and `num.unit` are tests: each holds or it doesn't, and binds nothing. So every argument needs a value from the rest of the goal, pretty much the way a comparison does. jaala's planner runs a test once its arguments are bound, wherever you wrote it in the goal, and refuses one whose arguments nothing binds:
 
 {{ demo "demos/reference/builtins-unbound.yaml" }}
 
@@ -48,6 +48,14 @@ Each pair is measured once per binding, so a goal comparing every name with ever
 With neither string bound there is nothing to measure, and the goal is refused:
 
 {{ demo "demos/reference/builtins-distance-unbound.yaml" }}
+
+## Numbers and units
+
+A number can carry a unit (`5V`, `0.5A`), which a host's source sets. `num.value(?x, ?n)` binds `?n` to `?x`'s number without its unit, and `num.unit(?x, ?u)` binds `?u` to the unit, or to `absent` for a number that has none. Both need `?x` from the rest of the goal, and bind nothing for a value that isn't a number:
+
+{{ demo "demos/reference/builtins-num.yaml" }}
+
+They're how a query says what it wants when the units in a column differ, which an aggregate won't guess at ([guide]({{.Site.PathPrefix}}/guide/aggregation/#units)).
 
 ## `absent`
 

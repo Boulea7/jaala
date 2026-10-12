@@ -2,7 +2,7 @@
 
 A Datalog engine for graph-shaped data, extracted from agni. Three packages: `ns/`, the contract
 (the namespace tree, value and signature types, members, suggestions, the `Language` hook);
-`stdlib/`, the standard vocabulary (`str.*`, `absent`, the glob and regex compilers); and
+`stdlib/`, the standard vocabulary (`str.*`, `num.*`, `absent`, the glob and regex compilers); and
 `datalog/`, the engine (parsing, linking, `Check`'s resolution and inference, evaluation). Read
 `ns/doc.go`, then `datalog/doc.go`. jaala is a Datalog engine, not a graph library: a host's fast
 path is a generator (its own Go running inside a query), not a jaala function called around the
@@ -242,7 +242,12 @@ go list -deps ./... | grep '\.' | grep -v '^github.com/panyam/jaala' | grep -v '
   #122), over a text column or over nothing, in a goal and in a rule head alike; `count` is 0 and
   `list` the empty text. Never `""`, which reads as a value and keys as one (#62). Soufflé gives no
   tuple for a min over nothing, so its translator writes `souffleAbsent` there and skips, guards and
-  reads back that sentinel as jaala treats absent.
+  reads back that sentinel as jaala treats absent. Over numbers in different units all three are
+  `absent` (#80), and otherwise the result keeps the group's unit; a number with no unit takes the
+  group's, as in a comparison. `numericValues` reads units before `distinct` dedups (5 V and 5 A are
+  one number). A query that means something across units says so with `num.value` (strip the unit)
+  or `num.unit` (group by it). The corpus writes no units, so the Soufflé step can't see this;
+  `units_test.go` and the guide's examples are what check it.
 - **An aggregate in a body is lowered to rules before anything else runs** (`bodyagg.go`, #71).
   `?v = f(?x) : { body }` becomes a domain relation of the shared variables (the clause's positive
   relations that don't read an aggregate's value; no citations, no witness), a head aggregate over
@@ -334,7 +339,8 @@ go list -deps ./... | grep '\.' | grep -v '^github.com/panyam/jaala' | grep -v '
   `scaling_test.go`; `parts()` (counts and numbers whose text and value orders differ) in
   `order_test.go`; `typedNets()` (number counts, a numeric-looking ref, a pin stored as `ns.N`, an
   untyped relation) and `answersAs` in `coerce_test.go`; `netlist()` (C1's two pins both on GND, so
-  counting bindings and distinct values disagree; `ohms` carries a unit) in `aggregate_test.go`. `both()` takes Eval options, so a `Bind`
+  counting bindings and distinct values disagree; `ohms` carries a unit) in `aggregate_test.go`; `params()` (a part's parameters in V, A and ohm, a
+  bare number, and 5 V beside 5 A) in `units_test.go`. `both()` takes Eval options, so a `Bind`
   case runs through all three evaluators. `both()` compares rows in order, so every test checks the
   answer order too. Don't compare rows by `fmt.Sprint`: `ns.Value.Num` is a pointer, so the text
   carries an address. datalog's tests import `stdlib` for `std()`; production datalog code must not.

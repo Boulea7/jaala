@@ -174,5 +174,5 @@ func display(v ns.Value) string {
 	if v.Absent {
 		return "absent"
 	}
-	return v.S
+	return v.S + v.BaseUnit
 }
