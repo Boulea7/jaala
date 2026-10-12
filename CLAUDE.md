@@ -90,12 +90,16 @@ go list -deps ./... | grep '\.' | grep -v '^github.com/panyam/jaala' | grep -v '
 - **An answer writes a plain number canonically, and data's spelling wins where two meet** (#148).
   `bindArg` keeps, when a bound variable meets an equal number spelled differently, the spelling
   `spelledBefore` ranks first: text saying more than the number (`3.3V`, a range), then a unit, then
-  shorter, then smaller text. That makes the choice a minimum, so it doesn't depend on join order.
+  the unit's text (`A` before `V`), then shorter, then smaller text. That makes the choice a minimum, so it doesn't depend on join order.
   `canonicalAnswers` then rewrites a value whose text only spells its number (`01`, `1.50`, `-0`) to
   `ftoa`, in the goal's bindings and witnesses (copying shared nodes), before projection, so dedup,
   order and `list` see one text. Never canonicalize a constant's `S` earlier (#65), and a host-bound
-  column is filled in after, as bound. Two derivations of one derived tuple with different
-  annotated spellings still keep the first (dedup is by value).
+  column is filled in after, as bound. The same rule decides everywhere two equal values meet
+  (#201): two derivations of one derived tuple store the better annotation of each value
+  (`firstAnnotations` in `addTuple`, whichever derivation `keepCanonical` keeps), and a tuple whose
+  annotation changes is listed revised so its consumers read it again, in plain evaluation too;
+  an answer row's survivor, a group's key and a distinct value break a value tie the same way
+  (`order.survives`, `valueBefore`). Without it, `Witnesses` answered `9 A` where plain answered `9`.
 - **Equality is strict and an equivalence, with one key per value** (`valueEq`, `valueKey`, #162).
   Two numbers compare by value (NaN equals NaN, -0 is 0), two texts by text, and a number never
   equals text. A number's key is `numberPrefix` plus its canonical text, so the index (`tupleKey`)
@@ -182,7 +186,11 @@ go list -deps ./... | grep '\.' | grep -v '^github.com/panyam/jaala' | grep -v '
   hides), and so does a fixed bug, whose line then goes. A program is classified by its first
   disagreement, so a known one can mask another: #90 hid about a tenth of the planned comparisons
   until it was fixed.
-  `./selfcheck.sh` runs the corpus at 5000 seeds (#86).
+  `./selfcheck.sh` runs the corpus at 5000 seeds (#86). About 30% of graphs give their weights
+  units (#192), half all in volts and half a mix of volts, amps and none (`genUnits`, drawn from a
+  source seeded by the graph so a seed's program is unchanged). Soufflé has no units, so
+  `corpusCase` compares a mixed seed with its units left off, and a single unit as it is (answers
+  compare by text).
 - **Naive is checked against Soufflé** (`souffle_test.go`, #23). The translator is test code, from
   the parsed `Query` and its bound values to a Soufflé program whose relations carry a per-program
   prefix, so a batch of 200 programs is one souffle run (batches run in parallel). Types come from
@@ -271,8 +279,11 @@ go list -deps ./... | grep '\.' | grep -v '^github.com/panyam/jaala' | grep -v '
   one number). A query that means something across units says so with `num.value` (strip the unit)
   or `num.unit` (group by it). An absent result from a goal's own aggregate says why in `Row.Why`,
   keyed like `Bind` ("no rows", "no numbers", "mixed units: A, V"); a rule's aggregate stores only its
-  value, and a `having`-only column drops its reason with its value. The corpus writes no units, so
-  the Soufflé step can't see this; `units_test.go` and the guide's examples are what check it. An
+  value, and a `having`-only column drops its reason with its value. The corpus gives some graphs'
+  weights units (#192), and its control requires answers holding a unit, and from 1000 seeds (so
+  `./selfcheck.sh`, not CI's 300) an aggregate absent over mixed units, which a unit-blind
+  `accumulator` fails; `units_test.go` and the guide's examples
+  check the rules themselves. An
   ordering comparison whose two sides have known, different units is refused before running
   (`checkComparisonUnits`, #190), in the goal, rules, `having` and modules (at `Check`): a
   variable's unit is known only when every positive atom binding it declares that unit, since a
