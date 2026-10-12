@@ -35,9 +35,15 @@ type Query struct {
 	// item keep the default order, so the answer stays deterministic. Empty keeps the default order
 	// alone: absent values first, then numbers by value, then other strings by their text.
 	OrderBy []Order
+	// After keeps only the rows strictly after these values in the OrderBy columns, one value per
+	// column, so a page continues from the last row of the one before it by value (#194). It needs
+	// an OrderBy naming every variable column. The After option sets it from a row.
+	After []ns.Value
 	// Limit keeps at most this many rows of the ordered answer, after skipping Offset of them. Zero
-	// means no limit. Neither saves evaluation work: the whole answer is computed and ordered first,
-	// so a page is a slice of the same ordered answer whatever its size.
+	// means no limit. With an OrderBy the goal holds only Limit plus Offset rows while it is solved;
+	// without one it answers the first Limit distinct rows it finds and stops there, so which rows
+	// depends on the evaluator. Offset needs an OrderBy, since a page has to continue from the one
+	// before it in a stable order.
 	Limit  int
 	Offset int
 }

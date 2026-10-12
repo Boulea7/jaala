@@ -117,3 +117,44 @@ func Example_explain() {
 	// goal: deps.depends_on/bf("app", ?d)
 	//   deps.depends_on/bf("app", ?d) [derived scan] passed 3
 }
+
+// A page continues from the last row of the one before it: After takes that
+// row, as the host got it, and answers what comes after it in the order by.
+// Total says how many rows the whole answer has, so a host can say how many
+// a page left out.
+func Example_page() {
+	b, ctx := base(), context.Background()
+	q := datalog.MustParse(`deps.depends_on(?p, ?d) => ?p, ?d order by ?p, ?d limit 2`)
+	var total int
+	page, _ := datalog.SemiNaive{}.Eval(ctx, q, b, datalog.Total(&total))
+	for _, r := range page {
+		fmt.Println(r.Bind["p"].S, r.Bind["d"].S)
+	}
+	fmt.Println("of", total)
+	next, _ := datalog.SemiNaive{}.Eval(ctx, q, b, datalog.After(page[len(page)-1].Bind))
+	for _, r := range next {
+		fmt.Println(r.Bind["p"].S, r.Bind["d"].S)
+	}
+	// Output:
+	// api log
+	// api util
+	// of 6
+	// app api
+	// app log
+}
+
+// EvalTable answers as Eval does, as columns and rows of values, without a
+// map per row.
+func Example_table() {
+	b, ctx := base(), context.Background()
+	q := datalog.MustParse(`deps.depends_on(?p, ?d) => ?p, count(?d) order by count(?d) desc, ?p limit 2`)
+	tab, _ := datalog.SemiNaive{}.EvalTable(ctx, q, b)
+	fmt.Println(tab.Columns)
+	for _, row := range tab.Rows {
+		fmt.Println(row[0].S, row[1].S)
+	}
+	// Output:
+	// [p count(d)]
+	// app 3
+	// api 2
+}

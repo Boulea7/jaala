@@ -19,6 +19,8 @@ type evalOptions struct {
 	canonical bool
 	explain   *Report
 	cold      bool // a cold run Explain started (see coldCost), which starts none of its own
+	after     map[Var]ns.Value
+	total     *int
 }
 
 // Bind gives goal variables values from the host, so a parameterized query needs no program text built
@@ -53,9 +55,27 @@ func Bind(values map[Var][]ns.Value) Option {
 
 // Budget limits one Eval to maxWork units of the work Base.Work counts (candidate comparisons, and
 // each solution a generator emits). Exceeding it stops the Eval with a *BudgetExceeded. The budget is
-// the Eval's own: concurrent Evals on one Base do not spend each other's.
+// the Eval's own: concurrent Evals on one Base do not spend each other's. It bounds work, not memory:
+// the goal holds one row per distinct answer or one accumulator per group, not its bindings (#120),
+// but the derived relations its rules produce are held whole.
 func Budget(maxWork int64) Option {
 	return func(o *evalOptions) { o.budget = maxWork }
+}
+
+// After answers only the rows strictly after row in the query's order by, as the query's after clause
+// does: row is the last one of the previous page, as the host got it, so the next page continues from
+// it by value rather than by count, and stays put when facts change between pages (#194). The query
+// needs an order by naming every variable column, so no row ties with row and is skipped. It replaces
+// an after clause the query writes.
+func After(row map[Var]ns.Value) Option {
+	return func(o *evalOptions) { o.after = row }
+}
+
+// Total sets *n to the number of rows the answer has before after, offset and limit, so a host
+// showing a page can say how many it left out (#194). A limit without an order by solves the whole
+// goal when Total is asked for, since counting needs every row.
+func Total(n *int) Option {
+	return func(o *evalOptions) { o.total = n }
 }
 
 // BudgetExceeded is the error an Eval stops with when its work passes its Budget, so a host can tell a
@@ -74,6 +94,7 @@ type evalRun struct {
 	ctx     context.Context
 	budget  int64
 	used    int64
+	held    int  // the answer rows or groups the goal held at its peak (Report.Held)
 	witness bool // record witnesses (see Witnesses)
 	// canonical keeps each tuple's canonical derivation (see CanonicalCites), and revised lists, by
 	// relation, the tuples a later derivation replaced since the last semi-naive mark.

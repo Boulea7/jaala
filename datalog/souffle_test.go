@@ -90,6 +90,9 @@ func translateSouffle(q Query, bind map[Var][]ns.Value, prefix string) (souffleT
 	if q.Offset != 0 {
 		return souffleTranslation{}, unsupported("offset")
 	}
+	if q.After != nil {
+		return souffleTranslation{}, unsupported("after")
+	}
 	tr := &souffler{prefix: prefix}
 	body, one := bindGoalBody(q.Goal, bind)
 	if err := tr.infer(q.Rules, body); err != nil {
@@ -920,6 +923,9 @@ func souffleRows(tr souffleTranslation, data string) []Row {
 	}
 	rows = dedupSort(rows, selKeys(sel))
 	orderRows(rows, tr.q.OrderBy)
+	if anyRows(tr.q) {
+		return rows // the whole answer: Naive's limited one is some of its rows (compareSouffle)
+	}
 	return page(rows, tr.q.Limit, tr.q.Offset)
 }
 
@@ -1009,7 +1015,23 @@ func compareSouffle(sc souffleCase, rows []Row) string {
 	if slices.Equal(got, sc.naive) {
 		return ""
 	}
+	if anyRows(sc.tr.q) && len(sc.naive) == min(sc.tr.q.Limit, len(got)) && subsetOf(sc.naive, got) {
+		return "" // a limit without an order by answers any of the rows (#194)
+	}
 	return fmt.Sprintf("Soufflé answers differently from Naive on %s\n naive:   %v\n souffle: %v\n translation:\n%s", sc.c.prog, sc.naive, got, sc.tr.text)
+}
+
+func subsetOf(some, all []string) bool {
+	in := map[string]bool{}
+	for _, r := range all {
+		in[r] = true
+	}
+	for _, r := range some {
+		if !in[r] {
+			return false
+		}
+	}
+	return true
 }
 
 // souffleRun is what comparing a range of seeds with Soufflé found.

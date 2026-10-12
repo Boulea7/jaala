@@ -149,7 +149,7 @@ Each clause after the projection can appear once.
 
 {{ demo "demos/errors/appears-twice-after.yaml" }}
 
-`query: … comes after …, not before it (the order is having, order by, limit, offset)`
+`query: … comes after …, not before it (the order is having, order by, after, limit, offset)`
 
 The clauses after the projection come in a fixed order.
 
@@ -170,6 +170,12 @@ It is `order by`.
 `query: order by: …`
 
 Wraps an error in one of `order by`'s columns, with that error's own text.
+
+`query: after takes values, as in …, and … is not one`
+
+`after` lists the values a page continues from, one per `order by` column, not variables.
+
+{{ demo "demos/errors/after-takes-values.yaml" }}
 
 `query: … … is not …`
 
@@ -507,7 +513,7 @@ A glob given to `str.glob` doesn't compile.
 
 ## Grouping and ordering
 
-These concern `having`, `order by`, `limit` and `offset`. A few can only come from a query built in Go, since the parser refuses the text first.
+These concern `having`, `order by`, `after`, `limit` and `offset`. A few can only come from a query built in Go, since the parser refuses the text first.
 
 `query: having compares against ?…, which is not a group key — after grouping only a selected variable or a constant is bound`
 
@@ -536,6 +542,34 @@ The same, for an aggregate on the right of the comparison. For a query built in 
 `query: limit … offset …: a row count can't be negative`
 
 A negative `limit` or `offset`, for a query built in Go.
+
+`query: offset needs an order by, so each page continues where the one before it stopped`
+
+Paging needs an order that stays put. A `limit` alone answers any rows ([#194](https://github.com/panyam/jaala/issues/194)).
+
+{{ demo "demos/errors/offset-needs-an-order-by.yaml" }}
+
+`query: after needs an order by: it continues from the last row in that order`
+
+`after` continues in the `order by`'s order, so it needs one, from the text or from `datalog.After`.
+
+{{ demo "demos/errors/after-needs-an-order-by.yaml" }}
+
+`query: after gives … values for … order by columns`
+
+One value per `order by` column.
+
+{{ demo "demos/errors/after-gives-values.yaml" }}
+
+`query: after needs an order by naming ?… too, or a row tying with the last one would be skipped`
+
+With a plain column left out of the `order by`, two rows could tie on every column it names, and the one after the cursor would be skipped.
+
+{{ demo "demos/errors/after-needs-an-order-by-naming.yaml" }}
+
+`query: After's row has no …, a column the order by reads`
+
+The row passed to `datalog.After` lacks a column the `order by` sorts on. For a query run from Go.
 
 `query: unknown aggregate … (want count/min/max/sum/list)`
 

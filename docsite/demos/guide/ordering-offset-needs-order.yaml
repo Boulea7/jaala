@@ -1,0 +1,3 @@
+fixture: deps
+query: loc(?p, ?n) => ?p limit 3 offset 3
+expect_error: "offset needs an order by"

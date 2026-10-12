@@ -33,6 +33,11 @@ type SemiNaive struct {
 
 // Eval answers the query as Naive.Eval does.
 func (s SemiNaive) Eval(ctx context.Context, q Query, b *Base, opts ...Option) ([]Row, error) {
+	return rowsOf(s.EvalTable(ctx, q, b, opts...))
+}
+
+// EvalTable answers q as Eval does, as a Table.
+func (s SemiNaive) EvalTable(ctx context.Context, q Query, b *Base, opts ...Option) (*Table, error) {
 	var rewrite func(*Base, Query) Query
 	if !s.WrittenOrder {
 		rewrite = func(b *Base, q Query) Query {

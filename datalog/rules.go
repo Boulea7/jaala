@@ -305,17 +305,6 @@ func (b *Base) applyRule(r Rule) (bool, error) {
 // variables being the group key. A group's citations are the union of its bindings', and its witness
 // names the rule without children, as an aggregate answer row has none.
 func (b *Base) applyAggregate(r Rule, pos, negs []Literal) (bool, error) {
-	var raw []*binding
-	err := solve(deferComparisons(pos), 0, newBinding(), b, func(bnd *binding) error {
-		ok, err := passesNegations(bnd, negs, b)
-		if ok {
-			raw = append(raw, bnd.clone())
-		}
-		return err
-	})
-	if err != nil {
-		return false, err
-	}
 	var cols []Term
 	seen := map[Var]bool{}
 	for _, t := range r.Head.Args {
@@ -324,7 +313,18 @@ func (b *Base) applyAggregate(r Rule, pos, negs []Literal) (bool, error) {
 			cols = append(cols, t)
 		}
 	}
-	rows, err := aggregate(cols, nil, raw)
+	ag := newAggregator(cols, nil, false)
+	err := solve(deferComparisons(pos), 0, newBinding(), b, func(bnd *binding) error {
+		ok, err := passesNegations(bnd, negs, b)
+		if ok {
+			ag.add(bnd)
+		}
+		return err
+	})
+	if err != nil {
+		return false, err
+	}
+	rows, err := ag.rows()
 	if err != nil {
 		return false, err
 	}
