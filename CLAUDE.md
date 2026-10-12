@@ -2,7 +2,7 @@
 
 A Datalog engine for graph-shaped data, extracted from agni. Three packages: `ns/`, the contract
 (the namespace tree, value and signature types, members, suggestions, the `Language` hook);
-`stdlib/`, the standard vocabulary (`str.*`, `absent`, the glob and regex compilers); and
+`stdlib/`, the standard vocabulary (`str.*`, `num.*`, `absent`, the glob and regex compilers); and
 `datalog/`, the engine (parsing, linking, `Check`'s resolution and inference, evaluation). Read
 `ns/doc.go`, then `datalog/doc.go`. jaala is a Datalog engine, not a graph library: a host's fast
 path is a generator (its own Go running inside a query), not a jaala function called around the
@@ -244,7 +244,14 @@ go list -deps ./... | grep '\.' | grep -v '^github.com/panyam/jaala' | grep -v '
   #122), over a text column or over nothing, in a goal and in a rule head alike; `count` is 0 and
   `list` the empty text. Never `""`, which reads as a value and keys as one (#62). Soufflé gives no
   tuple for a min over nothing, so its translator writes `souffleAbsent` there and skips, guards and
-  reads back that sentinel as jaala treats absent.
+  reads back that sentinel as jaala treats absent. Over numbers in different units all three are
+  `absent` (#80), and otherwise the result keeps the group's unit; a number with no unit takes the
+  group's, as in a comparison. `numericValues` reads units before `distinct` dedups (5 V and 5 A are
+  one number). A query that means something across units says so with `num.value` (strip the unit)
+  or `num.unit` (group by it). An absent result from a goal's own aggregate says why in `Row.Why`,
+  keyed like `Bind` ("no rows", "no numbers", "mixed units: A, V"); a rule's aggregate stores only its
+  value, and a `having`-only column drops its reason with its value. The corpus writes no units, so
+  the Soufflé step can't see this; `units_test.go` and the guide's examples are what check it.
 - **An aggregate in a body is lowered to rules before anything else runs** (`bodyagg.go`, #71).
   `?v = f(?x) : { body }` becomes a domain relation of the shared variables (the clause's positive
   relations that don't read an aggregate's value; no citations, no witness), a head aggregate over
@@ -336,7 +343,8 @@ go list -deps ./... | grep '\.' | grep -v '^github.com/panyam/jaala' | grep -v '
   `scaling_test.go`; `parts()` (counts and numbers whose text and value orders differ) in
   `order_test.go`; `typedNets()` (number counts, a numeric-looking ref, a pin stored as `ns.N`, an
   untyped relation) and `answersAs` in `coerce_test.go`; `netlist()` (C1's two pins both on GND, so
-  counting bindings and distinct values disagree; `ohms` carries a unit) in `aggregate_test.go`. `both()` takes Eval options, so a `Bind`
+  counting bindings and distinct values disagree; `ohms` carries a unit) in `aggregate_test.go`; `params()` (a part's parameters in V, A and ohm, a
+  bare number, and 5 V beside 5 A) in `units_test.go`. `both()` takes Eval options, so a `Bind`
   case runs through all three evaluators. `both()` compares rows in order, so every test checks the
   answer order too. Don't compare rows by `fmt.Sprint`: `ns.Value.Num` is a pointer, so the text
   carries an address. datalog's tests import `stdlib` for `std()`; production datalog code must not.
@@ -364,7 +372,10 @@ priority and a mission link when filed, or `waiting` with the trigger that would
 
 Pushing a branch can get a PR opened for it under the owner's account (#168 was), titled and
 bodied from the commit. Check `gh pr list --head <branch>` before `gh pr create`, and edit that PR
-rather than opening a second one.
+rather than opening a second one. A PR from an outside contributor gets the owner's review before
+it merges, however green its CI: such PRs tend to settle a ticket's open questions on their own
+(#184). Deleting an open PR's head branch closes it unmerged (#187 was closed that way), so check
+`gh pr view N --json state` says `MERGED` before cleaning up a branch.
 
 A PR body closes only its own issue. GitHub reads any "fix", "fixes", "close", "closes" or "resolves"
 before `#N` as a closing keyword, even inside a phrase like "Engine fixes: #90", which closed #90 on

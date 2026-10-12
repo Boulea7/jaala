@@ -418,6 +418,46 @@ r(?v) :- n(?v), a(?v); r(?v) :- a(?v); r(?v) :- r(?v);
 	}
 }
 
+func TestARecursiveClauseVotesWithWhatItBindsOutsideTheCycle(t *testing.T) {
+	adds := `v(?x) :- net.max_voltage(_, ?x); v(?c) :- v(_), component.class(_, ?c);`
+	for _, c := range []struct {
+		name, program string
+		want          ns.ArgSig
+	}{
+		{"a recursive clause adding text untypes a number", adds, ns.ArgSig{Name: "x", Inferred: true}},
+		{"control: a recursive clause binding a number keeps it",
+			`v(?x) :- net.max_voltage(_, ?x); v(?y) :- v(?x), net.max_voltage(_, ?y), ?y > ?x;`,
+			ns.ArgSig{Name: "x", ArgType: ns.ArgType{Type: ns.TypeNumber, Unit: "V"}, Inferred: true}},
+		{"control: a variable only the cycle binds abstains",
+			`v(?x) :- net.max_voltage(_, ?x); v(?x) :- v(?x), net.ground(_);`,
+			ns.ArgSig{Name: "x", ArgType: ns.ArgType{Type: ns.TypeNumber, Unit: "V"}, Inferred: true}},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			r := circuit()
+			if err := r.AddModule("net", LanguageName, c.program, ""); err != nil {
+				t.Fatal(err)
+			}
+			e, err := r.Lookup("net.v")
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got := e.Args[0]; !reflect.DeepEqual(got, c.want) {
+				t.Errorf("%s = %#v, want %#v", e.Signature(), got, c.want)
+			}
+		})
+	}
+	// The column holds text the recursive clause derives, so a query naming that text answers.
+	r := circuit()
+	if err := r.AddModule("net", LanguageName, adds, ""); err != nil {
+		t.Fatal(err)
+	}
+	sources[r].(*ns.MemSource).Add("net.max_voltage", ns.Tuple{Vals: []ns.Value{ns.S("VBUS"), ns.N(5)}})
+	rows, err := both(mustParse(t, `net.v("ferrite")`), baseFor(r))
+	if err != nil || len(rows) != 1 {
+		t.Errorf("net.v(\"ferrite\") = %v, %v, want one row", binds(rows), err)
+	}
+}
+
 func TestADeclarationItsRulesContradictIsRefused(t *testing.T) {
 	for text, frag := range map[string]string{
 		`x(?n: component) :- net.ground(?n);`:                               `net.x declares ?n: component, but its rules make it net`,
@@ -452,7 +492,7 @@ func TestLookupDrillsFromModuleToMemberToDefinition(t *testing.T) {
 		t.Fatal(err)
 	}
 	root, err := r.Lookup("")
-	if err != nil || root.Kind != ns.EntryModule || !reflect.DeepEqual(root.Members, []string{"absent", "component", "entity", "net", "str"}) {
+	if err != nil || root.Kind != ns.EntryModule || !reflect.DeepEqual(root.Members, []string{"absent", "component", "entity", "net", "num", "str"}) {
 		t.Errorf("root = %+v, %v", root, err)
 	}
 	members, err := r.Members("net")

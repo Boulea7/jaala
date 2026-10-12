@@ -131,7 +131,7 @@ func Run(s Spec) (Table, error) {
 	for _, r := range rows {
 		vals := make([]string, len(cols))
 		for i, c := range cols {
-			vals[i] = display(r.Bind[c])
+			vals[i] = display(r.Bind[c], r.Why[c])
 		}
 		t.Rows = append(t.Rows, vals)
 		t.Cites = append(t.Cites, append([]string{}, r.Cites...))
@@ -170,9 +170,13 @@ func columnName(c datalog.Var) string {
 	return "?" + s
 }
 
-func display(v ns.Value) string {
+// display writes a cell: a number with its unit, absent with the row's reason for it, if any.
+func display(v ns.Value, why string) string {
+	if v.Absent && why != "" {
+		return "absent (" + why + ")"
+	}
 	if v.Absent {
 		return "absent"
 	}
-	return v.S
+	return v.S + v.BaseUnit
 }

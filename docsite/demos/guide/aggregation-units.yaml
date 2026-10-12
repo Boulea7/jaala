@@ -1,0 +1,5 @@
+facts: |
+  param("U1", "vmax", 5V); param("U1", "imax", 0.5A); param("U1", "rpull", 10000ohm)
+  param("U2", "vmax", 3V); param("U2", "vmin", 2V)
+query: param(?p, _, ?v) => ?p, max(?v), sum(?v)
+expect: [[U1, "absent (mixed units: A, V, ohm)", "absent (mixed units: A, V, ohm)"], [U2, 3V, 5V]]
