@@ -1,0 +1,3 @@
+fixture: deps
+query: 'imports(?a, ?b) => ?a after "api"'
+expect_error: "query: after needs an order by: it continues from the last row in that order"

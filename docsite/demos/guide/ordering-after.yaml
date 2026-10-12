@@ -1,0 +1,3 @@
+fixture: deps
+query: loc(?p, ?n) => ?p, ?n order by ?n desc, ?p after 800, "auth" limit 3
+expect: [[cache, "400"], [app, "300"], [config, "250"]]

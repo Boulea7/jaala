@@ -113,11 +113,25 @@ go list -deps ./... | grep '\.' | grep -v '^github.com/panyam/jaala' | grep -v '
   `.5`. The parser slices rather than lexes; a tokenizer is filed separately.
 - **The answer order is a total order, and hosts see it.** `orderValues` ranks absent, then numbers by
   value, then text (#8). Comparing as numbers only when both are numbers cycles on a mixed column
-  (2 < 10, "10" < "1a" < "2"). `dedupSort` sorts before it dedups on `valueKey`, so the survivor
-  doesn't depend on arrival, and `1` and `"1"` are two rows (#162). An absent value keys apart from
-  `""` (`valueKey`'s `absentKey`, #62), in answers and in groups. `order by`, `limit`
-  and `offset` apply last, against the columns as written, so a host-bound variable is still one.
-  Moving the default order changes agni's goldens, so it ships with an upgrade note.
+  (2 < 10, "10" < "1a" < "2"). A row's survivor is the one ordering first among those with its
+  `valueKey`s (`order.survives`, as `dedupSort` keeps), so it doesn't depend on arrival, and `1` and
+  `"1"` are two rows (#162). An absent value keys apart from `""` (`valueKey`'s `absentKey`, #62), in
+  answers and in groups. `order by`, `after`, `limit` and `offset` apply against the columns as
+  written, so a host-bound variable is still one (the sink fills it as bound). A `limit` without an
+  `order by` is the one exception to the total order: it answers the first rows the goal finds, so
+  `offset` and `after` need an `order by` (#194). Moving the default order changes agni's goldens, so
+  it ships with an upgrade note.
+- **The goal streams into its answer, and never holds its bindings** (`sink.go`, `table.go`, #120).
+  A projection keeps one `answerRow` per distinct row (`projector`, reading each binding into a
+  scratch row and allocating only one it keeps); an aggregate keeps one `accumulator` per group and
+  column (`aggregator`, for a goal and a rule head alike). `sum` is exact (`exactSum`, Shewchuk's), so
+  it doesn't depend on arrival, and a NaN makes `min`/`max` NaN wherever it arrives. With an `order
+  by` and a `limit`, `pageHeap` holds `limit` plus `offset` rows; without an `order by`, the
+  projector returns `errEnough` and the solve stops. `Report.Held` is the peak rows or groups held,
+  and `TestTheGoalHoldsItsAnswerNotItsBindings` and the `Memory` benchmark (peak heap, 4 MB where
+  `main` held 3.5 GB at a budget of 2,000,000) guard it. A new answer feature reads bindings as they
+  arrive; collecting them first brings #120 back. `EvalTable` (on `Evaluator`) returns a `Table`;
+  `Eval` converts it, so a host's `[]Row` is built only for returned rows (#195).
 - **Comments use agni's circuit vocabulary on purpose** (`doc.go` says so). Host-specific test
   data doesn't belong here, though: checks against agni's real catalog, such as its
   `columnkinds.golden`, live in agni. Copying another repo's catalog in creates a fixture that goes
@@ -150,7 +164,11 @@ go list -deps ./... | grep '\.' | grep -v '^github.com/panyam/jaala' | grep -v '
   `SemiNaive{WrittenOrder: true}` (same rows and errors) and the planned `SemiNaive{}` (same rows,
   and Naive's error whenever it errors). A tuple reachable two ways keeps whichever derivation an
   evaluator finds first, so plain citations aren't compared; `agree` then runs the query again under
-  `CanonicalCites()`, where all three must give the same rows, citations and witnesses (#22). A new evaluator or option belongs in `both()` too. `seminaive_test.go` adds a
+  `CanonicalCites()`, where all three must give the same rows, citations and witnesses (#22). A
+  projection with a `limit` and no `order by` may rightly answer different rows per evaluator (#194),
+  so `agree` compares its whole answer instead and requires each evaluator's rows to be that many of
+  them, distinct, in the default order (`anyRows`, `agreeOnSomeRows`); the Soufflé step checks them
+  as a subset the same way. A new evaluator or option belongs in `both()` too. `seminaive_test.go` adds a
   seeded random-graph corpus, and `plan_test.go` a clause-order shuffle property.
 - **The generated corpus (`generate_test.go`, #87) runs random programs through `agree`**, the
   comparison `both()` makes, without the panic. Each program runs plain and under `Witnesses()`, and a
@@ -216,7 +234,7 @@ go list -deps ./... | grep '\.' | grep -v '^github.com/panyam/jaala' | grep -v '
   whatever the order, which is why size-of-citation-set (the issue's first idea) wasn't used: unions
   don't compose, so a local minimum depends on order. It turns off inlining and factoring (as
   Witnesses does) and supplementary relations, which merge derivations differing only in a `_`.
-  Answer rows sort their bindings by `compareBindings` before `dedupSort` keeps the first.
+  A row's survivor ties go to the binding `compareBindings` ranks first (`order.survives`).
 - **Magic tuples carry no citations.** `magic.go` adds relations recording what a query demanded;
   `SemiNaive`'s `derive` clears their citations, or an answer would cite the facts that worked out
   someone else's demand. Two relations the rewrite adds are not demand and keep theirs on purpose:
@@ -230,7 +248,7 @@ go list -deps ./... | grep '\.' | grep -v '^github.com/panyam/jaala' | grep -v '
   rewrite's rules that read what it removed (`withoutOrphans`), since a rule reading a relation with
   no rules errs as unknown rather than deriving nothing.
 - **A rule head may aggregate (#4), and that rule is its relation's only one.** `applyAggregate`
-  reuses the goal's `aggregate`, so grouping, `distinct`, citations and the one-row-over-nothing case
+  feeds the goal's `aggregator`, so grouping, `distinct`, citations and the one-row-over-nothing case
   match an answer's. `stratify` makes its body edges strict, as negation's are. Demand stops at it
   (`magician.aggregates`): a caller binding the count column names no value of the body, and a
   supplementary relation in its body would make the bindings a count reduces a set. Its
@@ -238,13 +256,13 @@ go list -deps ./... | grep '\.' | grep -v '^github.com/panyam/jaala' | grep -v '
   (`aggregateFixes`, #78): `count`, `list`, and `sum`/`min`/`max` over a typed number. Over an
   untyped column those stay `Inferred`. A constant in any head leaves its column untyped (#84), so
   a default clause like `r(?n, 0)` needs the type declared on another clause (`?c: number`).
-- **`min`, `max` and `sum` reduce numbers, and with none they answer `absent` and 0** (`reduce`,
+- **`min`, `max` and `sum` reduce numbers, and with none they answer `absent` and 0** (`accumulator`,
   #122), over a text column or over nothing, in a goal and in a rule head alike; `count` is 0 and
   `list` the empty text. Never `""`, which reads as a value and keys as one (#62). Soufflé gives no
   tuple for a min over nothing, so its translator writes `souffleAbsent` there and skips, guards and
   reads back that sentinel as jaala treats absent. Over numbers in different units all three are
   `absent` (#80), and otherwise the result keeps the group's unit; a number with no unit takes the
-  group's, as in a comparison. `numericValues` reads units before `distinct` dedups (5 V and 5 A are
+  group's, as in a comparison. `accumulator.add` reads units before `distinct` dedups (5 V and 5 A are
   one number). A query that means something across units says so with `num.value` (strip the unit)
   or `num.unit` (group by it). An absent result from a goal's own aggregate says why in `Row.Why`,
   keyed like `Bind` ("no rows", "no numbers", "mixed units: A, V"); a rule's aggregate stores only its
@@ -342,7 +360,8 @@ go list -deps ./... | grep '\.' | grep -v '^github.com/panyam/jaala' | grep -v '
   `order_test.go`; `typedNets()` (number counts, a numeric-looking ref, a pin stored as `ns.N`, an
   untyped relation) and `answersAs` in `coerce_test.go`; `netlist()` (C1's two pins both on GND, so
   counting bindings and distinct values disagree; `ohms` carries a unit) in `aggregate_test.go`; `params()` (a part's parameters in V, A and ohm, a
-  bare number, and 5 V beside 5 A) in `units_test.go`. `both()` takes Eval options, so a `Bind`
+  bare number, and 5 V beside 5 A) in `units_test.go`; `digits()` (n(1) to n(10), so a three-way join finds a thousand bindings) and
+  `reported` (the planned SemiNaive with Explain) in `paging_test.go`. `both()` takes Eval options, so a `Bind`
   case runs through all three evaluators. `both()` compares rows in order, so every test checks the
   answer order too. Don't compare rows by `fmt.Sprint`: `ns.Value.Num` is a pointer, so the text
   carries an address. datalog's tests import `stdlib` for `std()`; production datalog code must not.

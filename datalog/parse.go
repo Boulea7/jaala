@@ -109,6 +109,11 @@ func Parse(s string) (Query, error) {
 			return Query{}, err
 		}
 	}
+	if text, ok := tail["after"]; ok {
+		if q.After, err = parseAfter(text); err != nil {
+			return Query{}, err
+		}
+	}
 	if text, ok := tail["limit"]; ok {
 		if q.Limit, err = parseCount("limit", text, 1); err != nil {
 			return Query{}, err
@@ -123,7 +128,7 @@ func Parse(s string) (Query, error) {
 }
 
 // tailWords are the clauses that may follow the projection, in the order they must be written.
-var tailWords = []string{"having", "order", "limit", "offset"}
+var tailWords = []string{"having", "order", "after", "limit", "offset"}
 
 // splitTail cuts the projection at the clauses that follow it, keyed by keyword, with the columns
 // themselves under "". A keyword matches as a bare word only, at paren depth zero, outside quotes and
@@ -162,7 +167,7 @@ func splitTail(proj string) (map[string]string, error) {
 			return nil, fmt.Errorf("query: %s appears twice after %q", clauseName(c.word), "=>")
 		}
 		if n > 0 && slices.Index(tailWords, c.word) < slices.Index(tailWords, cuts[n-1].word) {
-			return nil, fmt.Errorf("query: %s comes after %s, not before it (the order is having, order by, limit, offset)", clauseName(cuts[n-1].word), clauseName(c.word))
+			return nil, fmt.Errorf("query: %s comes after %s, not before it (the order is having, order by, after, limit, offset)", clauseName(cuts[n-1].word), clauseName(c.word))
 		}
 		end := len(proj)
 		if n+1 < len(cuts) {
@@ -219,6 +224,22 @@ func parseOrderBy(s string) ([]Order, error) {
 }
 
 // parseCount reads limit's or offset's row count, a whole number no smaller than min.
+// parseAfter reads an after clause's values, one per order by column, which validateOrder matches up.
+func parseAfter(s string) ([]ns.Value, error) {
+	var out []ns.Value
+	for _, piece := range splitTop(s, ",") {
+		t, err := parseTerm(piece)
+		if err != nil {
+			return nil, err
+		}
+		if t.Const == nil {
+			return nil, fmt.Errorf("query: after takes values, as in %q, and %s is not one", `after 812, "db"`, strings.TrimSpace(piece))
+		}
+		out = append(out, *t.Const)
+	}
+	return out, nil
+}
+
 func parseCount(word, s string, min int) (int, error) {
 	s = strings.TrimSpace(s)
 	n, err := strconv.Atoi(s)

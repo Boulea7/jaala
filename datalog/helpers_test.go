@@ -83,6 +83,9 @@ func both(q Query, b *Base, opts ...Option) ([]Row, error) {
 // agree is both without the panic: it returns Naive's answer and, when an evaluator disagrees with
 // it, what differed, so the generated corpus can shrink a disagreement instead of stopping on it.
 func agree(q Query, b *Base, opts ...Option) ([]Row, string, error) {
+	if anyRows(q) {
+		return agreeOnSomeRows(q, b, opts...)
+	}
 	want, werr := Naive{}.Eval(bg, q, b, opts...)
 	got, gerr := SemiNaive{WrittenOrder: true}.Eval(bg, q, b, opts...)
 	if fmt.Sprint(werr) != fmt.Sprint(gerr) || !reflect.DeepEqual(binds(want), binds(got)) {
@@ -99,6 +102,63 @@ func agree(q Query, b *Base, opts ...Option) ([]Row, string, error) {
 		return want, agreeCanonically(q, b, want, opts), nil
 	}
 	return want, "", werr
+}
+
+// anyRows reports whether q's limit answers whichever rows the goal finds first, a projection limited
+// without an order by (#194), so evaluators may rightly answer different rows.
+func anyRows(q Query) bool {
+	return q.Limit > 0 && len(q.OrderBy) == 0 && len(q.Having) == 0 && !hasAggregate(q.Select)
+}
+
+// agreeOnSomeRows compares q's whole answer, without its limit, across the evaluators as agree does,
+// then requires each evaluator's limited answer to be that many of those rows, distinct and in the
+// default order.
+func agreeOnSomeRows(q Query, b *Base, opts ...Option) ([]Row, string, error) {
+	whole := q
+	whole.Limit = 0
+	all, diff, err := agree(whole, b, opts...)
+	if diff != "" || err != nil {
+		return all, diff, err
+	}
+	cols := q.Columns()
+	inWhole := map[string]bool{}
+	for _, r := range all {
+		inWhole[rowKey(r, cols)] = true
+	}
+	var want []Row
+	for i, ev := range []Evaluator{Naive{}, SemiNaive{WrittenOrder: true}, SemiNaive{}} {
+		rows, err := ev.Eval(bg, q, b, opts...)
+		if err != nil {
+			return nil, fmt.Sprintf("%T fails on %v with its limit, where its whole answer succeeds: %v", ev, q, err), err
+		}
+		if i == 0 {
+			want = rows
+		}
+		if n := min(q.Limit, len(all)); len(rows) != n {
+			return want, fmt.Sprintf("%T answers %d rows on %v, want %d of the %d", ev, len(rows), q, n, len(all)), nil
+		}
+		seen := map[string]bool{}
+		for j, r := range rows {
+			k := rowKey(r, cols)
+			if !inWhole[k] || seen[k] {
+				return want, fmt.Sprintf("%T answers %v on %v, which isn't one of its whole answer's rows, or repeats", ev, binds(rows), q), nil
+			}
+			seen[k] = true
+			if j > 0 && compareRows(rows[j-1], r, cols) > 0 {
+				return want, fmt.Sprintf("%T answers %v on %v out of the default order", ev, binds(rows), q), nil
+			}
+		}
+	}
+	return want, "", nil
+}
+
+func compareRows(a, b Row, cols []Var) int {
+	for _, c := range cols {
+		if d := orderValues(a.Bind[c], b.Bind[c]); d != 0 {
+			return d
+		}
+	}
+	return 0
 }
 
 // agreeCanonically runs q under CanonicalCites through all three evaluators, which must give the
