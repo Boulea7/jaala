@@ -362,7 +362,10 @@ priority and a mission link when filed, or `waiting` with the trigger that would
 
 Pushing a branch can get a PR opened for it under the owner's account (#168 was), titled and
 bodied from the commit. Check `gh pr list --head <branch>` before `gh pr create`, and edit that PR
-rather than opening a second one.
+rather than opening a second one. A PR from an outside contributor gets the owner's review before
+it merges, however green its CI: such PRs tend to settle a ticket's open questions on their own
+(#184). Deleting an open PR's head branch closes it unmerged (#187 was closed that way), so check
+`gh pr view N --json state` says `MERGED` before cleaning up a branch.
 
 A PR body closes only its own issue. GitHub reads any "fix", "fixes", "close", "closes" or "resolves"
 before `#N` as a closing keyword, even inside a phrase like "Engine fixes: #90", which closed #90 on
