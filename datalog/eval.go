@@ -270,6 +270,9 @@ func evaluateOn(b *Base, gen int64, q Query, o evalOptions, rewrite func(*Base, 
 	if q, err = coerceConstants(q, b.reg); err != nil {
 		return nil, err
 	}
+	if err := checkComparisonUnits(q, b.reg); err != nil {
+		return nil, err
+	}
 	if b.witnessing() {
 		q = tagWritten(q)
 	}

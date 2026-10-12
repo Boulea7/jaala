@@ -272,7 +272,11 @@ go list -deps ./... | grep '\.' | grep -v '^github.com/panyam/jaala' | grep -v '
   or `num.unit` (group by it). An absent result from a goal's own aggregate says why in `Row.Why`,
   keyed like `Bind` ("no rows", "no numbers", "mixed units: A, V"); a rule's aggregate stores only its
   value, and a `having`-only column drops its reason with its value. The corpus writes no units, so
-  the Soufflé step can't see this; `units_test.go` and the guide's examples are what check it.
+  the Soufflé step can't see this; `units_test.go` and the guide's examples are what check it. An
+  ordering comparison whose two sides have known, different units is refused before running
+  (`checkComparisonUnits`, #190), in the goal, rules, `having` and modules (at `Check`): a
+  variable's unit is known only when every positive atom binding it declares that unit, since a
+  value from a unitless binder compares with any.
 - **An aggregate in a body is lowered to rules before anything else runs** (`bodyagg.go`, #71).
   `?v = f(?x) : { body }` becomes a domain relation of the shared variables (the clause's positive
   relations that don't read an aggregate's value; no citations, no witness), a head aggregate over

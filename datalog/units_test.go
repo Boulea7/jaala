@@ -126,3 +126,78 @@ func TestWhyIsSetOnAGoalsOwnAggregates(t *testing.T) {
 		t.Errorf("a row with no absent column has Why %v, want nil", rows)
 	}
 }
+
+// meters has a column in volts, one in amps and one that is a number without a unit, all by net.
+func meters() *ns.MemSource {
+	num := func(unit string) ns.ArgType { return ns.ArgType{Type: ns.TypeNumber, Unit: unit} }
+	src := ns.NewMemSource().
+		DeclareSchema("volts", ns.Schema{Arity: 2, Labels: []string{"net", "v"}, Types: []ns.ArgType{{}, num("V")}}).
+		DeclareSchema("amps", ns.Schema{Arity: 2, Labels: []string{"net", "i"}, Types: []ns.ArgType{{}, num("A")}}).
+		DeclareSchema("plain", ns.Schema{Arity: 2, Labels: []string{"net", "x"}, Types: []ns.ArgType{{}, num("")}})
+	src.Add("volts", ns.Tuple{Vals: []ns.Value{ns.S("VBUS"), ns.NU(5, "V")}}).
+		Add("amps", ns.Tuple{Vals: []ns.Value{ns.S("VBUS"), ns.NU(2, "A")}}).
+		Add("plain", ns.Tuple{Vals: []ns.Value{ns.S("VBUS"), ns.N(5)}})
+	return src
+}
+
+func TestAComparisonAcrossDeclaredUnitsIsRefused(t *testing.T) {
+	bindAmp := Bind(map[Var][]ns.Value{"lim": {ns.NU(1, "A")}})
+	for _, c := range []struct {
+		q    string
+		opts []Option
+		want string
+	}{
+		{`volts(?n, ?v), amps(?n, ?i), ?v < ?i => ?n`, nil, `?v < ?i in the query compares number[V] with number[A], which never holds`},
+		{`volts(?n, ?v), amps(?n, ?i), ?i >= ?v => ?n`, nil, `?i >= ?v in the query compares number[A] with number[V]`},
+		{`r(?n) :- volts(?n, ?v), amps(?n, ?i), ?v > ?i; r(?n) => ?n`, nil, `?v > ?i in rule "r" compares number[V] with number[A]`},
+		{`a(?n, ?i) :- amps(?n, ?i); volts(?n, ?v), a(?n, ?x), ?v < ?x => ?n`, nil, `?v < ?x in the query compares number[V] with number[A]`},
+		{`volts(?n, ?v), ?v < ?lim => ?n`, []Option{bindAmp}, `?v < 1 in the query compares number[V] with number[A]`},
+		{`volts(?n, ?v), amps(?n, ?i) => ?n, ?i, max(?v) having max(?v) > ?i`, nil, `max(?v) > ?i in having compares number[V] with number[A]`},
+	} {
+		q, err := Parse(c.q)
+		if err != nil {
+			t.Fatal(err)
+		}
+		_, err = both(q, baseFor(std(meters())), c.opts...)
+		if err == nil || !strings.Contains(err.Error(), c.want) || !strings.HasPrefix(err.Error(), "query: ") {
+			t.Errorf("%s: err = %v, want it to say %q", c.q, err, c.want)
+		}
+		if c.opts != nil {
+			// Validate doesn't know the host's value, so its unit is unknown until the Eval.
+			if err := ValidateBound(q, std(meters()), "lim"); err != nil {
+				t.Errorf("ValidateBound(%s, ?lim) = %v, want it accepted", c.q, err)
+			}
+		} else if err := Validate(q, std(meters())); err == nil || !strings.Contains(err.Error(), c.want) {
+			t.Errorf("Validate(%s) = %v, want it to say %q", c.q, err, c.want)
+		}
+	}
+	v := std(meters())
+	if err := v.AddModule("m", LanguageName, `low(?n) :- volts(?n, ?v), amps(?n, ?i), ?v < ?i;`, ""); err != nil {
+		t.Fatal(err)
+	}
+	if err := v.Check(); err == nil || !strings.Contains(err.Error(), `?v < ?i in rule "m.low" compares number[V] with number[A]`) {
+		t.Errorf("Check of a module comparing volts with amps: %v, want it refused", err)
+	}
+}
+
+// Each side the run can't pin to one declared unit stays polymorphic, as comparisons are at run
+// time, and equality isn't dimension-checked at all.
+func TestAComparisonWithAnUnknownUnitIsAccepted(t *testing.T) {
+	for _, q := range []string{
+		`volts(?n, ?v), ?v < 6 => ?n`,
+		`volts(?n, ?v), plain(?n, ?x), ?v <= ?x => ?n`,
+		`volts(?n, ?v), amps(?n, ?i), ?v = ?i => ?n`,
+		`volts(?n, ?v), volts(?m, ?w), ?v >= ?w => ?n`,
+		`volts(?n, ?v), plain(?n, ?v), amps(?n, ?i), ?v < ?i => ?n`, // ?v may be plain's, with no unit
+		`volts(?n, ?v), amps(?n, ?v), volts(?m, ?w), ?v < ?w => ?n`, // ?v is in volts and in amps, so either unit
+		`volts(?n, ?v), amps(?n, ?i) => ?n, ?i, count(?v) having count(?v) > ?i`,
+		`r(?n, ?v) :- volts(?n, ?v); r(?n, ?v) :- r(?n, ?w), amps(?n, ?v), ?w > ?v; r(?n, ?v) => ?n`, // the body reads its own relation
+	} {
+		if _, err := both(mustParse(t, q), baseFor(std(meters()))); err != nil {
+			t.Errorf("%s: %v, want it accepted", q, err)
+		}
+	}
+	if rows := eval(t, meters(), `volts(?n, ?v), ?v < 6 => ?n`); col(rows, "n") != "VBUS" {
+		t.Errorf("control: volts below 6 = %v, want VBUS, so the accepted cases run", binds(rows))
+	}
+}
