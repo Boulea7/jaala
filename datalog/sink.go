@@ -112,7 +112,7 @@ func (acc *accumulator) add(val ns.Value, ok bool) {
 		}
 		if acc.a.Distinct {
 			k := valueKey(val)
-			if cur, had := acc.keys[k]; !had || orderValues(val, cur) < 0 {
+			if cur, had := acc.keys[k]; !had || valueBefore(val, cur) {
 				if acc.keys == nil {
 					acc.keys = map[string]ns.Value{}
 				}
@@ -209,6 +209,15 @@ func (acc *accumulator) result() (ns.Value, string) {
 	return ns.Value{S: ftoa(r), Num: &r, BaseUnit: unit}, ""
 }
 
+// valueBefore reports whether a, one of two values sharing a key, is the one to keep: the first in
+// answer order, then the annotation spelledBefore puts first (#148, #201).
+func valueBefore(a, b ns.Value) bool {
+	if c := orderValues(a, b); c != 0 {
+		return c < 0
+	}
+	return spelledBefore(a, b)
+}
+
 func containsString(ss []string, s string) bool {
 	for _, x := range ss {
 		if x == s {
@@ -285,7 +294,7 @@ func (ag *aggregator) add(bnd *binding) {
 	} else {
 		// One key, several spellings: keep the one ordering first, so arrival doesn't decide.
 		for i, kv := range ag.keyVars {
-			if v, _ := ag.value(bnd, kv); orderValues(v, g.keyVals[i]) < 0 {
+			if v, _ := ag.value(bnd, kv); valueBefore(v, g.keyVals[i]) {
 				g.keyVals[i] = v
 			}
 		}
@@ -399,6 +408,16 @@ func (o *order) compare(a, b *answerRow) int {
 func (o *order) survives(a, b *answerRow) bool {
 	if c := o.compareDefault(a, b); c != 0 {
 		return c < 0
+	}
+	// Equal values can differ in annotation (9 and 9 A): the first one spelledBefore picks wins, so
+	// it doesn't hang on which derivation each evaluator found (#201).
+	for _, i := range o.deflt {
+		if spelledBefore(a.vals[i], b.vals[i]) {
+			return true
+		}
+		if spelledBefore(b.vals[i], a.vals[i]) {
+			return false
+		}
 	}
 	return o.canonic && compareBindings(a.bnd, b.bnd) < 0
 }

@@ -201,3 +201,68 @@ func TestAComparisonWithAnUnknownUnitIsAccepted(t *testing.T) {
 		t.Errorf("control: volts below 6 = %v, want VBUS, so the accepted cases run", binds(rows))
 	}
 }
+
+// twoNines is weight 9 on v0 with no unit and on v1 in amps, which is one value twice (#201).
+func twoNines() *ns.MemSource {
+	src := ns.NewMemSource().Declare("node", "name").Declare("weight", "node", "w")
+	for _, n := range []string{"v0", "v1"} {
+		src.Add("node", ns.Tuple{Vals: []ns.Value{ns.S(n)}, Cites: []string{"node:" + n}})
+	}
+	src.Add("weight", ns.Tuple{Vals: []ns.Value{ns.S("v0"), ns.N(9)}}).
+		Add("weight", ns.Tuple{Vals: []ns.Value{ns.S("v1"), ns.NU(9, "A")}}).
+		Add("weight", ns.Tuple{Vals: []ns.Value{ns.S("v2"), ns.NU(9, "V")}})
+	return src
+}
+
+// Every derivation, and every row, of one value keeps the annotation spelledBefore puts first (a unit
+// before none, then A before V), whichever derivation an evaluator found first, so Witnesses and
+// CanonicalCites answer as plain evaluation does (#201). both() compares all of them.
+func TestOneValueKeepsOneAnnotationWhicheverDerivationCameFirst(t *testing.T) {
+	for _, c := range []struct{ q, col, want string }{
+		// a derived tuple reached through weight(v0, 9) and weight(v1, 9 A)
+		{`r(?w, ?n, ?n) :- weight(_, ?w), node(?n); r(?w, ?n, ?n) :- weight(?n, ?w); r(?w, ?a, ?n) => ?n, ?w`, "w", "9[A],9[A],9[V]"}, // v2's comes from one derivation
+		// rows the projection folds into one: A before V decides two units
+		{`weight(?n, ?w) => ?w`, "w", "9[A]"},
+		// a group's key
+		{`weight(?n, ?w) => ?w, count(?n)`, "w", "9[A]"},
+		// a distinct list's value
+		{`weight(?n, ?w) => list(distinct ?w)`, "list(distinct w)", "9"},
+		// a body aggregate's minimum, whose witness names the value
+		{`r0(?w, ?n) :- weight(?n, ?w); node(?n), ?m = min(?w) : { r0(?x, ?n), weight(?y, ?w), ?y != "v2" } => ?n, ?m`, "m", "9[A],9[A]"},
+	} {
+		for _, opts := range [][]Option{nil, {Witnesses()}} {
+			rows, err := both(mustParse(t, c.q), baseFor(std(twoNines())), opts...)
+			if err != nil {
+				t.Fatalf("%s: %v", c.q, err)
+			}
+			if got := strings.Join(withUnits(rows, c.col), ","); got != c.want {
+				t.Errorf("%s (%d options): %s = %s, want %s", c.q, len(opts), c.col, got, c.want)
+			}
+		}
+	}
+}
+
+// One value in volts stored before the same value in amps: A still wins, so arrival doesn't decide
+// between two units. And inside a recursive component, a tuple whose annotation improves after a
+// consumer read it is read again: copy holds 9 until reach learns 9 A from step (#201).
+func TestABetterAnnotationReachesWhatWasDerivedBeforeIt(t *testing.T) {
+	src := ns.NewMemSource().Declare("weight", "node", "w")
+	src.Add("weight", ns.Tuple{Vals: []ns.Value{ns.S("v0"), ns.N(9)}}).
+		Add("weight", ns.Tuple{Vals: []ns.Value{ns.S("v1"), ns.NU(9, "V")}}).
+		Add("weight", ns.Tuple{Vals: []ns.Value{ns.S("v2"), ns.NU(9, "A")}})
+	for _, c := range []struct{ q, col, want string }{
+		{`weight(?n, ?w), ?n != "v0" => ?w`, "w", "9[A]"},
+		{`reach(?w) :- weight("v0", ?w); reach(?w) :- step(?w); step(?w) :- copy(?x), weight("v2", ?w), ?x = ?w;
+		  copy(?w) :- reach(?w); copy(?w) => ?w`, "w", "9[A]"},
+	} {
+		for _, opts := range [][]Option{nil, {Witnesses()}} {
+			rows, err := both(mustParse(t, c.q), baseFor(std(src)), opts...)
+			if err != nil {
+				t.Fatalf("%s: %v", c.q, err)
+			}
+			if got := strings.Join(withUnits(rows, c.col), ","); got != c.want {
+				t.Errorf("%s (%d options): %s = %s, want %s", c.q, len(opts), c.col, got, c.want)
+			}
+		}
+	}
+}
