@@ -5,6 +5,9 @@ Maintained by /checkpoint: one thread per branch, pruned when the branch merges.
 
 ## At a glance
 
+- **Resume here, in order** (set 2026-10-13 at session end): (1) post PR #245's mission logs on
+  #219 and #235; (2) run the CI set and `./selfcheck.sh` on `main`, then tag v0.1.45 with its
+  upgrade note on #233 and declaire#211; (3) start #237 with `/start-pr 237`.
 - Two active missions. #219 `mission_store_federation` has all 7 jaala tickets closed and waits on
   Declaire's `bench -time` over a federated view (declaire#199, #211). #235
   `mission_store_pushdown` is 1/6; next ready is #237 (a store evaluates a conjunction, with
