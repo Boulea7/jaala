@@ -671,11 +671,17 @@ func (c genCase) check() (genOutcome, string) {
 	if diff := agreeLookingUp(q, b, want, werr, c.opts()); diff != "" {
 		return genDisagreed, diff
 	}
+	if diff := agreeFederated(q, b, want, werr, c.opts()); diff != "" {
+		return genDisagreed, diff
+	}
 	return genAgreed, ""
 }
 
 // lookedUpPrograms counts the corpus programs whose evaluation made a lookup, for the corpus's control.
 var lookedUpPrograms int
+
+// federatedPrograms counts those whose evaluation made a lookup through a Federation's members.
+var federatedPrograms int
 
 // unitAnswers counts the corpus answers holding a number with a unit, and mixedAnswers those with an
 // aggregate absent over mixed units, for the control that units reach the goals (#192).
@@ -704,15 +710,51 @@ func countUnitAnswers(rows []Row) {
 // under CanonicalCites.
 func agreeLookingUp(q Query, b *Base, want []Row, werr error, opts []Option) string {
 	src := lookingAt(b.src)
-	lb := MustBase(b.reg, src)
+	diff := agreeOver(q, b, MustBase(b.reg, src), "looking up", want, werr, opts)
+	if len(src.lookups) > 0 {
+		lookedUpPrograms++
+	}
+	return diff
+}
+
+// agreeFederated is agreeLookingUp over b's facts dealt across three stores that each answer lookups
+// (#211), so a call's facts come back from several members' lookups at once.
+func agreeFederated(q Query, b *Base, want []Row, werr error, opts []Option) string {
+	members := splitInto(b.src, 3, func(int) bool { return true })
+	f, err := ns.NewFederation(members...)
+	if err != nil {
+		return err.Error()
+	}
+	diff := agreeOver(q, b, MustBase(b.reg, f), "federated", want, werr, opts)
+	for _, m := range members {
+		if len(m.Source.(*looking).lookups) > 0 {
+			federatedPrograms++
+			break
+		}
+	}
+	return diff
+}
+
+// agreeOver requires every evaluator over lb to answer q as Naive did over b, and Naive over lb to
+// cite as over b under CanonicalCites. A limit without an order by may answer other rows over lb,
+// whose tuples arrive in another order (#194), so its whole answer is compared instead, and its
+// limited one checked as agreeOnSomeRows does.
+func agreeOver(q Query, b, lb *Base, how string, want []Row, werr error, opts []Option) string {
+	if anyRows(q) {
+		whole := q
+		whole.Limit = 0
+		w, werr := Naive{}.Eval(bg, whole, b, opts...)
+		if diff := agreeOver(whole, b, lb, how, w, werr, opts); diff != "" {
+			return diff
+		}
+		_, diff, _ := agreeOnSomeRows(q, lb, opts...)
+		return diff
+	}
 	for _, ev := range []Evaluator{Naive{}, SemiNaive{WrittenOrder: true}, SemiNaive{}} {
 		got, err := ev.Eval(bg, q, lb, opts...)
 		if errText(err) != errText(werr) || !reflect.DeepEqual(binds(got), binds(want)) {
-			return fmt.Sprintf("%T looking up answers differently from Naive reading whole on %v\n whole:     %v %v\n looked up: %v %v", ev, q, binds(want), werr, binds(got), err)
+			return fmt.Sprintf("%T %s answers differently from Naive reading whole on %v\n whole:     %v %v\n %s: %v %v", ev, how, q, binds(want), werr, how, binds(got), err)
 		}
-	}
-	if len(src.lookups) > 0 {
-		lookedUpPrograms++
 	}
 	if werr != nil {
 		return ""
@@ -721,7 +763,7 @@ func agreeLookingUp(q Query, b *Base, want []Row, werr error, opts []Option) str
 	w, _ := Naive{}.Eval(bg, q, b, canon...)
 	g, _ := Naive{}.Eval(bg, q, lb, canon...)
 	if !reflect.DeepEqual(w, g) {
-		return fmt.Sprintf("Naive looking up cites differently under CanonicalCites on %v\n whole:     %v\n looked up: %v", q, w, g)
+		return fmt.Sprintf("Naive %s cites differently under CanonicalCites on %v\n whole:     %v\n %s: %v", how, q, w, how, g)
 	}
 	return ""
 }
@@ -892,7 +934,7 @@ func TestGeneratedProgramsAgree(t *testing.T) {
 		first, seeds = int64(s), 1
 	}
 	compared, known, skipped, failed := map[string]int{}, map[int]int{}, 0, 0
-	lookedUpPrograms, unitAnswers, mixedAnswers = 0, 0, 0
+	lookedUpPrograms, federatedPrograms, unitAnswers, mixedAnswers = 0, 0, 0, 0
 	withUnits := 0
 	for seed := first; seed < first+int64(seeds); seed++ {
 		rnd := rand.New(rand.NewSource(seed))
@@ -948,6 +990,9 @@ func TestGeneratedProgramsAgree(t *testing.T) {
 	}
 	if lookedUpPrograms == 0 {
 		t.Errorf("control: no program made a lookup through a Source answering them")
+	}
+	if federatedPrograms == 0 {
+		t.Errorf("control: no program made a lookup through a Federation's members")
 	}
 	if unitAnswers < seeds/100 {
 		t.Errorf("control: %d answers held a unit over %d seeds: units aren't reaching the goals", unitAnswers, seeds)

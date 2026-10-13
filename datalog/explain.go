@@ -322,7 +322,7 @@ func (e *explainer) warm(b *Base) bool {
 		return false
 	}
 	for _, s := range e.sources {
-		if s.Cached && len(s.Indexes) > 0 {
+		if s.Cached && len(s.Indexes) > 0 && b.lookable(s.Relation) {
 			return true
 		}
 	}

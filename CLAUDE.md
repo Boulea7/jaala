@@ -59,6 +59,13 @@ go list -deps ./... | grep '\.' | grep -v '^github.com/panyam/jaala' | grep -v '
   `evalRun.looked`, never the Base, so a probed relation never accumulates there. Anything that sizes
   a base relation (`fanOut`, `scanSize`) checks `looksUp` first and reports "unknown" rather than
   reading it. The corpus runs every program over a `looking` wrapper too (`agreeLookingUp`).
+- **A `Federation` is a Source over several (`ns/federation.go`, #211), so it lives in `ns`, beside
+  `MemSource`.** A relation is the union of its members'; a lookup goes only to the members whose
+  `Holds` allows the bound values. The engine asks `ns.LookupRelations` per relation (`lookable`),
+  and a relation one member can't look up is read whole and kept, never filtered per probe. A fact
+  two members serve is two facts, as in one Source serving it twice. The corpus runs every program
+  over a three-member federation too (`agreeFederated`), whose limited answers without an `order by`
+  are checked as a subset, since the tuples arrive in another order (#194).
 - **`Report.Cold` reruns the query when the Eval was warm** (`coldCost`, #147): it reused a derived
   relation, or probed a held relation a fresh Base would have looked up. The rerun is a copy with no
   derived cache, no work counter, a fresh `edb` when the Source looks up, and `o.cold` set so it can't

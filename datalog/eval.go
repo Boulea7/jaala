@@ -58,6 +58,9 @@ type Base struct {
 	noIndex bool
 	// looker is the Source when it answers bound lookups itself (ns.LookupSource), else nil.
 	looker ns.LookupSource
+	// lookRels, when the Source implements it, says which of its relations it looks up
+	// (ns.LookupRelations); nil means all of them.
+	lookRels ns.LookupRelations
 	// run is one Eval's own state (its context and budget), set on that Eval's copy of the Base and
 	// nil on a Base no Eval is running on.
 	run *evalRun
@@ -108,7 +111,8 @@ func NewBase(v *ns.Vocabulary, src ns.Source) (*Base, error) {
 		return nil, fmt.Errorf("query: %s", strings.Join(problems, "; "))
 	}
 	looker, _ := src.(ns.LookupSource)
-	return &Base{src: src, reg: v, looker: looker, edb: newEDBCache(), derived: newDerivedCache(), work: new(int64)}, nil
+	lookRels, _ := src.(ns.LookupRelations)
+	return &Base{src: src, reg: v, looker: looker, lookRels: lookRels, edb: newEDBCache(), derived: newDerivedCache(), work: new(int64)}, nil
 }
 
 // MustBase is NewBase for a Source known to match its vocabulary, such as a test fixture. It panics
