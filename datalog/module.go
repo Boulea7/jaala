@@ -133,6 +133,13 @@ func resolveAll(v *ns.Vocabulary) (*resolution, error) {
 		if err == nil {
 			rules, err = lowerExprRules(rules, v)
 		}
+		if err == nil {
+			// Folded before its signature is inferred, so a head's 1kV types and bounds the column
+			// as the 1000 V it answers (#224).
+			var q Query
+			q, err = foldUnits(Query{Rules: rules}, v)
+			rules = q.Rules
+		}
 		if err != nil {
 			return nil, fail(i, fmt.Errorf("%w (in module %q)", err, m.Path))
 		}

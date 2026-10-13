@@ -424,6 +424,9 @@ type ColumnKind struct {
 // counts parts, it does not name one.
 func ColumnKinds(q Query, reg *ns.Vocabulary) ([]ColumnKind, error) {
 	q, err := Link(q, reg)
+	if err == nil {
+		q, err = foldUnits(q, reg)
+	}
 	if err != nil {
 		return nil, err
 	}

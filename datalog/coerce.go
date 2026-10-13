@@ -171,7 +171,9 @@ func argName(rel string, labels []string, j int) string {
 
 // foldUnits writes each number a query states with a unit (3.3V, 1kohm) as the engine holds numbers:
 // in its unit's name, with any prefix folded into the number (#5), so 1kohm is 1000 ohm and compares
-// with a Source's ohms. A unit the vocabulary doesn't name is a unit of its own.
+// with a Source's ohms. A unit the vocabulary doesn't name is a unit of its own. A rule's head is
+// folded too (#224), so limit(1kV) answers 1000 V. A number already in its unit's name is kept, so
+// folding twice changes nothing.
 func foldUnits(q Query, reg *ns.Vocabulary) (Query, error) {
 	var err error
 	fold := func(t Term) Term {
@@ -192,6 +194,7 @@ func foldUnits(q Query, reg *ns.Vocabulary) (Query, error) {
 	out := q
 	out.Rules = make([]Rule, len(q.Rules))
 	for i, r := range q.Rules {
+		r.Head = substAtom(r.Head, fold)
 		r.Body = substBody(r.Body, fold)
 		out.Rules[i] = r
 	}

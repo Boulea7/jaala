@@ -39,6 +39,10 @@ A number can carry a unit, and a query can write one after a number: `1kohm`, `3
 
 {{ demo "demos/guide/arithmetic-literal.yaml" }}
 
+A rule's head folds its numbers the same way, so `standard(1kohm)` holds 1000 ohm and joins with a source's ohms ([#224](https://github.com/panyam/jaala/issues/224)):
+
+{{ demo "demos/guide/arithmetic-head-unit.yaml" }}
+
 A product's unit multiplies and a quotient's divides, and the result takes a unit's name when the vocabulary has one: amps times ohms is volts, above. Adding or comparing needs one unit, and a bare number takes the other side's. Volts plus amps has no answer:
 
 {{ demo "demos/guide/arithmetic-unlike.yaml" }}
