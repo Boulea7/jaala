@@ -1,6 +1,10 @@
 package datalog
 
-import "strconv"
+import (
+	"strconv"
+
+	"github.com/panyam/jaala/ns"
+)
 
 // unfold inlines calls to single-rule, non-recursive derived relations, replacing each call with the
 // body of the relation's one rule. It is SemiNaive's, run before plan (see SemiNaive), and it exists
@@ -28,6 +32,9 @@ import "strconv"
 //     once and read through an index.
 //   - The relation's rule doesn't aggregate (#4): its body yields what the aggregate reduces, not the
 //     relation's tuples. An aggregate head argument is no variable, so the head rule below refuses it.
+//   - No number the call passes reaches a comparison or a predicate in the body (#227). Inlined, it
+//     reads the call's spelling, 1A, where the relation's rule reads the data's, 1 V, and arithmetic
+//     over it answers in another unit. Demand reads the data's.
 //
 // A relation the goal no longer reaches once its calls are inlined loses its rules, so it is not
 // materialized; a relation still called elsewhere, or under negation, keeps them.
@@ -36,7 +43,7 @@ func unfold(b *Base, q Query) Query {
 	for _, r := range q.Rules {
 		byHead[r.Head.Relation] = append(byHead[r.Head.Relation], r)
 	}
-	u := &unfolder{byHead: byHead, recursive: recursiveRelations(q.Rules)}
+	u := &unfolder{byHead: byHead, recursive: recursiveRelations(q.Rules), reg: b.reg}
 	out := q
 	if len(out.Select) == 0 {
 		out.Select = defaultSelect(q.Goal) // the answer's columns are the written goal's, not the inlined one's
@@ -57,6 +64,7 @@ func unfold(b *Base, q Query) Query {
 type unfolder struct {
 	byHead    map[string][]Rule
 	recursive map[string]bool
+	reg       *ns.Vocabulary
 	fresh     int
 }
 
@@ -106,6 +114,9 @@ func (u *unfolder) inline(call Atom) ([]Literal, bool) {
 			if c.Var == "_" {
 				c = Term{Var: u.freshVar(h.Var)}
 			}
+			if c.Const != nil && c.Const.Num != nil && u.readsValue(r.Body, h.Var) {
+				return nil, false
+			}
 			sub[h.Var] = c
 		}
 	}
@@ -131,7 +142,7 @@ func (u *unfolder) inline(call Atom) ([]Literal, bool) {
 	for _, l := range r.Body.Literals {
 		switch {
 		case l.Pos != nil:
-			lits = append(lits, Literal{Pos: atom(*l.Pos)})
+			lits = append(lits, Literal{Pos: atom(*l.Pos), computed: l.computed})
 		case l.Neg != nil:
 			lits = append(lits, Literal{Neg: atom(*l.Neg)})
 		default:
@@ -141,6 +152,30 @@ func (u *unfolder) inline(call Atom) ([]Literal, bool) {
 		}
 	}
 	return lits, true
+}
+
+// readsValue reports whether a body reads v as a value rather than only matching it: in a comparison,
+// or as an argument of a predicate, which may compute from it. Expressions are lowered to predicate
+// calls before unfold runs.
+func (u *unfolder) readsValue(body Body, v Var) bool {
+	for _, l := range body.Literals {
+		switch {
+		case l.Compare != nil:
+			if l.Compare.Left.Var == v || l.Compare.Right.Var == v {
+				return true
+			}
+		case l.Pos != nil:
+			if _, ok := u.reg.Predicate(l.Pos.Relation); !ok {
+				continue
+			}
+			for _, t := range l.Pos.Args {
+				if t.Var == v {
+					return true
+				}
+			}
+		}
+	}
+	return false
 }
 
 // projects reports whether a rule's positive body binds a variable its head drops, "_" included. Such

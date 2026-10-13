@@ -134,6 +134,10 @@ go list -deps ./... | grep '\.' | grep -v '^github.com/panyam/jaala' | grep -v '
   annotation changes is listed revised so its consumers read it again, in plain evaluation too;
   an answer row's survivor, a group's key and a distinct value break a value tie the same way
   (`order.survives`, `valueBefore`). Without it, `Witnesses` answered `9 A` where plain answered `9`.
+  A query's own number only filters, as in Naive, so it never lends its spelling (#227): `derive`
+  writes a magic or factored tuple's numbers plainly with no unit (`plainDemand`), `unfold` doesn't
+  inline a call's number into a body that compares or computes with it, and an expression waits for
+  every relation binding what it reads (`awaitsBinder`, in `deferComparisons`) before computing.
 - **Equality is strict and an equivalence, with one key per value** (`valueEq`, `valueKey`, #162).
   Two numbers compare by value (NaN equals NaN, -0 is 0), two texts by text, and a number never
   equals text. A number's key is `numberPrefix` plus its canonical text, so the index (`tupleKey`)
