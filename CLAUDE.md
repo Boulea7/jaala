@@ -460,19 +460,18 @@ have no page), and put the upgrade note on the issue a host filed or the PR's ow
 Issues are ranked by the mission they serve (labels `P0`–`P3`, `waiting`, `mission`,
 `mission:active`, `mission_<slug>`), and its tickets are linked as blocked-by. Most of jaala's
 missions unblock a host's active mission; such a mission closes when the host's half of its exercise
-passes too, so it can stay open after jaala's tickets close. Three are active:
-`mission_aggregate_answers` (#172), an aggregate's answer means what the question meant, measured by
-the Soufflé step of `./selfcheck.sh` skipping no aggregate program; and `mission_browser_memory`
-(#193), a browser tab answers a large design's query within its memory, measured by the `Memory`
-benchmark's peak heap in use (not `B/op`, which the join's short-lived bindings dominate) and agni
-#896; and `mission_store_federation` (#219), a host answers a question over many stores without
-holding them in memory, measured by the `Stores` benchmark (#218, its first ticket: stores asked,
-unindexed probes, round trips, peak heap and a repeated question's fetches as the number of stores
-grows) and Declaire's `bench -time` on a federated view. Its tickets (#154, #153, #212) are the
-first half of epic #213; pushdown is a later mission. jaala's earlier two are closed:
-`mission_selfcheck` (#86, at v0.1.29) left `./selfcheck.sh` as the check to run on `main` after every
-merge and before every tag, and `mission_docsite` (#104) left the docs site with every example run by
-the engine. Several missions can be active at once (`queue.sh` prints them). A new issue gets a
+passes too, so it can stay open after jaala's tickets close. One is active:
+`mission_store_federation` (#219), a host answers a question over many stores without holding them
+in memory, measured by the `Stores` benchmark (#218, its first ticket: stores asked, unindexed
+probes, round trips, peak heap and a repeated question's fetches as the number of stores grows) and
+Declaire's `bench -time` on a federated view. Its tickets (#154, #153, #212) are the first half of
+epic #213; pushdown is a later mission. jaala's earlier four are closed: `mission_selfcheck` (#86,
+at v0.1.29) left `./selfcheck.sh` as the check to run on `main` after every merge and before every
+tag; `mission_docsite` (#104) left the docs site with every example run by the engine;
+`mission_aggregate_answers` (#172, at v0.1.42) left Soufflé checking every aggregate program but
+`list`; and `mission_browser_memory` (#193, closed with agni #896) left the `Memory` benchmark's peak
+heap in use (not `B/op`, which the join's short-lived bindings dominate) as the measure of what a
+query holds. Several missions can be active at once (`queue.sh` prints them). A new issue gets a
 priority and a mission link when filed, or `waiting` with the trigger that would unpark it.
 
 Create the branch before the first commit (`git branch --show-current` says so). #200's work was
