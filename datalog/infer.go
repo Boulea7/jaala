@@ -26,14 +26,6 @@ type typer struct {
 	// ignoreDecl is a relation whose declared head types are set aside, so its declarations can be
 	// compared with what its rules alone produce.
 	ignoreDecl string
-	probe      *headProbe
-}
-
-// headProbe follows one head inference through aliases. Recursion keeps the previous conservative
-// inference when the walk also uses numeric head constants.
-type headProbe struct {
-	legacy                bool
-	sawNumeric, recursive bool
 }
 
 func newTyper(reg *ns.Vocabulary, rules []Rule) *typer {
@@ -139,21 +131,6 @@ func (t *typer) argTypes(rel string, seen map[string]bool) ([]string, []ns.ArgTy
 // labels. It is agni's headKind, generalized to carry a per-row kind and an owner when the head
 // holds the argument they point at.
 func (t *typer) ofHead(rel string, j int, seen map[string]bool) ns.ArgType {
-	if t.probe != nil {
-		return t.inferHead(rel, j, seen)
-	}
-	probe := headProbe{}
-	nested := *t
-	nested.probe = &probe
-	got := nested.inferHead(rel, j, seen)
-	if probe.sawNumeric && probe.recursive {
-		probe.legacy = true
-		got = nested.inferHead(rel, j, seen)
-	}
-	return got
-}
-
-func (t *typer) inferHead(rel string, j int, seen map[string]bool) ns.ArgType {
 	next := make(map[string]bool, len(seen)+1)
 	for k := range seen {
 		next[k] = true
@@ -163,6 +140,7 @@ func (t *typer) inferHead(rel string, j int, seen map[string]bool) ns.ArgType {
 
 	var got ns.ArgType
 	found, untyped := false, false
+	gotBare := false // only bare numeric literals have contributed so far
 	var domain []string
 	closed := true
 	for _, r := range t.rules[rel] {
@@ -176,21 +154,17 @@ func (t *typer) inferHead(rel string, j int, seen map[string]bool) ns.ArgType {
 			continue // an aggregating relation has only this rule (see checkRules)
 		}
 		var at ns.ArgType
+		bare := false
 		if hv.Const != nil {
 			domain = unionSorted(domain, []string{hv.Const.S})
-			if hv.Const.Num == nil || t.probe.legacy {
-				untyped = true // text, or a constant under recursive inference, does not fix a type
+			if hv.Const.Num == nil {
+				untyped = true // a text constant names a value, not a kind
 				continue
 			}
-			t.probe.sawNumeric = true
 			at = ns.ArgType{Type: ns.TypeNumber, Unit: hv.Const.BaseUnit}
+			bare = at.Unit == ""
 		} else {
-			if hv.Var == "" || hv.Var == "_" {
-				closed = false
-				continue
-			}
-			if bodyTouches(r.Body, next) && !boundOutsideCycle(hv.Var, r.Body, next) {
-				t.probe.recursive = true
+			if hv.Var == "" || hv.Var == "_" || bodyTouches(r.Body, next) && !boundOutsideCycle(hv.Var, r.Body, next) {
 				closed = false
 				continue // only the cycle binds it: no new information, so it abstains rather than vetoing
 			}
@@ -214,9 +188,18 @@ func (t *typer) inferHead(rel string, j int, seen map[string]bool) ns.ArgType {
 				}
 			}
 		}
+		if found && got.Type == ns.TypeNumber && at.Type == ns.TypeNumber {
+			// A bare literal is compatible with a column's unit; a typed unitless variable is not.
+			if bare {
+				at.Unit = got.Unit
+			} else if gotBare {
+				got.Unit = at.Unit
+			}
+		}
 		if found && !sameShape(got, at) {
 			untyped = true
 		}
+		gotBare = bare && (!found || gotBare)
 		got, found = at, true
 	}
 	if untyped || !found {
@@ -322,24 +305,9 @@ func (t *typer) signature(rel string) ([]ns.ArgSig, error) {
 			out[j] = ns.ArgSig{Name: name, ArgType: declared[j]}
 			continue
 		}
-		fixed := t.aggregateFixes(rel, j) || t.numericConstantFixes(rel, j, inferred)
-		out[j] = ns.ArgSig{Name: name, ArgType: inferred, Inferred: !fixed}
+		out[j] = ns.ArgSig{Name: name, ArgType: inferred, Inferred: !t.aggregateFixes(rel, j)}
 	}
 	return out, nil
-}
-
-// numericConstantFixes reports whether a numeric head constant fixes the column's agreed number
-// type. A column that stays untyped despite a numeric constant is still inferred.
-func (t *typer) numericConstantFixes(rel string, j int, inferred ns.ArgType) bool {
-	if inferred.Type != ns.TypeNumber {
-		return false
-	}
-	for _, r := range t.rules[rel] {
-		if j < len(r.Head.Args) && r.Head.Args[j].Const != nil && r.Head.Args[j].Const.Num != nil {
-			return true
-		}
-	}
-	return false
 }
 
 // aggregateFixes reports whether a head aggregate at position j decides its column's type the way a

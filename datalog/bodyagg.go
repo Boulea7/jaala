@@ -220,6 +220,8 @@ func (l *lowerer) aggregate(a BodyAggregate, elsewhere, bound map[Var]bool, dom 
 	}
 	red, val := name("a"), name("z")
 	l.rules = append(l.rules, Rule{Head: *with(red, Term{Agg: &a.Agg}), Body: a.Body, text: text})
+	// Keep the function-fixed declarations. The count/sum default 0 can infer a number, but a
+	// min/max default absent cannot infer its input's type and still needs a declaration.
 	var types []ns.ArgType
 	if t, ok := aggregateFixed(a.Agg.Func); ok {
 		types = make([]ns.ArgType, len(keys)+1)

@@ -236,10 +236,10 @@ go list -deps ./... | grep '\.' | grep -v '^github.com/panyam/jaala' | grep -v '
   supplementary relation in its body would make the bindings a count reduces a set. Its
   signature reports the aggregate position as declared when the function fixes the type
   (`aggregateFixes`, #78): `count`, `list`, and `sum`/`min`/`max` over a typed number. Over an
-  untyped column those stay `Inferred`. Numeric head constants contribute `number` and their exact
-  unit (#84); an agreed number type counts as declared. Text constants and incompatible types or
-  units leave the column untyped. A walk that skips a recursive variable clause sets numeric head
-  evidence aside and repeats the previous conservative inference, including through aliases.
+  untyped column those stay `Inferred`. Numeric head constants contribute `number` (#84); a bare
+  literal is compatible with the unit other clauses agree on. Text constants and incompatible
+  types or units leave the column untyped. Constants alone do not mark a column declared, so an
+  undeclared numeric column stays `Inferred`.
 - **`min`, `max` and `sum` reduce numbers, and with none they answer `absent` and 0** (`reduce`,
   #122), over a text column or over nothing, in a goal and in a rule head alike; `count` is 0 and
   `list` the empty text. Never `""`, which reads as a value and keys as one (#62). Soufflé gives no
