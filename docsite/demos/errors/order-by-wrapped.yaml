@@ -1,0 +1,3 @@
+fixture: "deps"
+query: "imports(?a, ?b) => ?a order by count(0)"
+expect_error: 'query: order by: aggregate count(...) expects a ?variable, got "0"'

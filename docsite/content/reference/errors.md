@@ -169,7 +169,9 @@ It is `order by`.
 
 `query: order by: …`
 
-Wraps an error in one of `order by`'s columns, with that error's own text.
+Wraps an error in one of `order by`'s columns, omitting the underlying error's leading `query:` prefix.
+
+{{ demo "demos/errors/order-by-wrapped.yaml" }}
 
 `query: … in … compares number[…] with number[…], which never holds`
 
@@ -225,7 +227,7 @@ A rule that computes a value and feeds it back into its own recursion has no fix
 
 `query: having …: …`
 
-Wraps an error inside a `having` condition. Today it repeats the `query:` prefix ([#128](https://github.com/panyam/jaala/issues/128)).
+Wraps an error inside a `having` condition, omitting the underlying error's leading `query:` prefix.
 
 {{ demo "demos/errors/having-q-w.yaml" }}
 

@@ -218,7 +218,7 @@ func parseOrderBy(s string) ([]Order, error) {
 		}
 		t, err := parseSelItem(piece)
 		if err != nil {
-			return nil, fmt.Errorf("query: order by: %w", err)
+			return nil, &contextParseError{context: "order by", cause: err}
 		}
 		out = append(out, Order{Term: t, Desc: desc})
 	}
@@ -313,6 +313,17 @@ func parseHaving(s string) ([]Compare, error) {
 	return out, nil
 }
 
+type contextParseError struct {
+	context string
+	cause   error
+}
+
+func (e *contextParseError) Error() string {
+	return fmt.Sprintf("query: %s: %s", e.context, strings.TrimPrefix(e.cause.Error(), "query: "))
+}
+
+func (e *contextParseError) Unwrap() error { return e.cause }
+
 // parseHavingOne reads one group filter. The left side goes through parseSelItem (the projection's
 // term parser, which is the one that knows aggregates) rather than parseTerm, so an aggregate stays
 // spellable HERE and stays unspellable in the goal body, where it would have nothing to reduce.
@@ -324,14 +335,14 @@ func parseHavingOne(piece string) (Compare, error) {
 		}
 		left, err := parseSelItem(strings.TrimSpace(parts[0]))
 		if err != nil {
-			return Compare{}, fmt.Errorf("query: having %q: %w", piece, err)
+			return Compare{}, &contextParseError{context: fmt.Sprintf("having %q", piece), cause: err}
 		}
 		if left.Agg == nil {
 			return Compare{}, fmt.Errorf("query: having %q filters ?%s, which is a group key rather than an aggregate — a comparison over plain variables belongs in the goal, before the %q", piece, left.Var, "=>")
 		}
 		right, err := parseTerm(parts[1])
 		if err != nil {
-			return Compare{}, fmt.Errorf("query: having %q: %w", piece, err)
+			return Compare{}, &contextParseError{context: fmt.Sprintf("having %q", piece), cause: err}
 		}
 		return Compare{Left: left, Op: op, Right: right}, nil
 	}
