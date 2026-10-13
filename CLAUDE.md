@@ -59,6 +59,19 @@ go list -deps ./... | grep '\.' | grep -v '^github.com/panyam/jaala' | grep -v '
   `evalRun.looked`, never the Base, so a probed relation never accumulates there. Anything that sizes
   a base relation (`fanOut`, `scanSize`) checks `looksUp` first and reports "unknown" rather than
   reading it. The corpus runs every program over a `looking` wrapper too (`agreeLookingUp`).
+- **A `Federation` is a Source over several (`ns/federation.go`, #211), so it lives in `ns`, beside
+  `MemSource`.** A relation is the union of its members'; a lookup goes only to the members whose
+  `Holds` allows the bound values. The engine asks `ns.LookupRelations` per relation (`lookable`),
+  and a relation one member can't look up is read whole and kept, never filtered per probe. A fact
+  two members serve is two facts, as in one Source serving it twice. The corpus runs every program
+  over a three-member federation too (`agreeFederated`), whose limited answers without an `order by`
+  are checked as a subset, since the tuples arrive in another order (#194).
+- **A Source may say which lookups it answers from an index** (`ns.IndexedLookups`, #154).
+  `planBody` ranks a looked-up call on a pattern the Source says is unindexed as if nothing were
+  bound (`scansOnLookup`), so an indexed call runs first; nothing else reads it, so a Source held in
+  memory plans as before and the work baselines don't move. A Federation's pattern is indexed only
+  when every member serving it is. `agreeFederated`'s stores index only the first argument, so the
+  corpus runs the reordering; `TestStoresExercise`'s `callees-with-attr` is its acceptance case.
 - **`Report.Cold` reruns the query when the Eval was warm** (`coldCost`, #147): it reused a derived
   relation, or probed a held relation a fresh Base would have looked up. The rerun is a copy with no
   derived cache, no work counter, a fresh `edb` when the Source looks up, and `o.cold` set so it can't
@@ -90,12 +103,16 @@ go list -deps ./... | grep '\.' | grep -v '^github.com/panyam/jaala' | grep -v '
 - **An answer writes a plain number canonically, and data's spelling wins where two meet** (#148).
   `bindArg` keeps, when a bound variable meets an equal number spelled differently, the spelling
   `spelledBefore` ranks first: text saying more than the number (`3.3V`, a range), then a unit, then
-  shorter, then smaller text. That makes the choice a minimum, so it doesn't depend on join order.
+  the unit's text (`A` before `V`), then shorter, then smaller text. That makes the choice a minimum, so it doesn't depend on join order.
   `canonicalAnswers` then rewrites a value whose text only spells its number (`01`, `1.50`, `-0`) to
   `ftoa`, in the goal's bindings and witnesses (copying shared nodes), before projection, so dedup,
   order and `list` see one text. Never canonicalize a constant's `S` earlier (#65), and a host-bound
-  column is filled in after, as bound. Two derivations of one derived tuple with different
-  annotated spellings still keep the first (dedup is by value).
+  column is filled in after, as bound. The same rule decides everywhere two equal values meet
+  (#201): two derivations of one derived tuple store the better annotation of each value
+  (`firstAnnotations` in `addTuple`, whichever derivation `keepCanonical` keeps), and a tuple whose
+  annotation changes is listed revised so its consumers read it again, in plain evaluation too;
+  an answer row's survivor, a group's key and a distinct value break a value tie the same way
+  (`order.survives`, `valueBefore`). Without it, `Witnesses` answered `9 A` where plain answered `9`.
 - **Equality is strict and an equivalence, with one key per value** (`valueEq`, `valueKey`, #162).
   Two numbers compare by value (NaN equals NaN, -0 is 0), two texts by text, and a number never
   equals text. A number's key is `numberPrefix` plus its canonical text, so the index (`tupleKey`)
@@ -113,11 +130,25 @@ go list -deps ./... | grep '\.' | grep -v '^github.com/panyam/jaala' | grep -v '
   `.5`. The parser slices rather than lexes; a tokenizer is filed separately.
 - **The answer order is a total order, and hosts see it.** `orderValues` ranks absent, then numbers by
   value, then text (#8). Comparing as numbers only when both are numbers cycles on a mixed column
-  (2 < 10, "10" < "1a" < "2"). `dedupSort` sorts before it dedups on `valueKey`, so the survivor
-  doesn't depend on arrival, and `1` and `"1"` are two rows (#162). An absent value keys apart from
-  `""` (`valueKey`'s `absentKey`, #62), in answers and in groups. `order by`, `limit`
-  and `offset` apply last, against the columns as written, so a host-bound variable is still one.
-  Moving the default order changes agni's goldens, so it ships with an upgrade note.
+  (2 < 10, "10" < "1a" < "2"). A row's survivor is the one ordering first among those with its
+  `valueKey`s (`order.survives`, as `dedupSort` keeps), so it doesn't depend on arrival, and `1` and
+  `"1"` are two rows (#162). An absent value keys apart from `""` (`valueKey`'s `absentKey`, #62), in
+  answers and in groups. `order by`, `after`, `limit` and `offset` apply against the columns as
+  written, so a host-bound variable is still one (the sink fills it as bound). A `limit` without an
+  `order by` is the one exception to the total order: it answers the first rows the goal finds, so
+  `offset` and `after` need an `order by` (#194). Moving the default order changes agni's goldens, so
+  it ships with an upgrade note.
+- **The goal streams into its answer, and never holds its bindings** (`sink.go`, `table.go`, #120).
+  A projection keeps one `answerRow` per distinct row (`projector`, reading each binding into a
+  scratch row and allocating only one it keeps); an aggregate keeps one `accumulator` per group and
+  column (`aggregator`, for a goal and a rule head alike). `sum` is exact (`exactSum`, Shewchuk's), so
+  it doesn't depend on arrival, and a NaN makes `min`/`max` NaN wherever it arrives. With an `order
+  by` and a `limit`, `pageHeap` holds `limit` plus `offset` rows; without an `order by`, the
+  projector returns `errEnough` and the solve stops. `Report.Held` is the peak rows or groups held,
+  and `TestTheGoalHoldsItsAnswerNotItsBindings` and the `Memory` benchmark (peak heap, 4 MB where
+  `main` held 3.5 GB at a budget of 2,000,000) guard it. A new answer feature reads bindings as they
+  arrive; collecting them first brings #120 back. `EvalTable` (on `Evaluator`) returns a `Table`;
+  `Eval` converts it, so a host's `[]Row` is built only for returned rows (#195).
 - **Comments use agni's circuit vocabulary on purpose** (`doc.go` says so). Host-specific test
   data doesn't belong here, though: checks against agni's real catalog, such as its
   `columnkinds.golden`, live in agni. Copying another repo's catalog in creates a fixture that goes
@@ -131,13 +162,19 @@ go list -deps ./... | grep '\.' | grep -v '^github.com/panyam/jaala' | grep -v '
   as a pass. Likewise a `-run '^Name$'` that matches no test passes; run by prefix and check the
   test actually ran. Restore mutated files in a `finally` and give each run a timeout. Mutate back
   to the exact old code: one that also loosened a neighbouring check (#89's head `_`) was caught by
-  that check under another message, and the saved fuzz input "survived" for the wrong reason.
+  that check under another message, and the saved fuzz input "survived" for the wrong reason. A
+  test that loops until a condition (paging until a short page) needs a bound, or a mutation hangs
+  it rather than failing it (#194). And a test comparing two APIs one of which is built on the other
+  can't fail: `Eval` is `EvalTable` converted, so the table's test checks its content directly.
 - **Give a test a control that proves its fixture can tell the cases apart.** Most surviving
   mutations here were fixtures that could not: a recursion guard tested only with two-rule
   relations, a column-order test whose sort orders coincided, a "free" call the planner bound, a
   citation-leak fixture whose first derivation happened to follow the leaked path, a `ValidateBound`
   test with no closed-Domain argument (#68, which shipped). A `control:`
   assertion (Naive walks n times; the plan does start with the reordered literal) catches that.
+  A corpus control that counts a rare case has to hold at CI's 300 seeds, not only at the 1000 or
+  5000 it was tried at: #192's mixed-units control passed at 1000 and failed CI's default, so it
+  applies from 1000 seeds. Run `go test ./datalog` at its default before pushing a new control.
   **Inlining hides rewrites**: a single-rule relation is folded into its caller, so a test of how
   demand, planning or the fixpoint treat a derived relation gives it two rules or runs with
   `Witnesses()` (which turns inlining off). A cost test needs a fixture where the old cost shows:
@@ -150,7 +187,11 @@ go list -deps ./... | grep '\.' | grep -v '^github.com/panyam/jaala' | grep -v '
   `SemiNaive{WrittenOrder: true}` (same rows and errors) and the planned `SemiNaive{}` (same rows,
   and Naive's error whenever it errors). A tuple reachable two ways keeps whichever derivation an
   evaluator finds first, so plain citations aren't compared; `agree` then runs the query again under
-  `CanonicalCites()`, where all three must give the same rows, citations and witnesses (#22). A new evaluator or option belongs in `both()` too. `seminaive_test.go` adds a
+  `CanonicalCites()`, where all three must give the same rows, citations and witnesses (#22). A
+  projection with a `limit` and no `order by` may rightly answer different rows per evaluator (#194),
+  so `agree` compares its whole answer instead and requires each evaluator's rows to be that many of
+  them, distinct, in the default order (`anyRows`, `agreeOnSomeRows`); the Soufflé step checks them
+  as a subset the same way. A new evaluator or option belongs in `both()` too. `seminaive_test.go` adds a
   seeded random-graph corpus, and `plan_test.go` a clause-order shuffle property.
 - **The generated corpus (`generate_test.go`, #87) runs random programs through `agree`**, the
   comparison `both()` makes, without the panic. Each program runs plain and under `Witnesses()`, and a
@@ -161,7 +202,11 @@ go list -deps ./... | grep '\.' | grep -v '^github.com/panyam/jaala' | grep -v '
   hides), and so does a fixed bug, whose line then goes. A program is classified by its first
   disagreement, so a known one can mask another: #90 hid about a tenth of the planned comparisons
   until it was fixed.
-  `./selfcheck.sh` runs the corpus at 5000 seeds (#86).
+  `./selfcheck.sh` runs the corpus at 5000 seeds (#86). About 30% of graphs give their weights
+  units (#192), half all in volts and half a mix of volts, amps and none (`genUnits`, drawn from a
+  source seeded by the graph so a seed's program is unchanged). Soufflé has no units, so
+  `corpusCase` compares a mixed seed with its units left off, and a single unit as it is (answers
+  compare by text).
 - **Naive is checked against Soufflé** (`souffle_test.go`, #23). The translator is test code, from
   the parsed `Query` and its bound values to a Soufflé program whose relations carry a per-program
   prefix, so a batch of 200 programs is one souffle run (batches run in parallel). Types come from
@@ -173,7 +218,9 @@ go list -deps ./... | grep '\.' | grep -v '^github.com/panyam/jaala' | grep -v '
   row over nothing explicitly. `order by` and `limit` are applied in Go with jaala's own order. A
   program outside the fragment (`list`, a rule head `sum`/`min`/`max` with no group column) is
   counted by reason, never dropped. `TestSouffleCatchesAWrongTranslation` drops negation on purpose
-  and requires a shrunk disagreement. Locally Soufflé is built from source on arm64 (no package).
+  and requires a shrunk disagreement. Locally Soufflé is built from source on arm64 (no package); on
+  x86_64, extract CI's release `.deb` (`dpkg-deb -x`) into a scratch directory and put its
+  `usr/bin` on `PATH` for `./selfcheck.sh`, which otherwise prints "could not run".
 - **The query text is fuzzed** (`fuzz_test.go`, #89). `FuzzParse`: any text parses or fails with a
   `query:` error, and a parsed rule prints back as text that parses to the same rule. `FuzzEval`: a
   program that parses is validated and evaluated without a panic, every error keeps `query:`, and when
@@ -216,7 +263,7 @@ go list -deps ./... | grep '\.' | grep -v '^github.com/panyam/jaala' | grep -v '
   whatever the order, which is why size-of-citation-set (the issue's first idea) wasn't used: unions
   don't compose, so a local minimum depends on order. It turns off inlining and factoring (as
   Witnesses does) and supplementary relations, which merge derivations differing only in a `_`.
-  Answer rows sort their bindings by `compareBindings` before `dedupSort` keeps the first.
+  A row's survivor ties go to the binding `compareBindings` ranks first (`order.survives`).
 - **Magic tuples carry no citations.** `magic.go` adds relations recording what a query demanded;
   `SemiNaive`'s `derive` clears their citations, or an answer would cite the facts that worked out
   someone else's demand. Two relations the rewrite adds are not demand and keep theirs on purpose:
@@ -230,7 +277,7 @@ go list -deps ./... | grep '\.' | grep -v '^github.com/panyam/jaala' | grep -v '
   rewrite's rules that read what it removed (`withoutOrphans`), since a rule reading a relation with
   no rules errs as unknown rather than deriving nothing.
 - **A rule head may aggregate (#4), and that rule is its relation's only one.** `applyAggregate`
-  reuses the goal's `aggregate`, so grouping, `distinct`, citations and the one-row-over-nothing case
+  feeds the goal's `aggregator`, so grouping, `distinct`, citations and the one-row-over-nothing case
   match an answer's. `stratify` makes its body edges strict, as negation's are. Demand stops at it
   (`magician.aggregates`): a caller binding the count column names no value of the body, and a
   supplementary relation in its body would make the bindings a count reduces a set. Its
@@ -240,18 +287,59 @@ go list -deps ./... | grep '\.' | grep -v '^github.com/panyam/jaala' | grep -v '
   literal is compatible with the unit other clauses agree on. Text constants and incompatible
   types or units leave the column untyped. Constants alone do not mark a column declared, so an
   undeclared numeric column stays `Inferred`.
-- **`min`, `max` and `sum` reduce numbers, and with none they answer `absent` and 0** (`reduce`,
+- **`min`, `max` and `sum` reduce numbers, and with none they answer `absent` and 0** (`accumulator`,
   #122), over a text column or over nothing, in a goal and in a rule head alike; `count` is 0 and
   `list` the empty text. Never `""`, which reads as a value and keys as one (#62). Soufflé gives no
   tuple for a min over nothing, so its translator writes `souffleAbsent` there and skips, guards and
   reads back that sentinel as jaala treats absent. Over numbers in different units all three are
   `absent` (#80), and otherwise the result keeps the group's unit; a number with no unit takes the
-  group's, as in a comparison. `numericValues` reads units before `distinct` dedups (5 V and 5 A are
+  group's, as in a comparison. `accumulator.add` reads units before `distinct` dedups (5 V and 5 A are
   one number). A query that means something across units says so with `num.value` (strip the unit)
   or `num.unit` (group by it). An absent result from a goal's own aggregate says why in `Row.Why`,
   keyed like `Bind` ("no rows", "no numbers", "mixed units: A, V"); a rule's aggregate stores only its
-  value, and a `having`-only column drops its reason with its value. The corpus writes no units, so
-  the Soufflé step can't see this; `units_test.go` and the guide's examples are what check it.
+  value, and a `having`-only column drops its reason with its value. The corpus gives some graphs'
+  weights units (#192), and its control requires answers holding a unit, and from 1000 seeds (so
+  `./selfcheck.sh`, not CI's 300) an aggregate absent over mixed units, which a unit-blind
+  `accumulator` fails; `units_test.go` and the guide's examples
+  check the rules themselves. An
+  ordering comparison whose two sides have known, different units is refused before running
+  (`checkComparisonUnits`, #190), in the goal, rules, `having` and modules (at `Check`): a
+  variable's unit is known only when every positive atom binding it declares that unit, since a
+  value from a unitless binder compares with any.
+- **Arithmetic is syntax over function relations** (`exprs.go`, #5). An `Expr` term, legal only as
+  a comparison operand, is `+ - * /`, unary minus, or `name(args)` (a relation with one trailing
+  result argument). `lowerExpressions` runs first, with body-aggregate lowering (in `evaluateOn`,
+  `ValidateBound` and per module), writing each as calls to stdlib's `num.add/sub/mul/div/neg` on
+  fresh `\x00e` variables; `?y = expr` computes into `?y`, so it binds or tests. The calls are
+  `computed`: `deferComparisons` (which now takes the vocabulary) holds one until a mode of its
+  generator is satisfied, so written order doesn't matter in Naive, and `checkComputedRecursion`
+  refuses a computing rule that reaches itself (#207). `parseOperand` tries `parseTerm` first, so
+  a plain operand parses and errs exactly as before; a literal containing `(` is an atom only when
+  it has no top-level comparison operator.
+- **Units are symbolic, and the engine holds them normalized** (`ns/unit.go`, #5). A `Unit` is a
+  power-of-ten scale and symbols with exponents; `Vocabulary.AddUnit` names base units, prefixes
+  and derived units (stdlib's `Units` registers SI prefixes and an electrical set), and a symbol
+  nobody named is its own unit. A query literal (`3.3V`, `1kohm`; a bare `e` suffix stays #163's
+  error) is folded by `foldUnits` in `coerceConstants`: the scale goes into the number and the unit
+  is written by its first name (`A*ohm` is V, at most one name factored out of a composite:
+  `ohm/s`). `num.*` write results the same way, so every value inside the engine is in base units
+  and unit strings still compare as strings. Source values are still expected in base units
+  (prefixed ones are #205).
+- **A rule can take an argument from its caller** (`inputs.go`, #200): a head variable its body
+  can't bind, which a comparison, a `not` or a generator reads, is an input (`inputsOf`; a call to an
+  input relation binds only its other arguments, so `inputRelations` grows to a fixpoint). What a
+  body binds is `bindsFrom`, the fixpoint `checkModes` computes (a generator binds once a mode is
+  satisfied), so `power(?v, ?i, ?p) :- ?p = ?v * ?i` is a function an expression calls as
+  `power(?v, ?i)` (#208). Where the body binds head variables only from each other, the head's
+  earliest unbound ones are the inputs, which only names them in the signature: a call is accepted
+  whenever `bindsFrom` over the inlined body binds them, and `inline` keeps `computed`. Only a
+  relation with one rule, a head of distinct variables, no aggregate and no recursion qualifies;
+  anything else keeps today's `head variable ?x is not bound` error. The written-program checks
+  treat inputs as bound (`inputsBound`, `b.inputRels`), then `lowerInputs` inlines each call into
+  its caller just before the evaluator reads the rules, so all three evaluators see ordinary rules,
+  and refuses a call that doesn't bind an input, a negated call, and a counting caller of a
+  projecting input relation (#139's multiplicity). Validate and module resolution (at `Check`) run
+  the same lowering for its errors. `ArgSig.Input` marks the argument.
 - **An aggregate in a body is lowered to rules before anything else runs** (`bodyagg.go`, #71).
   `?v = f(?x) : { body }` becomes a domain relation of the shared variables (the clause's positive
   relations that don't read an aggregate's value; no citations, no witness), a head aggregate over
@@ -344,7 +432,10 @@ go list -deps ./... | grep '\.' | grep -v '^github.com/panyam/jaala' | grep -v '
   `order_test.go`; `typedNets()` (number counts, a numeric-looking ref, a pin stored as `ns.N`, an
   untyped relation) and `answersAs` in `coerce_test.go`; `netlist()` (C1's two pins both on GND, so
   counting bindings and distinct values disagree; `ohms` carries a unit) in `aggregate_test.go`; `params()` (a part's parameters in V, A and ohm, a
-  bare number, and 5 V beside 5 A) in `units_test.go`. `both()` takes Eval options, so a `Bind`
+  bare number, and 5 V beside 5 A) in `units_test.go`; `digits()` (n(1) to n(10), so a three-way join finds a thousand bindings),
+  `reported` (the planned SemiNaive with Explain) and `peakHeapDuring` in `paging_test.go`; `store` (a
+  repo's facts behind a LookupSource with an index catalog, counting calls and scans), `repoStores`
+  and `newStoreSet` (N of them federated by id prefix) in `stores_test.go`, mission #219's exercise. `both()` takes Eval options, so a `Bind`
   case runs through all three evaluators. `both()` compares rows in order, so every test checks the
   answer order too. Don't compare rows by `fmt.Sprint`: `ns.Value.Num` is a pointer, so the text
   carries an address. datalog's tests import `stdlib` for `std()`; production datalog code must not.
@@ -355,26 +446,42 @@ Merge the PR, then run the CI set and `./selfcheck.sh` on the merged `main` (PRs
 together were never tested together), then put an annotated tag on the merge commit and push it
 (`git tag -a v0.1.N <merge-sha>`, `git push origin v0.1.N`). The owner picks the version. So far
 releases are patch bumps on v0.1.x, breaking changes included, pre-1.0. agni consumes tags only
-(`go get github.com/panyam/jaala@vX`), never a `replace`.
+(`go get github.com/panyam/jaala@vX`), never a `replace`. The tag's annotation is the release
+notes: write it as a short list of what changed, then publish the page with
+`gh release create v0.1.N --title v0.1.N --notes-from-tag --latest` (from v0.1.32; earlier tags
+have no page), and put the upgrade note on the issue a host filed or the PR's own issue.
 
 ## Issues and missions
 
 Issues are ranked by the mission they serve (labels `P0`–`P3`, `waiting`, `mission`,
 `mission:active`, `mission_<slug>`), and its tickets are linked as blocked-by. Most of jaala's
 missions unblock a host's active mission; such a mission closes when the host's half of its exercise
-passes too, so it can stay open after jaala's tickets close. The active mission is
-`mission_aggregate_answers` (#172): an aggregate's answer means what the question meant, measured by
-the Soufflé step of `./selfcheck.sh` skipping no aggregate program. jaala's earlier two are closed:
+passes too, so it can stay open after jaala's tickets close. Three are active:
+`mission_aggregate_answers` (#172), an aggregate's answer means what the question meant, measured by
+the Soufflé step of `./selfcheck.sh` skipping no aggregate program; and `mission_browser_memory`
+(#193), a browser tab answers a large design's query within its memory, measured by the `Memory`
+benchmark's peak heap in use (not `B/op`, which the join's short-lived bindings dominate) and agni
+#896; and `mission_store_federation` (#219), a host answers a question over many stores without
+holding them in memory, measured by the `Stores` benchmark (#218, its first ticket: stores asked,
+unindexed probes, round trips, peak heap and a repeated question's fetches as the number of stores
+grows) and Declaire's `bench -time` on a federated view. Its tickets (#154, #153, #212) are the
+first half of epic #213; pushdown is a later mission. jaala's earlier two are closed:
 `mission_selfcheck` (#86, at v0.1.29) left `./selfcheck.sh` as the check to run on `main` after every
 merge and before every tag, and `mission_docsite` (#104) left the docs site with every example run by
 the engine. Several missions can be active at once (`queue.sh` prints them). A new issue gets a
 priority and a mission link when filed, or `waiting` with the trigger that would unpark it.
 
+Create the branch before the first commit (`git branch --show-current` says so). #200's work was
+committed on local `main`, so `git reset --soft main` to squash it did nothing and the PR opened
+with WIP commits. Squash against `origin/main`, never a local name that may have moved.
+
 Pushing a branch can get a PR opened for it under the owner's account (#168 was), titled and
 bodied from the commit. Check `gh pr list --head <branch>` before `gh pr create`, and edit that PR
 rather than opening a second one. A PR from an outside contributor gets the owner's review before
 it merges, however green its CI: such PRs tend to settle a ticket's open questions on their own
-(#184). Deleting an open PR's head branch closes it unmerged (#187 was closed that way), so check
+(#184). When `main` moves under one, merge `main` into its branch (maintainers may push to it)
+rather than rebasing, so the contributor's commit stays as written, and say so on the PR with what
+the conflict resolution kept. Deleting an open PR's head branch closes it unmerged (#187 was closed that way), so check
 `gh pr view N --json state` says `MERGED` before cleaning up a branch.
 
 A PR body closes only its own issue. GitHub reads any "fix", "fixes", "close", "closes" or "resolves"
@@ -392,6 +499,8 @@ exact lines each must change (as #7's v0.1.6 comment did for `Modes`).
 To see what a change does to a host before writing its upgrade note, run the host's own suite
 against `main` and against the branch through a scratch `go.work` (`use` the host checkout and a
 jaala worktree), and diff the failures: a failure in both is the host's or its environment's, one in
-the branch only is this change's (#161, #168). A host checkout pins an older tag, so a copy may need
+the branch only is this change's (#161, #168). Diff the whole sorted list of failing test names
+(`grep '^--- FAIL' | sed 's/ (.*//' | sort -u`), never a `head` of it: a truncated list reported 9
+of agni's 13 environmental failures for #196. A host checkout pins an older tag, so a copy may need
 a small patch to build against `main` (agni's `Bind` call, for #132); patch a copy in the scratchpad,
 never the host's own checkout.

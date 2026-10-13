@@ -31,7 +31,11 @@ type Report struct {
 	Budget  int64         `json:"budget,omitempty"`
 	Elapsed time.Duration `json:"elapsed_ns"`
 	Rows    int           `json:"rows"`
-	Error   string        `json:"error,omitempty"`
+	// Held is the most answer rows (or groups, for an aggregate) the goal held at once, before
+	// offset and limit, which is what the answer's memory grows with rather than the bindings the goal
+	// found (#120). A limit with an order by holds at most limit plus offset.
+	Held  int    `json:"held"`
+	Error string `json:"error,omitempty"`
 	// Lookups are the calls the Eval made to the Source's Lookup (ns.LookupSource), and Fetched the
 	// tuples the Source returned to this Eval: those lookups', and those of each relation it read whole
 	// that the Base didn't already hold.
@@ -144,6 +148,7 @@ type IndexReport struct {
 // explainer is an Eval's Explain state, on its run: the report it fills, and the body and literal the
 // work being counted belongs to.
 type explainer struct {
+	reg     *ns.Vocabulary // for the order solve runs a body in (deferComparisons)
 	report  *Report
 	start   time.Time
 	bodies  map[string]*BodyReport
@@ -162,7 +167,7 @@ type explainer struct {
 
 func newExplainer(r *Report, b *Base) *explainer {
 	*r = Report{}
-	e := &explainer{report: r, start: time.Now(), bodies: map[string]*BodyReport{}, rounds: map[string]int{}, sources: map[string]*SourceReport{}}
+	e := &explainer{report: r, reg: b.reg, start: time.Now(), bodies: map[string]*BodyReport{}, rounds: map[string]int{}, sources: map[string]*SourceReport{}}
 	if b.edb != nil {
 		e.cachedTuples, e.cachedIndexes = b.edb.held()
 	}
@@ -194,7 +199,7 @@ func (e *explainer) enter(r *Rule, goal Body) func() {
 	br, ok := e.bodies[key]
 	if !ok {
 		pos, negs := splitNegations(body.Literals)
-		pos = deferComparisons(pos) // the order solve runs them in, which literal(i) indexes
+		pos = deferComparisons(pos, e.reg) // the order solve runs them in, which literal(i) indexes
 		br = &BodyReport{Rule: written, Ran: ExplainName(key), Relation: relation}
 		if r == nil {
 			br.Ran = ExplainName(goal.String())
@@ -274,14 +279,17 @@ func (e *explainer) probe(rel string, on []string, built bool) {
 }
 
 // finish fills the report's totals and relations once the Eval ends.
-func (e *explainer) finish(b *Base, rows []Row, err error, budget int64) {
+func (e *explainer) finish(b *Base, rows int, err error, budget int64) {
 	r := e.report
 	r.Elapsed = time.Since(e.start)
 	if b.run != nil {
 		r.Work = b.run.used
 	}
 	r.Budget = budget
-	r.Rows = len(rows)
+	r.Rows = rows
+	if b.run != nil {
+		r.Held = b.run.held
+	}
 	if err != nil {
 		r.Error = err.Error()
 	}
@@ -314,7 +322,7 @@ func (e *explainer) warm(b *Base) bool {
 		return false
 	}
 	for _, s := range e.sources {
-		if s.Cached && len(s.Indexes) > 0 {
+		if s.Cached && len(s.Indexes) > 0 && b.lookable(s.Relation) {
 			return true
 		}
 	}

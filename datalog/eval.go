@@ -5,7 +5,6 @@ import (
 	"context"
 	"fmt"
 	"github.com/panyam/jaala/ns"
-	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -59,6 +58,12 @@ type Base struct {
 	noIndex bool
 	// looker is the Source when it answers bound lookups itself (ns.LookupSource), else nil.
 	looker ns.LookupSource
+	// lookRels, when the Source implements it, says which of its relations it looks up
+	// (ns.LookupRelations); nil means all of them.
+	lookRels ns.LookupRelations
+	// indexed, when the Source implements it, says which lookup patterns it answers from an index
+	// (ns.IndexedLookups); nil means all of them.
+	indexed ns.IndexedLookups
 	// run is one Eval's own state (its context and budget), set on that Eval's copy of the Base and
 	// nil on a Base no Eval is running on.
 	run *evalRun
@@ -66,6 +71,10 @@ type Base struct {
 	// validation base inside module resolution sets it, since the memoized signatures are not
 	// available until that resolution finishes.
 	sigs map[string][]ns.ArgSig
+	// inputRels, set only inside module resolution, are the members that take an argument from their
+	// caller (#200), whose own rules are checked with those arguments bound. Elsewhere lowerInputs
+	// has inlined them before any check reads the program.
+	inputRels map[string]Rule
 }
 
 // NewBase builds a fact base that answers with v's names over src's facts. A host composes and
@@ -105,7 +114,9 @@ func NewBase(v *ns.Vocabulary, src ns.Source) (*Base, error) {
 		return nil, fmt.Errorf("query: %s", strings.Join(problems, "; "))
 	}
 	looker, _ := src.(ns.LookupSource)
-	return &Base{src: src, reg: v, looker: looker, edb: newEDBCache(), derived: newDerivedCache(), work: new(int64)}, nil
+	lookRels, _ := src.(ns.LookupRelations)
+	indexed, _ := src.(ns.IndexedLookups)
+	return &Base{src: src, reg: v, looker: looker, lookRels: lookRels, indexed: indexed, edb: newEDBCache(), derived: newDerivedCache(), work: new(int64)}, nil
 }
 
 // MustBase is NewBase for a Source known to match its vocabulary, such as a test fixture. It panics
@@ -183,6 +194,8 @@ func readTuples(ctx context.Context, src ns.Source, rel string) ([]ns.Tuple, err
 // variables (Bind) and limit work (Budget).
 type Evaluator interface {
 	Eval(ctx context.Context, q Query, b *Base, opts ...Option) ([]Row, error)
+	// EvalTable answers as Eval does, as one Table rather than a map per row (#195).
+	EvalTable(ctx context.Context, q Query, b *Base, opts ...Option) (*Table, error)
 }
 
 // Naive is the reference interpreter: a backtracking join in written order, with rules derived by a
@@ -202,6 +215,11 @@ type Naive struct{}
 // the projection contains an aggregate. Results are deduplicated and sorted, so a query is a
 // deterministic, regenerable view; each row carries the provenance of the facts that produced it.
 func (n Naive) Eval(ctx context.Context, q Query, b *Base, opts ...Option) ([]Row, error) {
+	return rowsOf(n.EvalTable(ctx, q, b, opts...))
+}
+
+// EvalTable answers q as Eval does, as a Table.
+func (n Naive) EvalTable(ctx context.Context, q Query, b *Base, opts ...Option) (*Table, error) {
 	return evaluate(ctx, q, b, opts, nil, n.materialize)
 }
 
@@ -209,7 +227,7 @@ func (n Naive) Eval(ctx context.Context, q Query, b *Base, opts ...Option) ([]Ro
 // shared: Base holds the derived relations and the primitives that read and extend them (checkRules,
 // applyRule, solve), and an evaluator decides only how to iterate them to a fixpoint and, through
 // rewrite (nil for none), how to rewrite the linked query first.
-func evaluate(ctx context.Context, q Query, b *Base, opts []Option, rewrite func(*Base, Query) Query, fixpoint func(*Base, []Rule) error) ([]Row, error) {
+func evaluate(ctx context.Context, q Query, b *Base, opts []Option, rewrite func(*Base, Query) Query, fixpoint func(*Base, []Rule) error) (*Table, error) {
 	var o evalOptions
 	for _, opt := range opts {
 		opt(&o)
@@ -223,16 +241,16 @@ func evaluate(ctx context.Context, q Query, b *Base, opts []Option, rewrite func
 		return evaluateOn(&nb, gen, q, o, rewrite, fixpoint)
 	}
 	nb.run.explain = newExplainer(o.explain, &nb)
-	rows, err := evaluateOn(&nb, gen, q, o, rewrite, fixpoint)
-	nb.run.explain.finish(&nb, rows, err, o.budget)
+	tab, err := evaluateOn(&nb, gen, q, o, rewrite, fixpoint)
+	nb.run.explain.finish(&nb, tab.Len(), err, o.budget)
 	if err == nil && !o.cold && nb.run.explain.warm(&nb) {
 		o.explain.Cold = coldCost(ctx, q, b, opts, rewrite, fixpoint)
 	}
-	return rows, err
+	return tab, err
 }
 
 // evaluateOn answers q on b, an Eval's own copy of the Base (see evaluate).
-func evaluateOn(b *Base, gen int64, q Query, o evalOptions, rewrite func(*Base, Query) Query, fixpoint func(*Base, []Rule) error) ([]Row, error) {
+func evaluateOn(b *Base, gen int64, q Query, o evalOptions, rewrite func(*Base, Query) Query, fixpoint func(*Base, []Rule) error) (*Table, error) {
 	if err := b.run.done(); err != nil {
 		return nil, err
 	}
@@ -240,7 +258,15 @@ func evaluateOn(b *Base, gen int64, q Query, o evalOptions, rewrite func(*Base, 
 	if err != nil {
 		return nil, err
 	}
+	if q, err = lowerExpressions(q, b.reg); err != nil {
+		return nil, err
+	}
 	written := q
+	if o.after != nil {
+		if written.After, err = cursorOf(written, o.after); err != nil {
+			return nil, err
+		}
+	}
 	q, cols, err := bindGoal(q, o.bind)
 	if err != nil {
 		return nil, err
@@ -256,13 +282,19 @@ func evaluateOn(b *Base, gen int64, q Query, o evalOptions, rewrite func(*Base, 
 	if err != nil {
 		return nil, err
 	}
+	// A rule taking an argument from its caller (#200) is checked as written with that argument bound,
+	// then inlined into each call before the evaluator reads the rules.
+	b.inputRels = inputRelations(q.Rules, b.reg)
 	if q, err = coerceConstants(q, b.reg); err != nil {
+		return nil, err
+	}
+	if err := checkComparisonUnits(q, b.reg); err != nil {
 		return nil, err
 	}
 	if b.witnessing() {
 		q = tagWritten(q)
 	}
-	if err := checkWrittenAnchors(written.Goal, q.Rules, o.bind); err != nil {
+	if err := checkWrittenAnchors(written.Goal, q.Rules, o.bind, b.inputRels, b.reg); err != nil {
 		return nil, err
 	}
 	if err := b.checkWrittenArity(q); err != nil {
@@ -274,7 +306,7 @@ func evaluateOn(b *Base, gen int64, q Query, o evalOptions, rewrite func(*Base, 
 	// Modes are checked on the program as linked, before any rewrite, so an evaluator that inlines a
 	// rule away still refuses what its body could never run, with the message Validate gives.
 	for _, r := range q.Rules {
-		if err := checkModes(b, whereRule(r), r.Body); err != nil {
+		if err := checkModesFrom(b, whereRule(r), r.Body, inputsBound(r, b.inputRels, b.reg)); err != nil {
 			return nil, err
 		}
 	}
@@ -295,6 +327,15 @@ func evaluateOn(b *Base, gen int64, q Query, o evalOptions, rewrite func(*Base, 
 			}
 		}
 		e.linked = q
+	}
+	if len(b.inputRels) > 0 {
+		b.idbArity = map[string]int{}
+		if _, _, err := b.checkRules(q.Rules); err != nil {
+			return nil, err
+		}
+		if q, err = lowerInputs(q, o.bind, b.reg); err != nil {
+			return nil, err
+		}
 	}
 	if rewrite != nil {
 		// The rules are checked as linked too, before the rewrite renames them, so an error names
@@ -339,53 +380,10 @@ func evaluateOn(b *Base, gen int64, q Query, o evalOptions, rewrite func(*Base, 
 		return nil, err
 	}
 
-	var raw []*binding
 	if e := b.run.explain; e != nil {
 		defer e.enter(nil, q.Goal)()
 	}
-	err = solve(deferComparisons(pos), 0, newBinding(), b, func(bnd *binding) error {
-		ok, err := passesNegations(bnd, negs, b)
-		if err != nil {
-			return err
-		}
-		if ok {
-			c := bnd.clone()
-			c.wit = append(c.wit, b.negationWitnesses(negs, bnd)...)
-			raw = append(raw, c)
-		}
-		return nil
-	})
-	if err != nil {
-		return nil, err
-	}
-	canonicalAnswers(raw)
-	if b.canonical() {
-		// Bindings that project to one row keep the first one's citations (dedupSort is stable), so
-		// under CanonicalCites they arrive in the order of their derivations (see compareBindings).
-		sort.SliceStable(raw, func(i, j int) bool { return compareBindings(raw[i], raw[j]) < 0 })
-	}
-	var rows []Row
-	if hasAggregate(sel) || len(q.Having) > 0 {
-		if rows, err = aggregate(sel, q.Having, raw); err != nil {
-			return nil, err
-		}
-	} else {
-		rows = projectRows(sel, raw)
-	}
-	for _, c := range cols {
-		if vals := o.bind[c.Var]; len(vals) == 1 && c.Var != "" && c.Agg == nil {
-			for _, r := range rows {
-				r.Bind[c.Var] = vals[0]
-			}
-		}
-	}
-	if !o.witness {
-		for i := range rows {
-			rows[i].Witness = nil // recorded only to compare derivations (see CanonicalCites)
-		}
-	}
-	orderRows(rows, written.OrderBy)
-	return page(rows, written.Limit, written.Offset), nil
+	return answerGoal(b, pos, negs, q.Having, sel, cols, written, o)
 }
 
 // splitNegations separates the body into the positive part (atoms + comparisons, solved by
@@ -411,10 +409,16 @@ func splitNegations(lits []Literal) (pos, negs []Literal) {
 // fixpoint) already guarantees a negated IDB relation is fully derived before the rule or goal that
 // negates it runs, so the filter is safe.
 func (b *Base) validateNegations(body Body, negs []Literal) error {
+	return b.validateNegationsFrom(body, negs, nil)
+}
+
+// validateNegationsFrom is validateNegations for a body whose inputs its caller binds, which anchor
+// a negation as the host's bound variables anchor the goal's.
+func (b *Base) validateNegationsFrom(body Body, negs []Literal, inputs map[Var][]ns.Value) error {
 	if err := b.checkNegatedRelations(negs); err != nil {
 		return err
 	}
-	return checkAnchored(body, nil)
+	return checkAnchored(body, inputs)
 }
 
 // checkNegatedRelations is validateNegations without the anchoring check, for a body a rewrite may
@@ -522,9 +526,9 @@ func (b *Base) checkWrittenArity(q Query) error {
 // written in the goal does), and the rules before a rewrite inlines or renames them (#92). Checked
 // after, a bound anchor became a constant and an inlined body's anchor a renamed variable, so a
 // negation anchored as written was refused, naming a variable nobody wrote.
-func checkWrittenAnchors(goal Body, rules []Rule, bind map[Var][]ns.Value) error {
+func checkWrittenAnchors(goal Body, rules []Rule, bind map[Var][]ns.Value, inputRels map[string]Rule, reg *ns.Vocabulary) error {
 	for _, r := range rules {
-		if err := checkAnchored(r.Body, nil); err != nil {
+		if err := checkAnchored(r.Body, inputsBound(r, inputRels, reg)); err != nil {
 			return err
 		}
 	}
@@ -661,9 +665,18 @@ func (b *binding) clone() *binding {
 // planned one is, comes back unchanged. A comparison nothing binds stays at the end and fails there,
 // as it did; validateRule refuses one in a rule before any evaluator runs it. A comparison adds no
 // citations and its witness position travels with it, so moving one changes no answer.
-func deferComparisons(lits []Literal) []Literal {
+func deferComparisons(lits []Literal, reg *ns.Vocabulary) []Literal {
 	bound := map[Var]bool{}
-	ready := func(c *Compare) bool {
+	ready := func(l Literal) bool {
+		if l.computed && l.Pos != nil {
+			// A call an expression was written as waits for one of its function's modes (#5).
+			bi, ok := reg.Predicate(l.Pos.Relation)
+			return !ok || !bi.IsGenerator() || bi.Satisfied(boundFlags(l.Pos, bound))
+		}
+		c := l.Compare
+		if c == nil {
+			return true
+		}
 		for _, t := range []Term{c.Left, c.Right} {
 			if t.Var != "" && !bound[t.Var] {
 				return false
@@ -674,7 +687,7 @@ func deferComparisons(lits []Literal) []Literal {
 	out := make([]Literal, 0, len(lits))
 	var waiting []Literal
 	for _, lit := range lits {
-		if lit.Compare != nil && !ready(lit.Compare) {
+		if !ready(lit) {
 			waiting = append(waiting, lit)
 			continue
 		}
@@ -683,15 +696,22 @@ func deferComparisons(lits []Literal) []Literal {
 			continue
 		}
 		bindAll(lit.Pos, bound)
-		still := waiting[:0]
-		for _, w := range waiting {
-			if ready(w.Compare) {
-				out = append(out, w)
-			} else {
-				still = append(still, w)
+		for progress := true; progress; {
+			progress = false
+			still := waiting[:0]
+			for _, w := range waiting {
+				if ready(w) {
+					out = append(out, w)
+					if w.Pos != nil {
+						bindAll(w.Pos, bound)
+						progress = true
+					}
+				} else {
+					still = append(still, w)
+				}
 			}
+			waiting = still
 		}
-		waiting = still
 	}
 	return append(out, waiting...)
 }
@@ -816,6 +836,9 @@ func spelledBefore(a, b ns.Value) bool {
 	}
 	if (a.BaseUnit != "") != (b.BaseUnit != "") {
 		return a.BaseUnit != ""
+	}
+	if a.BaseUnit != b.BaseUnit {
+		return a.BaseUnit < b.BaseUnit // 5 A before 5 V, so two units of one number are decided too (#201)
 	}
 	if len(a.S) != len(b.S) {
 		return len(a.S) < len(b.S)
@@ -1195,6 +1218,28 @@ func validateOrder(cols []Term, q Query) error {
 	if q.Limit < 0 || q.Offset < 0 {
 		return fmt.Errorf("query: limit %d offset %d: a row count can't be negative", q.Limit, q.Offset)
 	}
+	// Paging needs a stable order: a page continues from the one before it (#194).
+	if q.Offset > 0 && len(q.OrderBy) == 0 {
+		return fmt.Errorf("query: offset needs an order by, so each page continues where the one before it stopped")
+	}
+	if q.After == nil {
+		return nil
+	}
+	if len(q.OrderBy) == 0 {
+		return fmt.Errorf("query: after needs an order by: it continues from the last row in that order")
+	}
+	if len(q.After) != len(q.OrderBy) {
+		return fmt.Errorf("query: after gives %d values for %d order by columns", len(q.After), len(q.OrderBy))
+	}
+	ordered := map[Var]bool{}
+	for _, o := range q.OrderBy {
+		ordered[colLabel(o.Term)] = true
+	}
+	for _, c := range cols {
+		if c.Agg == nil && c.Var != "" && !ordered[c.Var] {
+			return fmt.Errorf("query: after needs an order by naming ?%s too, or a row tying with the last one would be skipped", c.Var)
+		}
+	}
 	return nil
 }
 
@@ -1228,122 +1273,6 @@ func hasAggregate(sel []Term) bool {
 		}
 	}
 	return false
-}
-
-// projectRows is the plain select-project: one output row per solved binding, columns = the select
-// variables, cites deduped.
-func projectRows(sel []Term, raw []*binding) []Row {
-	rows := make([]Row, 0, len(raw))
-	for _, bnd := range raw {
-		row := Row{Bind: make(map[Var]ns.Value, len(sel)), Cites: dedupStrings(bnd.cites)}
-		if len(bnd.wit) > 0 {
-			row.Witness = inWrittenOrder(bnd.wit)
-		}
-		for _, t := range sel {
-			if t.Var != "" {
-				row.Bind[t.Var] = bnd.vals[t.Var]
-			}
-		}
-		rows = append(rows, row)
-	}
-	return dedupSort(rows, selKeys(sel))
-}
-
-// aggregate groups the solved bindings by the select's variable columns, reduces each aggregate
-// column over the group, and drops the groups a having filter rejects. A group's provenance is the
-// union of its surviving rows' cites.
-//
-// Example — `component-on-net(?ref,?net) => ?net, count(?ref)`: the solve yields one binding per
-// (ref,net) fact; grouping by ?net collapses them per net, and count(?ref) is the group size — parts
-// per net. min/max/sum reduce the numeric value of their variable over the group instead, and list
-// joins its distinct values.
-//
-// A having aggregate is reduced alongside the selected ones and filtered on, but its column is not in
-// selKeys, so it never reaches the output. That is what lets `=> ?p having count(?n) < 2` answer with
-// the subjects rather than the tally.
-func aggregate(sel []Term, having []Compare, raw []*binding) ([]Row, error) {
-	var keyVars []Var
-	var aggs []Term
-	selected := map[Var]bool{}
-	for _, t := range sel {
-		selected[colLabel(t)] = true
-		if t.Agg != nil {
-			aggs = append(aggs, t)
-		} else if t.Var != "" {
-			keyVars = append(keyVars, t.Var)
-		}
-	}
-	added := map[Var]bool{}
-	for _, h := range having {
-		lbl := colLabel(h.Left)
-		if !selected[lbl] && !added[lbl] {
-			aggs = append(aggs, h.Left)
-			added[lbl] = true
-		}
-	}
-	type group struct {
-		keyVals map[Var]ns.Value
-		rows    []*binding
-	}
-	groups := map[string]*group{}
-	for _, bnd := range raw {
-		key := groupKeyOf(keyVars, bnd)
-		g := groups[key]
-		if g == nil {
-			g = &group{keyVals: map[Var]ns.Value{}}
-			for _, kv := range keyVars {
-				g.keyVals[kv] = bnd.vals[kv]
-			}
-			groups[key] = g
-		}
-		g.rows = append(g.rows, bnd)
-	}
-	// With no group-by column the whole answer is one group, and it exists even when nothing matched,
-	// so count over nothing answers 0 rather than no rows, as SQL's COUNT(*) does (agni issue 726).
-	// A grouped projection gets no such row: over nothing there is no key to name a group by.
-	if len(keyVars) == 0 && len(groups) == 0 {
-		groups[""] = &group{keyVals: map[Var]ns.Value{}}
-	}
-	var out []Row
-	for _, g := range groups {
-		row := Row{Bind: map[Var]ns.Value{}}
-		var cites []string
-		for _, kv := range keyVars {
-			row.Bind[kv] = g.keyVals[kv]
-		}
-		for _, bnd := range g.rows {
-			cites = append(cites, bnd.cites...)
-		}
-		row.Cites = dedupStrings(cites)
-		for _, a := range aggs {
-			v, why := reduce(*a.Agg, g.rows)
-			row.Bind[colLabel(a)] = v
-			if why != "" {
-				if row.Why == nil {
-					row.Why = map[Var]string{}
-				}
-				row.Why[colLabel(a)] = why
-			}
-		}
-		keep, err := passesHaving(row, having)
-		if err != nil {
-			return nil, err
-		}
-		if !keep {
-			continue
-		}
-		// Drop the columns only a having asked for. Columns() already keys off Select, so these never
-		// reach a rendered table, but Row.Bind is public and a consumer walking it would otherwise
-		// find a column the query never asked for.
-		for _, h := range having {
-			if lbl := colLabel(h.Left); !selected[lbl] {
-				delete(row.Bind, lbl)
-				delete(row.Why, lbl)
-			}
-		}
-		out = append(out, row)
-	}
-	return dedupSort(out, selKeys(sel)), nil
 }
 
 // passesHaving applies the group filters to one reduced row. The left side reads the aggregate column
@@ -1386,128 +1315,6 @@ func groupKeyOf(keyVars []Var, bnd *binding) string {
 // ONE csv cell and a comma there reads as a column break to every naive splitter downstream — the csv
 // writer quotes it correctly, and the half of the world that reads csv with strings.Split does not.
 const listSep = " "
-
-// groupValues is a group's values of Var: one per binding, or the distinct set when the aggregate
-// says so. Sorted in the default order (orderValues) either way, so a saved view regenerates
-// identically rather than inheriting the solver's join order.
-//
-// A binding that does not bind Var contributes nothing, matching min/max/sum, which skip a row whose
-// value is not numeric.
-func groupValues(a Aggregate, rows []*binding) []string {
-	seen := map[string]bool{}
-	vals := make([]ns.Value, 0, len(rows))
-	for _, bnd := range rows {
-		val, ok := bnd.vals[a.Var]
-		if !ok || val.Absent || val.S == "" {
-			continue
-		}
-		if a.Distinct {
-			k := valueKey(val)
-			if seen[k] {
-				continue
-			}
-			seen[k] = true
-		}
-		vals = append(vals, val)
-	}
-	sort.SliceStable(vals, func(i, j int) bool { return orderValues(vals[i], vals[j]) < 0 })
-	out := make([]string, len(vals))
-	for i, val := range vals {
-		out[i] = val.S
-	}
-	return out
-}
-
-// numericValues is min/max/sum's input: the numeric value of Var across the group, deduped when the
-// aggregate says distinct. Dedup is on the VALUE, so two bindings carrying the same number contribute
-// once — which is what makes sum(distinct ?v) the sum of the distinct values rather than of the
-// distinct rows that happen to hold them. It also reports the group's units, sorted, read from every
-// number before dedup (5 V and 5 A are one number but two units): more than one has no least,
-// greatest or total (#80), and a number with no unit takes the group's, as in a comparison.
-func numericValues(a Aggregate, rows []*binding) (nums []float64, units []string) {
-	seen := map[float64]bool{}
-	for _, bnd := range rows {
-		val, ok := bnd.vals[a.Var]
-		if !ok || val.Num == nil {
-			continue
-		}
-		if val.BaseUnit != "" && !slices.Contains(units, val.BaseUnit) {
-			units = append(units, val.BaseUnit)
-		}
-		if a.Distinct {
-			if seen[*val.Num] {
-				continue
-			}
-			seen[*val.Num] = true
-		}
-		nums = append(nums, *val.Num)
-	}
-	slices.Sort(units)
-	return nums, units
-}
-
-// reduce computes one aggregate over a group's bindings: count is how many; list joins them; min/max/
-// sum are over their numeric value (a row whose value is non-numeric is skipped, and with none left
-// sum is 0 and min and max absent). Over numbers in different units there is no least, greatest or
-// total, so all three are absent (#80); otherwise the result carries the group's unit. An absent
-// result comes with why, for Row.Why. Distinct reduces the
-// group's distinct values of the aggregated variable instead of one entry per binding, which changes
-// count, sum and list, and leaves min and max where they were.
-func reduce(a Aggregate, rows []*binding) (ns.Value, string) {
-	if a.Func == "count" {
-		// Bare count counts BINDINGS, so it counts a row that binds nothing for Var; distinct counts
-		// the values, so it cannot. That asymmetry is the definition rather than an oversight: a
-		// binding exists whether or not Var is bound in it, and a value does not.
-		n := float64(len(rows))
-		if a.Distinct {
-			n = float64(len(groupValues(a, rows)))
-		}
-		return ns.Value{S: ftoa(n), Num: &n}, ""
-	}
-	if a.Func == "list" {
-		return ns.Value{S: strings.Join(groupValues(a, rows), listSep)}, ""
-	}
-	nums, units := numericValues(a, rows)
-	if len(units) > 1 {
-		return ns.Absent(), "mixed units: " + strings.Join(units, ", ")
-	}
-	if len(nums) == 0 {
-		// No numbers, over nothing or over text (#122): a sum of none is 0, as a count of none is,
-		// and there is no least or greatest, so min and max are absent rather than a made-up "".
-		if a.Func == "sum" {
-			return ns.N(0), ""
-		}
-		if len(rows) == 0 {
-			return ns.Absent(), "no rows"
-		}
-		return ns.Absent(), "no numbers"
-	}
-	r := nums[0]
-	switch a.Func {
-	case "min":
-		for _, x := range nums[1:] {
-			if x < r {
-				r = x
-			}
-		}
-	case "max":
-		for _, x := range nums[1:] {
-			if x > r {
-				r = x
-			}
-		}
-	case "sum":
-		r = 0
-		for _, x := range nums {
-			r += x
-		}
-	}
-	unit := ""
-	if len(units) == 1 {
-		unit = units[0]
-	}
-	return ns.Value{S: ftoa(r), Num: &r, BaseUnit: unit}, ""
-}
 
 // dedupSort sorts the answer rows in the default order, column by column, and removes duplicates
 // (same projected text), so a query is a deterministic view. Sorting comes first and the first row of

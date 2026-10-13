@@ -149,7 +149,7 @@ Each clause after the projection can appear once.
 
 {{ demo "demos/errors/appears-twice-after.yaml" }}
 
-`query: … comes after …, not before it (the order is having, order by, limit, offset)`
+`query: … comes after …, not before it (the order is having, order by, after, limit, offset)`
 
 The clauses after the projection come in a fixed order.
 
@@ -170,6 +170,52 @@ It is `order by`.
 `query: order by: …`
 
 Wraps an error in one of `order by`'s columns, with that error's own text.
+
+`query: … in … compares number[…] with number[…], which never holds`
+
+An ordering comparison between two sides whose units are both known and differ, such as volts against amps, can never hold, so it's refused before anything runs ([#190](https://github.com/panyam/jaala/issues/190)), in the goal, a rule, a library module (at `Check`) or a `having`. A unit is known for a constant the host bound with one, or for a variable every relation binding it declares in that unit. A source declares units in its relations' schemas, so this comes from a host's data rather than the docs' examples, whose facts declare none. Where the data alone mixes units, the comparison is false at run time instead.
+
+`query: …'s ?… is an input argument, and the call in … doesn't bind it`
+
+A rule that takes an argument from its caller needs every call to bind it, with a value or a variable the call's own clause binds ([#200](https://github.com/panyam/jaala/issues/200)).
+
+{{ demo "demos/errors/is-an-input-argument.yaml" }}
+
+`query: … takes an argument from its caller, so … can't negate it`
+
+Such a rule is answered by writing its body into each call, and a `not` over a body of several literals has no form to write.
+
+`query: … counts its bindings, and …, which takes an argument from its caller, binds variables its head drops, so the count would include them; count(distinct ...) counts its tuples`
+
+Writing a rule's body into a caller that counts bindings would count each value of the variables the rule's head leaves out. `count(distinct …)` counts what the rule holds.
+
+`query: expression …: unexpected …`, `query: expression … ends early`, `query: expression …: unclosed (`, `query: expression …: want , or ) after …'s argument`
+
+An expression in a comparison that doesn't parse: an operator with nothing after it, a parenthesis left open, or a function call missing a comma ([#5](https://github.com/panyam/jaala/issues/5)).
+
+`query: arithmetic needs …, which stdlib.Arithmetic registers`
+
+Arithmetic is written in the standard library's `num.*` functions, so a vocabulary without them can't run an expression. For a host that composes its own vocabulary.
+
+`query: arithmetic needs two of its three values bound (a variable must appear in a relation before it is computed with)`, `query: arithmetic needs a value bound to negate (a variable must appear in a relation before it is computed with)`
+
+An arithmetic function called with too little bound, which the planner refuses before running in a query; a host calling the function from Go can still meet it.
+
+`query: rule … computes with arithmetic and reads …, which reaches it again, so it might never finish`
+
+A rule that computes a value and feeds it back into its own recursion has no fixpoint ([#207](https://github.com/panyam/jaala/issues/207) would allow it under a bound).
+
+{{ demo "demos/errors/computes-with-arithmetic.yaml" }}
+
+`query: unit … isn't a name: letters only`, `query: unit … is defined twice`, `query: prefix … is defined twice`, `query: unit …: …`
+
+`Vocabulary.AddUnit` refusing a name or a definition, for a host registering units.
+
+`query: after takes values, as in …, and … is not one`
+
+`after` lists the values a page continues from, one per `order by` column, not variables.
+
+{{ demo "demos/errors/after-takes-values.yaml" }}
 
 `query: … … is not …`
 
@@ -507,7 +553,7 @@ A glob given to `str.glob` doesn't compile.
 
 ## Grouping and ordering
 
-These concern `having`, `order by`, `limit` and `offset`. A few can only come from a query built in Go, since the parser refuses the text first.
+These concern `having`, `order by`, `after`, `limit` and `offset`. A few can only come from a query built in Go, since the parser refuses the text first.
 
 `query: having compares against ?…, which is not a group key — after grouping only a selected variable or a constant is bound`
 
@@ -536,6 +582,34 @@ The same, for an aggregate on the right of the comparison. For a query built in 
 `query: limit … offset …: a row count can't be negative`
 
 A negative `limit` or `offset`, for a query built in Go.
+
+`query: offset needs an order by, so each page continues where the one before it stopped`
+
+Paging needs an order that stays put. A `limit` alone answers any rows ([#194](https://github.com/panyam/jaala/issues/194)).
+
+{{ demo "demos/errors/offset-needs-an-order-by.yaml" }}
+
+`query: after needs an order by: it continues from the last row in that order`
+
+`after` continues in the `order by`'s order, so it needs one, from the text or from `datalog.After`.
+
+{{ demo "demos/errors/after-needs-an-order-by.yaml" }}
+
+`query: after gives … values for … order by columns`
+
+One value per `order by` column.
+
+{{ demo "demos/errors/after-gives-values.yaml" }}
+
+`query: after needs an order by naming ?… too, or a row tying with the last one would be skipped`
+
+With a plain column left out of the `order by`, two rows could tie on every column it names, and the one after the cursor would be skipped.
+
+{{ demo "demos/errors/after-needs-an-order-by-naming.yaml" }}
+
+`query: After's row has no …, a column the order by reads`
+
+The row passed to `datalog.After` lacks a column the `order by` sorts on. For a query run from Go.
 
 `query: unknown aggregate … (want count/min/max/sum/list)`
 
@@ -632,6 +706,18 @@ A path with an empty part, like `a..b`.
 `query: path … holds a character a query cannot spell`
 
 A path a query couldn't name.
+
+`query: federation: member … has no Source`
+
+A member passed to `ns.NewFederation` has a nil `Source`. The member is named by its `Name`, or by its position (`#2`) when it has none.
+
+`query: federation: member … lists … but has no schema for it`
+
+A member's source lists a relation it can't describe.
+
+`query: federation: … has a different schema in member … than in member …`
+
+Two members serve one relation with different arities, labels or types. The engine would read their facts as one relation, so they have to agree. `Doc` may differ.
 
 ## Internal
 

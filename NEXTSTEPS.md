@@ -5,17 +5,19 @@ Maintained by /checkpoint: one thread per branch, pruned when the branch merges.
 
 ## At a glance
 
-- Mission #172 `mission_aggregate_answers`, 3/7. #84 is the last unmet done-when line, and its PR
-  (#184) waits on the contributor; #128's (#185) too. #80 (P3, mixed-unit aggregates) is the one
-  mission ticket with no PR, so it's next for us (`/start-pr 80`). Exercise last ran at bb2398a
-  (works); one code PR (#187) merged since, its CI Soufflé job green.
-- #186 (a recursive clause binding its head variable outside the cycle was ignored when typing) is
-  fixed on `main` by #187, untagged. Tag it with #84 so agni takes one signature change, not two;
-  #187's PR body carries the upgrade note.
-- External PRs, both from Boulea7, both changes requested on 2026-10-11:
-  - #184 (#84): rebase onto #187 and drop `headProbe`; a bare number takes the column's one unit;
-    `Inferred` and `ns/types.go` unchanged; reword the `bodyagg.go` comment (still true for min/max).
-  - #185 (#128): `order by` doubles the `query:` prefix too (`parseOrderBy`); one shared wrapper.
-  - Before #184 merges: agni's suite through a scratch `go.work`, and the 5000-seed Soufflé step.
-- This run: replaced the v0.1.31 glance (no open PRs then). `origin/recursive-clause-types` is
-  merged (#187) and can be deleted.
+- Release v0.1.39 (#211, PR #217: `ns.NewFederation`, one Source over several stores, with lookups
+  routed by `Holds`); additive, upgrade note on #211.
+- Mission #219 `mission_store_federation` (new, active), 1/5: next ready is #218 (P1), the `Stores`
+  benchmark that is its exercise, then #154 → #153 → #212. A prompt to Declaire asks for
+  `Report.Lookups` evidence (#154, #153) and its routing keys and duplicates (#211's follow-ups).
+- Mission #193 `mission_browser_memory`: jaala's tickets shipped in v0.1.33. agni PR #976 builds
+  #896 on it; when #896 closes, post #193's closing log and close it.
+- Mission #172 `mission_aggregate_answers`, 4/6. Both open tickets wait on the outside contributor
+  Boulea7: #84 through PR #184, #128 through PR #185, changes requested, no reply since
+  2026-10-12. If they stay quiet, finish them here and close the PRs with credit.
+- v0.1.37 (#5) asks agni to reconcile its C24 (scale converted upstream, once) with query literals
+  now folding prefixes.
+- Arithmetic follow-ups: #205, #206, #207 (`waiting`), #209; #215 (P3, filed from #214: a head
+  variable bound only by a filter passes validation, and evaluators then disagree on a broken goal).
+- Off-mission: #179 (now P3, timed facts). #216 (computed float error) is labelled both P2 and `waiting`.
+- No open threads of ours.

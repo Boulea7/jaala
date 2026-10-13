@@ -16,6 +16,10 @@ func (t Term) String() string {
 		return "_"
 	case t.Var != "":
 		return "?" + string(t.Var)
+	case t.Expr != nil:
+		return t.Expr.String()
+	case t.Const != nil && t.Const.Num != nil && t.Const.BaseUnit != "" && !strings.HasSuffix(t.Const.S, t.Const.BaseUnit):
+		return t.Const.S + t.Const.BaseUnit
 	case t.Const != nil && t.Const.Num != nil:
 		return t.Const.S
 	case t.Const != nil:

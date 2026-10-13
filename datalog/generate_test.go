@@ -3,6 +3,7 @@ package datalog
 import (
 	"errors"
 	"fmt"
+	"hash/fnv"
 	"math/rand"
 	"os"
 	"reflect"
@@ -140,6 +141,7 @@ type genFacts struct {
 	n       int
 	edges   [][2]int
 	weights []int
+	units   []string // each weight's unit, "" for none; nil when no weight has one (#192)
 }
 
 func genGraph(rnd *rand.Rand) genFacts {
@@ -153,7 +155,40 @@ func genGraph(rnd *rand.Rand) genFacts {
 			}
 		}
 	}
+	f.units = genUnits(f)
 	return f
+}
+
+// genUnits gives a graph's weights units now and then (#192): most graphs none, some every weight
+// in volts, and some a mix of volts, amps and none. It draws from a source seeded by the graph
+// itself, so a seed's program is what it was before units.
+func genUnits(f genFacts) []string {
+	h := fnv.New64a()
+	fmt.Fprint(h, f.n, f.edges, f.weights)
+	rnd := rand.New(rand.NewSource(int64(h.Sum64())))
+	switch p := rnd.Float64(); {
+	case p < 0.7:
+		return nil
+	case p < 0.85:
+		return slices.Repeat([]string{"V"}, f.n)
+	default:
+		units := make([]string, f.n)
+		for i := range units {
+			units[i] = []string{"V", "A", ""}[rnd.Intn(3)]
+		}
+		return units
+	}
+}
+
+// mixedUnits reports whether the weights carry more than one unit, or a unit beside none, which
+// Soufflé can't express: its numbers have no units.
+func (f genFacts) mixedUnits() bool {
+	for _, u := range f.units {
+		if u != f.units[0] {
+			return true
+		}
+	}
+	return false
 }
 
 func (f genFacts) source() *ns.MemSource {
@@ -161,7 +196,11 @@ func (f genFacts) source() *ns.MemSource {
 	name := func(i int) ns.Value { return ns.S(fmt.Sprintf("v%d", i)) }
 	for i := 0; i < f.n; i++ {
 		src.Add("node", ns.Tuple{Vals: []ns.Value{name(i)}, Cites: []string{fmt.Sprintf("node:%d", i)}})
-		src.Add("weight", ns.Tuple{Vals: []ns.Value{name(i), ns.N(float64(f.weights[i]))}})
+		unit := ""
+		if f.units != nil {
+			unit = f.units[i]
+		}
+		src.Add("weight", ns.Tuple{Vals: []ns.Value{name(i), ns.NU(float64(f.weights[i]), unit)}})
 	}
 	for _, e := range f.edges {
 		src.Add("edge", ns.Tuple{Vals: []ns.Value{name(e[0]), name(e[1])}, Cites: []string{fmt.Sprintf("edge:%d-%d", e[0], e[1])}})
@@ -172,6 +211,10 @@ func (f genFacts) source() *ns.MemSource {
 func (f genFacts) String() string {
 	var b strings.Builder
 	fmt.Fprintf(&b, "nodes v0..v%d, weights %v, edges", f.n-1, f.weights)
+	if f.units != nil {
+		b.Reset()
+		fmt.Fprintf(&b, "nodes v0..v%d, weights %v in units %q, edges", f.n-1, f.weights, f.units)
+	}
 	for _, e := range f.edges {
 		fmt.Fprintf(&b, " v%d->v%d", e[0], e[1])
 	}
@@ -624,7 +667,11 @@ func (c genCase) check() (genOutcome, string) {
 	if diff != "" {
 		return genDisagreed, diff
 	}
+	countUnitAnswers(want)
 	if diff := agreeLookingUp(q, b, want, werr, c.opts()); diff != "" {
+		return genDisagreed, diff
+	}
+	if diff := agreeFederated(q, b, want, werr, c.opts()); diff != "" {
 		return genDisagreed, diff
 	}
 	return genAgreed, ""
@@ -633,20 +680,90 @@ func (c genCase) check() (genOutcome, string) {
 // lookedUpPrograms counts the corpus programs whose evaluation made a lookup, for the corpus's control.
 var lookedUpPrograms int
 
+// federatedPrograms counts those whose evaluation made a lookup through a Federation's members.
+var federatedPrograms int
+
+// unitAnswers counts the corpus answers holding a number with a unit, and mixedAnswers those with an
+// aggregate absent over mixed units, for the control that units reach the goals (#192).
+var unitAnswers, mixedAnswers int
+
+func countUnitAnswers(rows []Row) {
+	unit, mixed := false, false
+	for _, r := range rows {
+		for _, v := range r.Bind {
+			unit = unit || v.BaseUnit != ""
+		}
+		for _, why := range r.Why {
+			mixed = mixed || strings.HasPrefix(why, "mixed units")
+		}
+	}
+	if unit {
+		unitAnswers++
+	}
+	if mixed {
+		mixedAnswers++
+	}
+}
+
 // agreeLookingUp runs q over b's facts through a Source answering lookups (#126): every evaluator must
 // give the rows and error Naive gave reading them whole, and Naive the same citations and witnesses
 // under CanonicalCites.
 func agreeLookingUp(q Query, b *Base, want []Row, werr error, opts []Option) string {
 	src := lookingAt(b.src)
-	lb := MustBase(b.reg, src)
+	diff := agreeOver(q, b, MustBase(b.reg, src), "looking up", want, werr, opts)
+	if len(src.lookups) > 0 {
+		lookedUpPrograms++
+	}
+	return diff
+}
+
+// agreeFederated is agreeLookingUp over b's facts dealt across three stores that each answer lookups
+// (#211), so a call's facts come back from several members' lookups at once, and that index only
+// their first argument (#154), so the planner reorders bodies around their scans.
+func agreeFederated(q Query, b *Base, want []Row, werr error, opts []Option) string {
+	members := splitInto(b.src, 3, func(int) bool { return true })
+	for i := range members {
+		members[i].Source = firstIndexed{members[i].Source.(*looking)}
+	}
+	f, err := ns.NewFederation(members...)
+	if err != nil {
+		return err.Error()
+	}
+	diff := agreeOver(q, b, MustBase(b.reg, f), "federated", want, werr, opts)
+	for _, m := range members {
+		if len(m.Source.(firstIndexed).lookups) > 0 {
+			federatedPrograms++
+			break
+		}
+	}
+	return diff
+}
+
+// firstIndexed is a looking store whose index covers a relation's first argument only.
+type firstIndexed struct{ *looking }
+
+func (firstIndexed) Indexed(_ string, bound []int) bool { return slices.Contains(bound, 0) }
+
+// agreeOver requires every evaluator over lb to answer q as Naive did over b, and Naive over lb to
+// cite as over b under CanonicalCites. A limit without an order by may answer other rows over lb,
+// whose tuples arrive in another order (#194), so its whole answer is compared instead, and its
+// limited one checked as agreeOnSomeRows does.
+func agreeOver(q Query, b, lb *Base, how string, want []Row, werr error, opts []Option) string {
+	if anyRows(q) {
+		whole := q
+		whole.Limit = 0
+		w, werr := Naive{}.Eval(bg, whole, b, opts...)
+		if diff := agreeOver(whole, b, lb, how, w, werr, opts); diff != "" {
+			return diff
+		}
+		_, diff, _ := agreeOnSomeRows(q, lb, opts...)
+		return diff
+	}
 	for _, ev := range []Evaluator{Naive{}, SemiNaive{WrittenOrder: true}, SemiNaive{}} {
 		got, err := ev.Eval(bg, q, lb, opts...)
 		if errText(err) != errText(werr) || !reflect.DeepEqual(binds(got), binds(want)) {
-			return fmt.Sprintf("%T looking up answers differently from Naive reading whole on %v\n whole:     %v %v\n looked up: %v %v", ev, q, binds(want), werr, binds(got), err)
+			return fmt.Sprintf("%T %s answers differently from Naive reading whole on %v\n whole:     %v %v\n %s: %v %v", ev, how, q, binds(want), werr, how, binds(got), err)
 		}
-	}
-	if len(src.lookups) > 0 {
-		lookedUpPrograms++
 	}
 	if werr != nil {
 		return ""
@@ -655,7 +772,7 @@ func agreeLookingUp(q Query, b *Base, want []Row, werr error, opts []Option) str
 	w, _ := Naive{}.Eval(bg, q, b, canon...)
 	g, _ := Naive{}.Eval(bg, q, lb, canon...)
 	if !reflect.DeepEqual(w, g) {
-		return fmt.Sprintf("Naive looking up cites differently under CanonicalCites on %v\n whole:     %v\n looked up: %v", q, w, g)
+		return fmt.Sprintf("Naive %s cites differently under CanonicalCites on %v\n whole:     %v\n %s: %v", how, q, w, how, g)
 	}
 	return ""
 }
@@ -689,7 +806,7 @@ func (c genCase) smaller() []genCase {
 	with := func(edit func(p *genProgram, f *genFacts)) {
 		s := c
 		s.prog = c.prog.clone()
-		s.facts = genFacts{n: c.facts.n, edges: slices.Clone(c.facts.edges), weights: slices.Clone(c.facts.weights)}
+		s.facts = genFacts{n: c.facts.n, edges: slices.Clone(c.facts.edges), weights: slices.Clone(c.facts.weights), units: slices.Clone(c.facts.units)}
 		edit(&s.prog, &s.facts)
 		out = append(out, s)
 	}
@@ -755,6 +872,9 @@ func (c genCase) smaller() []genCase {
 		with(func(_ *genProgram, f *genFacts) {
 			f.n--
 			f.weights = f.weights[:f.n]
+			if f.units != nil {
+				f.units = f.units[:f.n]
+			}
 			f.edges = slices.DeleteFunc(f.edges, func(e [2]int) bool { return e[0] == f.n || e[1] == f.n })
 		})
 	}
@@ -823,11 +943,15 @@ func TestGeneratedProgramsAgree(t *testing.T) {
 		first, seeds = int64(s), 1
 	}
 	compared, known, skipped, failed := map[string]int{}, map[int]int{}, 0, 0
-	lookedUpPrograms = 0
+	lookedUpPrograms, federatedPrograms, unitAnswers, mixedAnswers = 0, 0, 0, 0
+	withUnits := 0
 	for seed := first; seed < first+int64(seeds); seed++ {
 		rnd := rand.New(rand.NewSource(seed))
 		facts := genGraph(rnd)
 		prog := (&generator{rnd: rnd, nodes: facts.n}).program()
+		if facts.units != nil {
+			withUnits++
+		}
 		for _, witnessed := range []bool{false, true} {
 			c := genCase{prog: prog, facts: facts, witnessed: witnessed}
 			switch out, diff := c.check(); out {
@@ -868,13 +992,24 @@ func TestGeneratedProgramsAgree(t *testing.T) {
 			issues = append(issues, fmt.Sprintf("#%d %d", k.issue, known[k.issue]))
 		}
 	}
-	t.Logf("%d seeds\n compared (plain/witnessed): %s\n skipped over budget: %d\n known disagreements, counted not failed: %s",
-		seeds, strings.Join(counts, ", "), skipped, strings.Join(issues, ", "))
+	t.Logf("%d seeds\n compared (plain/witnessed): %s\n skipped over budget: %d\n known disagreements, counted not failed: %s\n units: %d programs' facts carry them; %d answers hold a number with a unit, %d an aggregate absent over mixed units",
+		seeds, strings.Join(counts, ", "), skipped, strings.Join(issues, ", "), withUnits, unitAnswers, mixedAnswers)
 	if seeds < 50 {
 		return
 	}
 	if lookedUpPrograms == 0 {
 		t.Errorf("control: no program made a lookup through a Source answering them")
+	}
+	if federatedPrograms == 0 {
+		t.Errorf("control: no program made a lookup through a Federation's members")
+	}
+	if unitAnswers < seeds/100 {
+		t.Errorf("control: %d answers held a unit over %d seeds: units aren't reaching the goals", unitAnswers, seeds)
+	}
+	// An aggregate over mixed units is rare (about 30 in 5000 seeds' two runs), so CI's 300 seeds
+	// needn't meet one; ./selfcheck.sh's 5000 do, which is what catches a unit-blind aggregate.
+	if seeds >= 1000 && mixedAnswers == 0 {
+		t.Errorf("control: no answer held an aggregate over mixed units, over %d seeds", seeds)
 	}
 	for _, s := range shapes {
 		for _, mode := range []string{"plain", "witnessed"} {

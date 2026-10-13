@@ -41,6 +41,8 @@ A number can carry a unit (`5V`, `0.5A`), and `sum`, `min` and `max` read it. Ov
 
 An `absent` from an aggregate says why beside it, here the units it found, and "no numbers" or "no rows" for the cases above. A host reads that from the row's `Why`, keyed like its values. It belongs to a goal's own aggregates: a rule's aggregate stores only its value, so a goal reading that relation sees a plain `absent`.
 
+Comparisons follow the same rule: volts are never less than amps, so a comparison whose two sides the data declares in different units is refused before the query runs, and one whose units only the values show is false.
+
 A query that does mean something across units says so. `num.value` strips each number's unit, so the reduce is over plain numbers:
 
 {{ demo "demos/guide/aggregation-units-value.yaml" }}

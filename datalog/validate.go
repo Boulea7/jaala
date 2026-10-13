@@ -35,6 +35,9 @@ func ValidateBound(q Query, reg *ns.Vocabulary, vars ...Var) error {
 	if err != nil {
 		return err
 	}
+	if q, err = lowerExpressions(q, reg); err != nil {
+		return err
+	}
 	written := q
 	q, cols, err := bindGoal(q, bind)
 	if err != nil {
@@ -51,6 +54,9 @@ func ValidateBound(q Query, reg *ns.Vocabulary, vars ...Var) error {
 		return err
 	}
 	if q, err = coerceConstants(q, reg); err != nil {
+		return err
+	}
+	if err := checkComparisonUnits(q, reg); err != nil {
 		return err
 	}
 	// A vocabulary holding NO base relation cannot say a relation is unknown, and refusing every query on that
@@ -71,6 +77,7 @@ func ValidateBound(q Query, reg *ns.Vocabulary, vars ...Var) error {
 		return validateWithoutVocabulary(q, reg, written, bind, sel, cols)
 	}
 	b := newValidationBase(reg)
+	b.inputRels = inputRelations(q.Rules, reg)
 	if _, _, err := b.checkRules(q.Rules); err != nil {
 		return err
 	}
@@ -91,13 +98,17 @@ func ValidateBound(q Query, reg *ns.Vocabulary, vars ...Var) error {
 	if err := b.checkNegatedRelations(negs); err != nil {
 		return err
 	}
-	if err := checkWrittenAnchors(written.Goal, q.Rules, bind); err != nil {
+	if err := checkWrittenAnchors(written.Goal, q.Rules, bind, b.inputRels, reg); err != nil {
 		return err
 	}
 	if err := validateSelect(sel, q.Having, q.Goal); err != nil {
 		return err
 	}
-	return validateOrder(cols, written)
+	if err := validateOrder(cols, written); err != nil {
+		return err
+	}
+	_, err = lowerInputs(q, bind, reg) // every call binds its inputs (#200)
+	return err
 }
 
 // validateWithoutVocabulary is Validate minus the checks that need a relation catalog installed.
@@ -107,6 +118,7 @@ func ValidateBound(q Query, reg *ns.Vocabulary, vars ...Var) error {
 // for a caller that built its rule before any relation was installed.
 func validateWithoutVocabulary(q Query, reg *ns.Vocabulary, written Query, bind map[Var][]ns.Value, sel, cols []Term) error {
 	b := newValidationBase(reg)
+	b.inputRels = inputRelations(q.Rules, reg)
 	if _, _, err := b.checkRules(q.Rules); err != nil {
 		return err
 	}
@@ -114,13 +126,17 @@ func validateWithoutVocabulary(q Query, reg *ns.Vocabulary, written Query, bind 
 	if err := b.checkNegatedRelations(negs); err != nil {
 		return err
 	}
-	if err := checkWrittenAnchors(written.Goal, q.Rules, bind); err != nil {
+	if err := checkWrittenAnchors(written.Goal, q.Rules, bind, b.inputRels, reg); err != nil {
 		return err
 	}
 	if err := validateSelect(sel, q.Having, q.Goal); err != nil {
 		return err
 	}
-	return validateOrder(cols, written)
+	if err := validateOrder(cols, written); err != nil {
+		return err
+	}
+	_, err := lowerInputs(q, bind, reg) // every call binds its inputs (#200)
+	return err
 }
 
 // checkLiterals applies checkAtom to every relation-bearing literal, positive or negated. A

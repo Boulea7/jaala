@@ -6,6 +6,8 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"unicode"
+	"unicode/utf8"
 )
 
 // Parse reads a text query into a Query. Grammar (EBNF; whitespace is insignificant):
@@ -109,6 +111,11 @@ func Parse(s string) (Query, error) {
 			return Query{}, err
 		}
 	}
+	if text, ok := tail["after"]; ok {
+		if q.After, err = parseAfter(text); err != nil {
+			return Query{}, err
+		}
+	}
 	if text, ok := tail["limit"]; ok {
 		if q.Limit, err = parseCount("limit", text, 1); err != nil {
 			return Query{}, err
@@ -123,7 +130,7 @@ func Parse(s string) (Query, error) {
 }
 
 // tailWords are the clauses that may follow the projection, in the order they must be written.
-var tailWords = []string{"having", "order", "limit", "offset"}
+var tailWords = []string{"having", "order", "after", "limit", "offset"}
 
 // splitTail cuts the projection at the clauses that follow it, keyed by keyword, with the columns
 // themselves under "". A keyword matches as a bare word only, at paren depth zero, outside quotes and
@@ -162,7 +169,7 @@ func splitTail(proj string) (map[string]string, error) {
 			return nil, fmt.Errorf("query: %s appears twice after %q", clauseName(c.word), "=>")
 		}
 		if n > 0 && slices.Index(tailWords, c.word) < slices.Index(tailWords, cuts[n-1].word) {
-			return nil, fmt.Errorf("query: %s comes after %s, not before it (the order is having, order by, limit, offset)", clauseName(cuts[n-1].word), clauseName(c.word))
+			return nil, fmt.Errorf("query: %s comes after %s, not before it (the order is having, order by, after, limit, offset)", clauseName(cuts[n-1].word), clauseName(c.word))
 		}
 		end := len(proj)
 		if n+1 < len(cuts) {
@@ -219,6 +226,22 @@ func parseOrderBy(s string) ([]Order, error) {
 }
 
 // parseCount reads limit's or offset's row count, a whole number no smaller than min.
+// parseAfter reads an after clause's values, one per order by column, which validateOrder matches up.
+func parseAfter(s string) ([]ns.Value, error) {
+	var out []ns.Value
+	for _, piece := range splitTop(s, ",") {
+		t, err := parseTerm(piece)
+		if err != nil {
+			return nil, err
+		}
+		if t.Const == nil {
+			return nil, fmt.Errorf("query: after takes values, as in %q, and %s is not one", `after 812, "db"`, strings.TrimSpace(piece))
+		}
+		out = append(out, *t.Const)
+	}
+	return out, nil
+}
+
 func parseCount(word, s string, min int) (int, error) {
 	s = strings.TrimSpace(s)
 	n, err := strconv.Atoi(s)
@@ -491,7 +514,7 @@ func parseLiteral(s string) (Literal, error) {
 		}
 		return Literal{Neg: &atom}, nil
 	}
-	if strings.Contains(s, "(") {
+	if strings.Contains(s, "(") && !hasTopComparison(s) {
 		atom, err := parseAtom(s)
 		if err != nil {
 			return Literal{}, err
@@ -580,14 +603,25 @@ func parseAtomArgs(s string, term func(string) (Term, error)) (Atom, error) {
 
 var compareOps = []string{"<=", ">=", "!=", "<", ">", "="} // longest first
 
+// hasTopComparison reports whether s has a comparison operator outside parentheses and quotes, so
+// ?y = f(?x) is a comparison over a call rather than an atom.
+func hasTopComparison(s string) bool {
+	for _, op := range compareOps {
+		if len(splitTop(s, op)) == 2 {
+			return true
+		}
+	}
+	return false
+}
+
 func parseComparison(s string) (Compare, error) {
 	for _, op := range compareOps {
 		if parts := splitTop(s, op); len(parts) == 2 {
-			l, err := parseTerm(parts[0])
+			l, err := parseOperand(parts[0])
 			if err != nil {
 				return Compare{}, err
 			}
-			r, err := parseTerm(parts[1])
+			r, err := parseOperand(parts[1])
 			if err != nil {
 				return Compare{}, err
 			}
@@ -618,6 +652,14 @@ func parseTerm(s string) (Term, error) {
 	default:
 		if f, err := strconv.ParseFloat(s, 64); err == nil && isDecimal(s) {
 			return Term{Const: &ns.Value{S: s, Num: &f}}, nil
+		}
+		// A number with a unit after it, as in 3.3V or 1kohm (#5, #79): the unit is read through the
+		// vocabulary when the query is checked (coerceConstants).
+		// A bare e or E reads as an exponent left unfinished, which #163 refuses (1eV is a unit).
+		if num, unit := splitUnitSuffix(s); unit != "" && unit != "e" && unit != "E" && isDecimal(num) {
+			if f, err := strconv.ParseFloat(num, 64); err == nil {
+				return Term{Const: &ns.Value{S: num, Num: &f, BaseUnit: unit}}, nil
+			}
 		}
 		return Term{}, fmt.Errorf("query: bare identifier %q — a term must be a ?variable, a \"string\", or a number", s)
 	}
@@ -670,6 +712,20 @@ func checkVarName(name string) error {
 		}
 	}
 	return nil
+}
+
+// splitUnitSuffix splits the letters at the end of s off it: 3.3V is 3.3 and V. Letters only, so a
+// compound unit is written as arithmetic: 3m / 1s.
+func splitUnitSuffix(s string) (num, unit string) {
+	i := len(s)
+	for i > 0 {
+		r, w := utf8.DecodeLastRuneInString(s[:i])
+		if !unicode.IsLetter(r) {
+			break
+		}
+		i -= w
+	}
+	return s[:i], s[i:]
 }
 
 // isDecimal reports whether s is a number as the grammar spells one: digits, an optional fraction and

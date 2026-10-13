@@ -95,6 +95,10 @@ type ArgSig struct {
 	// aggregate whose function decides its type (count a number, list a string, sum, min and max a
 	// number over a typed number) counts as declared.
 	Inferred bool
+	// Input marks an argument the relation takes from its caller rather than producing (jaala#200),
+	// as ?line in loc.at(?n, ?repo, ?uri, ?line) :- home(?n, ?repo, ?uri, ?s, ?e), ?s <= ?line,
+	// ?line <= ?e. Every call has to bind it, with a value or a variable its own clause binds.
+	Input bool
 }
 
 // String renders the argument as a rule head would declare it: "n: net", or "n" when nothing is

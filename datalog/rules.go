@@ -114,6 +114,9 @@ func (b *Base) checkRules(rules []Rule) (map[string][]Rule, [][]string, error) {
 			return nil, nil, err
 		}
 	}
+	if err := checkComputedRecursion(rules); err != nil {
+		return nil, nil, err
+	}
 	strata, err := stratify(rules, b.idbArity)
 	if err != nil {
 		return nil, nil, err
@@ -154,7 +157,8 @@ func (b *Base) validateRule(r Rule) error {
 			return fmt.Errorf("query: rule %q reads %s", r.Head.Relation, b.reg.Unknown(rel))
 		}
 	}
-	if err := checkModes(b, whereRule(r), r.Body); err != nil {
+	inputs := inputsBound(r, b.inputRels, b.reg) // a caller's arguments (#200), which every call has to bind
+	if err := checkModesFrom(b, whereRule(r), r.Body, inputs); err != nil {
 		return err
 	}
 	if err := checkNoAggregates(whereRule(r), r.Body); err != nil {
@@ -163,6 +167,9 @@ func (b *Base) validateRule(r Rule) error {
 	bound := map[Var]bool{}
 	for _, vv := range positiveVars(r.Body) {
 		bound[vv] = true
+	}
+	for v := range inputs {
+		bound[v] = true
 	}
 	for _, arg := range r.Head.Args {
 		if arg.Agg != nil {
@@ -180,7 +187,7 @@ func (b *Base) validateRule(r Rule) error {
 			return fmt.Errorf("query: rule %q head variable ?%s is not bound by a positive body relation", r.Head.Relation, arg.Var)
 		}
 	}
-	return checkComparisons(r.Body)
+	return checkComparisonsFrom(r.Body, inputs)
 }
 
 // checkComparisons refuses a comparison over a variable no positive literal of its body binds. Such a
@@ -189,7 +196,15 @@ func (b *Base) validateRule(r Rule) error {
 // comparisons into rules of their own (#89). Checked on every rule as linked and on the goal, as a
 // projected variable is (validateSelect), it fails the same way for every evaluator and for Validate.
 func checkComparisons(body Body) error {
+	return checkComparisonsFrom(body, nil)
+}
+
+// checkComparisonsFrom is checkComparisons for a body whose inputs its caller binds.
+func checkComparisonsFrom(body Body, inputs map[Var][]ns.Value) error {
 	bound := map[Var]bool{}
+	for v := range inputs {
+		bound[v] = true
+	}
 	for _, v := range positiveVars(body) {
 		bound[v] = true
 	}
@@ -258,7 +273,7 @@ func (b *Base) applyRule(r Rule) (bool, error) {
 		return b.applyAggregate(r, pos, negs)
 	}
 	added := false
-	err := solve(deferComparisons(pos), 0, newBinding(), b, func(bnd *binding) error {
+	err := solve(deferComparisons(pos, b.reg), 0, newBinding(), b, func(bnd *binding) error {
 		ok, err := passesNegations(bnd, negs, b)
 		if err != nil {
 			return err
@@ -305,17 +320,6 @@ func (b *Base) applyRule(r Rule) (bool, error) {
 // variables being the group key. A group's citations are the union of its bindings', and its witness
 // names the rule without children, as an aggregate answer row has none.
 func (b *Base) applyAggregate(r Rule, pos, negs []Literal) (bool, error) {
-	var raw []*binding
-	err := solve(deferComparisons(pos), 0, newBinding(), b, func(bnd *binding) error {
-		ok, err := passesNegations(bnd, negs, b)
-		if ok {
-			raw = append(raw, bnd.clone())
-		}
-		return err
-	})
-	if err != nil {
-		return false, err
-	}
 	var cols []Term
 	seen := map[Var]bool{}
 	for _, t := range r.Head.Args {
@@ -324,7 +328,18 @@ func (b *Base) applyAggregate(r Rule, pos, negs []Literal) (bool, error) {
 			cols = append(cols, t)
 		}
 	}
-	rows, err := aggregate(cols, nil, raw)
+	ag := newAggregator(cols, nil, false)
+	err := solve(deferComparisons(pos, b.reg), 0, newBinding(), b, func(bnd *binding) error {
+		ok, err := passesNegations(bnd, negs, b)
+		if ok {
+			ag.add(bnd)
+		}
+		return err
+	})
+	if err != nil {
+		return false, err
+	}
+	rows, err := ag.rows()
 	if err != nil {
 		return false, err
 	}
@@ -376,14 +391,64 @@ func (b *Base) addTuple(rel string, t idbTuple) (bool, error) {
 			return false, err
 		}
 		if valsEqual(tuples[i].vals, t.vals) {
-			if b.canonical() && (t.wit != nil || t.parts != nil) {
-				return b.keepCanonical(rel, i, t), nil
+			best := firstAnnotations(tuples[i].vals, t.vals)
+			replaced := b.canonical() && (t.wit != nil || t.parts != nil) && b.keepCanonical(rel, i, t)
+			// Whichever derivation is kept, the tuple holds the better annotation of the two.
+			annotated := !sameAnnotations(b.idb[rel][i].vals, best)
+			if annotated {
+				b.annotate(rel, i, best, !replaced)
 			}
-			return false, nil
+			return replaced || annotated, nil
 		}
 	}
 	b.idb[rel] = append(tuples, t)
 	return true, nil
+}
+
+// firstAnnotations is two equal tuples' values, each with the annotation spelledBefore puts first (a
+// unit, a spelling). Dedup is by value, so without this a tuple kept whichever derivation arrived
+// first, and CanonicalCites, keeping another, answered 9 A where plain evaluation answered 9 (#201).
+func firstAnnotations(a, b []ns.Value) []ns.Value {
+	out := a
+	for j := range a {
+		if spelledBefore(b[j], a[j]) {
+			if &out[0] == &a[0] {
+				out = append([]ns.Value(nil), a...)
+			}
+			out[j] = b[j]
+		}
+	}
+	return out
+}
+
+// sameAnnotations reports whether two equal tuples' values are also annotated alike.
+func sameAnnotations(a, b []ns.Value) bool {
+	for j := range a {
+		if a[j].BaseUnit != b[j].BaseUnit || a[j].S != b[j].S {
+			return false
+		}
+	}
+	return true
+}
+
+// annotate stores tuple i of rel with vals, and its witness node with them, and lists it as revised
+// so what was derived from its old annotation is derived again (as keepCanonical does), unless the
+// caller already listed it.
+func (b *Base) annotate(rel string, i int, vals []ns.Value, list bool) {
+	t := b.idb[rel][i]
+	t.vals = vals
+	if t.wit != nil {
+		w := *t.wit
+		w.Values = vals
+		t.wit = &w
+	}
+	b.idb[rel][i] = t
+	if list {
+		if b.run.revised == nil {
+			b.run.revised = map[string][]int{}
+		}
+		b.run.revised[rel] = append(b.run.revised[rel], i)
+	}
 }
 
 // idbIndexFor returns this query's index of a derived relation at one binding pattern, creating it

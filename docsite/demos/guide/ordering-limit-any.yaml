@@ -1,0 +1,2 @@
+fixture: deps
+query: loc(?p, ?n) => ?p limit 3

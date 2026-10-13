@@ -88,6 +88,27 @@ type LookupSource interface {
 	Lookup(ctx context.Context, rel string, bound map[int]Value) ([]Tuple, error)
 }
 
+// LookupRelations is optionally implemented by a LookupSource that answers lookups for some of its
+// relations and not others, such as a Federation whose members differ (#211). The engine looks up a
+// relation only when LooksUp reports true for it, and reads any other relation whole, once per Base,
+// as it would from a Source without Lookup. A LookupSource that doesn't implement it looks up every
+// relation. The answer for a relation must not change for the life of a Base.
+type LookupRelations interface {
+	LooksUp(rel string) bool
+}
+
+// IndexedLookups is optionally implemented by a LookupSource that knows which of its lookups it
+// answers from an index, such as a database whose tables are indexed on some columns and not others
+// (#154). Indexed reports whether a lookup of rel with the positions in bound bound (from 0, sorted)
+// reads an index rather than scanning the relation. The planner ranks a call it would look up on an
+// unindexed pattern as if nothing were bound, since the store scans either way, so a call it can
+// answer from an index runs first and binds what the scan would otherwise be asked for. A
+// LookupSource that doesn't implement it is taken as indexing every pattern. The answer for a
+// pattern must not change for the life of a Base.
+type IndexedLookups interface {
+	Indexed(rel string, bound []int) bool
+}
+
 // Versioned is optionally implemented by a Source whose facts can change while a Base over it is
 // kept. A Base caches what it reads, the base relations and their indexes and the derived relations a
 // query evaluated in full, on the promise that a Source's facts are fixed for the Base's life. Version

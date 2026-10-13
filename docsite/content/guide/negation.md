@@ -1,7 +1,7 @@
 ---
 title: "Negation"
 description: "What a not means, which variables can appear inside it, how a value the host binds anchors it, and why some programs are refused."
-prev: {url: "/jaala/guide/types-and-constants/", title: "Types and constants"}
+prev: {url: "/jaala/guide/arithmetic/", title: "Arithmetic and units"}
 next: {url: "/jaala/guide/aggregation/", title: "Aggregation"}
 ---
 

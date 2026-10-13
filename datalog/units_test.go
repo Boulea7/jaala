@@ -126,3 +126,143 @@ func TestWhyIsSetOnAGoalsOwnAggregates(t *testing.T) {
 		t.Errorf("a row with no absent column has Why %v, want nil", rows)
 	}
 }
+
+// meters has a column in volts, one in amps and one that is a number without a unit, all by net.
+func meters() *ns.MemSource {
+	num := func(unit string) ns.ArgType { return ns.ArgType{Type: ns.TypeNumber, Unit: unit} }
+	src := ns.NewMemSource().
+		DeclareSchema("volts", ns.Schema{Arity: 2, Labels: []string{"net", "v"}, Types: []ns.ArgType{{}, num("V")}}).
+		DeclareSchema("amps", ns.Schema{Arity: 2, Labels: []string{"net", "i"}, Types: []ns.ArgType{{}, num("A")}}).
+		DeclareSchema("plain", ns.Schema{Arity: 2, Labels: []string{"net", "x"}, Types: []ns.ArgType{{}, num("")}})
+	src.Add("volts", ns.Tuple{Vals: []ns.Value{ns.S("VBUS"), ns.NU(5, "V")}}).
+		Add("amps", ns.Tuple{Vals: []ns.Value{ns.S("VBUS"), ns.NU(2, "A")}}).
+		Add("plain", ns.Tuple{Vals: []ns.Value{ns.S("VBUS"), ns.N(5)}})
+	return src
+}
+
+func TestAComparisonAcrossDeclaredUnitsIsRefused(t *testing.T) {
+	bindAmp := Bind(map[Var][]ns.Value{"lim": {ns.NU(1, "A")}})
+	for _, c := range []struct {
+		q    string
+		opts []Option
+		want string
+	}{
+		{`volts(?n, ?v), amps(?n, ?i), ?v < ?i => ?n`, nil, `?v < ?i in the query compares number[V] with number[A], which never holds`},
+		{`volts(?n, ?v), amps(?n, ?i), ?i >= ?v => ?n`, nil, `?i >= ?v in the query compares number[A] with number[V]`},
+		{`r(?n) :- volts(?n, ?v), amps(?n, ?i), ?v > ?i; r(?n) => ?n`, nil, `?v > ?i in rule "r" compares number[V] with number[A]`},
+		{`a(?n, ?i) :- amps(?n, ?i); volts(?n, ?v), a(?n, ?x), ?v < ?x => ?n`, nil, `?v < ?x in the query compares number[V] with number[A]`},
+		{`volts(?n, ?v), ?v < ?lim => ?n`, []Option{bindAmp}, `?v < 1A in the query compares number[V] with number[A]`},
+		{`volts(?n, ?v), amps(?n, ?i) => ?n, ?i, max(?v) having max(?v) > ?i`, nil, `max(?v) > ?i in having compares number[V] with number[A]`},
+	} {
+		q, err := Parse(c.q)
+		if err != nil {
+			t.Fatal(err)
+		}
+		_, err = both(q, baseFor(std(meters())), c.opts...)
+		if err == nil || !strings.Contains(err.Error(), c.want) || !strings.HasPrefix(err.Error(), "query: ") {
+			t.Errorf("%s: err = %v, want it to say %q", c.q, err, c.want)
+		}
+		if c.opts != nil {
+			// Validate doesn't know the host's value, so its unit is unknown until the Eval.
+			if err := ValidateBound(q, std(meters()), "lim"); err != nil {
+				t.Errorf("ValidateBound(%s, ?lim) = %v, want it accepted", c.q, err)
+			}
+		} else if err := Validate(q, std(meters())); err == nil || !strings.Contains(err.Error(), c.want) {
+			t.Errorf("Validate(%s) = %v, want it to say %q", c.q, err, c.want)
+		}
+	}
+	v := std(meters())
+	if err := v.AddModule("m", LanguageName, `low(?n) :- volts(?n, ?v), amps(?n, ?i), ?v < ?i;`, ""); err != nil {
+		t.Fatal(err)
+	}
+	if err := v.Check(); err == nil || !strings.Contains(err.Error(), `?v < ?i in rule "m.low" compares number[V] with number[A]`) {
+		t.Errorf("Check of a module comparing volts with amps: %v, want it refused", err)
+	}
+}
+
+// Each side the run can't pin to one declared unit stays polymorphic, as comparisons are at run
+// time, and equality isn't dimension-checked at all.
+func TestAComparisonWithAnUnknownUnitIsAccepted(t *testing.T) {
+	for _, q := range []string{
+		`volts(?n, ?v), ?v < 6 => ?n`,
+		`volts(?n, ?v), plain(?n, ?x), ?v <= ?x => ?n`,
+		`volts(?n, ?v), amps(?n, ?i), ?v = ?i => ?n`,
+		`volts(?n, ?v), volts(?m, ?w), ?v >= ?w => ?n`,
+		`volts(?n, ?v), plain(?n, ?v), amps(?n, ?i), ?v < ?i => ?n`, // ?v may be plain's, with no unit
+		`volts(?n, ?v), amps(?n, ?v), volts(?m, ?w), ?v < ?w => ?n`, // ?v is in volts and in amps, so either unit
+		`volts(?n, ?v), amps(?n, ?i) => ?n, ?i, count(?v) having count(?v) > ?i`,
+		`r(?n, ?v) :- volts(?n, ?v); r(?n, ?v) :- r(?n, ?w), amps(?n, ?v), ?w > ?v; r(?n, ?v) => ?n`, // the body reads its own relation
+	} {
+		if _, err := both(mustParse(t, q), baseFor(std(meters()))); err != nil {
+			t.Errorf("%s: %v, want it accepted", q, err)
+		}
+	}
+	if rows := eval(t, meters(), `volts(?n, ?v), ?v < 6 => ?n`); col(rows, "n") != "VBUS" {
+		t.Errorf("control: volts below 6 = %v, want VBUS, so the accepted cases run", binds(rows))
+	}
+}
+
+// twoNines is weight 9 on v0 with no unit and on v1 in amps, which is one value twice (#201).
+func twoNines() *ns.MemSource {
+	src := ns.NewMemSource().Declare("node", "name").Declare("weight", "node", "w")
+	for _, n := range []string{"v0", "v1"} {
+		src.Add("node", ns.Tuple{Vals: []ns.Value{ns.S(n)}, Cites: []string{"node:" + n}})
+	}
+	src.Add("weight", ns.Tuple{Vals: []ns.Value{ns.S("v0"), ns.N(9)}}).
+		Add("weight", ns.Tuple{Vals: []ns.Value{ns.S("v1"), ns.NU(9, "A")}}).
+		Add("weight", ns.Tuple{Vals: []ns.Value{ns.S("v2"), ns.NU(9, "V")}})
+	return src
+}
+
+// Every derivation, and every row, of one value keeps the annotation spelledBefore puts first (a unit
+// before none, then A before V), whichever derivation an evaluator found first, so Witnesses and
+// CanonicalCites answer as plain evaluation does (#201). both() compares all of them.
+func TestOneValueKeepsOneAnnotationWhicheverDerivationCameFirst(t *testing.T) {
+	for _, c := range []struct{ q, col, want string }{
+		// a derived tuple reached through weight(v0, 9) and weight(v1, 9 A)
+		{`r(?w, ?n, ?n) :- weight(_, ?w), node(?n); r(?w, ?n, ?n) :- weight(?n, ?w); r(?w, ?a, ?n) => ?n, ?w`, "w", "9[A],9[A],9[V]"}, // v2's comes from one derivation
+		// rows the projection folds into one: A before V decides two units
+		{`weight(?n, ?w) => ?w`, "w", "9[A]"},
+		// a group's key
+		{`weight(?n, ?w) => ?w, count(?n)`, "w", "9[A]"},
+		// a distinct list's value
+		{`weight(?n, ?w) => list(distinct ?w)`, "list(distinct w)", "9"},
+		// a body aggregate's minimum, whose witness names the value
+		{`r0(?w, ?n) :- weight(?n, ?w); node(?n), ?m = min(?w) : { r0(?x, ?n), weight(?y, ?w), ?y != "v2" } => ?n, ?m`, "m", "9[A],9[A]"},
+	} {
+		for _, opts := range [][]Option{nil, {Witnesses()}} {
+			rows, err := both(mustParse(t, c.q), baseFor(std(twoNines())), opts...)
+			if err != nil {
+				t.Fatalf("%s: %v", c.q, err)
+			}
+			if got := strings.Join(withUnits(rows, c.col), ","); got != c.want {
+				t.Errorf("%s (%d options): %s = %s, want %s", c.q, len(opts), c.col, got, c.want)
+			}
+		}
+	}
+}
+
+// One value in volts stored before the same value in amps: A still wins, so arrival doesn't decide
+// between two units. And inside a recursive component, a tuple whose annotation improves after a
+// consumer read it is read again: copy holds 9 until reach learns 9 A from step (#201).
+func TestABetterAnnotationReachesWhatWasDerivedBeforeIt(t *testing.T) {
+	src := ns.NewMemSource().Declare("weight", "node", "w")
+	src.Add("weight", ns.Tuple{Vals: []ns.Value{ns.S("v0"), ns.N(9)}}).
+		Add("weight", ns.Tuple{Vals: []ns.Value{ns.S("v1"), ns.NU(9, "V")}}).
+		Add("weight", ns.Tuple{Vals: []ns.Value{ns.S("v2"), ns.NU(9, "A")}})
+	for _, c := range []struct{ q, col, want string }{
+		{`weight(?n, ?w), ?n != "v0" => ?w`, "w", "9[A]"},
+		{`reach(?w) :- weight("v0", ?w); reach(?w) :- step(?w); step(?w) :- copy(?x), weight("v2", ?w), ?x = ?w;
+		  copy(?w) :- reach(?w); copy(?w) => ?w`, "w", "9[A]"},
+	} {
+		for _, opts := range [][]Option{nil, {Witnesses()}} {
+			rows, err := both(mustParse(t, c.q), baseFor(std(src)), opts...)
+			if err != nil {
+				t.Fatalf("%s: %v", c.q, err)
+			}
+			if got := strings.Join(withUnits(rows, c.col), ","); got != c.want {
+				t.Errorf("%s (%d options): %s = %s, want %s", c.q, len(opts), c.col, got, c.want)
+			}
+		}
+	}
+}

@@ -295,6 +295,17 @@ func (t *typer) signature(rel string) ([]ns.ArgSig, error) {
 	}
 	t.ignoreDecl = rel
 	defer func() { t.ignoreDecl = "" }()
+	var all []Rule
+	for _, rs := range t.rules {
+		all = append(all, rs...)
+	}
+	inputs := map[Var]bool{}
+	ins := inputRelations(all, t.reg)
+	if r, ok := ins[rel]; ok {
+		for _, v := range inputsOf(r, ins, t.reg) {
+			inputs[v] = true
+		}
+	}
 	out := make([]ns.ArgSig, len(labels))
 	for j, name := range labels {
 		inferred := t.ofHead(rel, j, nil)
@@ -306,6 +317,11 @@ func (t *typer) signature(rel string) ([]ns.ArgSig, error) {
 			continue
 		}
 		out[j] = ns.ArgSig{Name: name, ArgType: inferred, Inferred: !t.aggregateFixes(rel, j)}
+	}
+	if rs := t.rules[rel]; len(inputs) > 0 {
+		for j, h := range rs[0].Head.Args {
+			out[j].Input = inputs[h.Var]
+		}
 	}
 	return out, nil
 }

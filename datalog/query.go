@@ -35,9 +35,15 @@ type Query struct {
 	// item keep the default order, so the answer stays deterministic. Empty keeps the default order
 	// alone: absent values first, then numbers by value, then other strings by their text.
 	OrderBy []Order
+	// After keeps only the rows strictly after these values in the OrderBy columns, one value per
+	// column, so a page continues from the last row of the one before it by value (#194). It needs
+	// an OrderBy naming every variable column. The After option sets it from a row.
+	After []ns.Value
 	// Limit keeps at most this many rows of the ordered answer, after skipping Offset of them. Zero
-	// means no limit. Neither saves evaluation work: the whole answer is computed and ordered first,
-	// so a page is a slice of the same ordered answer whatever its size.
+	// means no limit. With an OrderBy the goal holds only Limit plus Offset rows while it is solved;
+	// without one it answers the first Limit distinct rows it finds and stops there, so which rows
+	// depends on the evaluator. Offset needs an OrderBy, since a page has to continue from the one
+	// before it in a stable order.
 	Limit  int
 	Offset int
 }
@@ -96,6 +102,9 @@ type Literal struct {
 	// at is the literal's written position in its body (1-based), set for a witnessed Eval before any
 	// rewrite; 0 marks a literal a rewrite added. See Witness.
 	at int
+	// computed marks a call lowerExpressions wrote for an expression, which waits until one of its
+	// function's modes is satisfied (deferComparisons) and can't feed recursion.
+	computed bool
 }
 
 // A BodyAggregate binds Result to an aggregate over the bindings of Body, reduced once per value of
@@ -136,6 +145,8 @@ type Term struct {
 	Var   Var
 	Const *ns.Value
 	Agg   *Aggregate
+	// Expr is arithmetic, or a call to a function relation, legal as a comparison's operand (#5).
+	Expr *Expr
 }
 
 // Var is a logic variable name (the leading "?" is stripped at parse time).
