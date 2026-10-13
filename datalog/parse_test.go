@@ -202,66 +202,68 @@ func TestParseHaving(t *testing.T) {
 	}
 }
 
-func TestParseHavingErrorContext(t *testing.T) {
+func TestParseErrorContext(t *testing.T) {
 	for _, tc := range []struct {
-		name   string
-		having string
-		want   string
-		cause  string
+		name  string
+		tail  string
+		want  string
+		cause string
 	}{
 		{
-			name:   "aggregate on right",
-			having: `count(?b) >= count(?a)`,
-			want:   `query: having "count(?b) >= count(?a)": bare identifier "count(?a)" — a term must be a ?variable, a "string", or a number`,
-			cause:  `query: bare identifier "count(?a)" — a term must be a ?variable, a "string", or a number`,
+			name:  "aggregate on right",
+			tail:  `having count(?b) >= count(?a)`,
+			want:  `query: having "count(?b) >= count(?a)": bare identifier "count(?a)" — a term must be a ?variable, a "string", or a number`,
+			cause: `query: bare identifier "count(?a)" — a term must be a ?variable, a "string", or a number`,
 		},
 		{
-			name:   "invalid aggregate on left",
-			having: `count(0) > 0`,
-			want:   `query: having "count(0) > 0": aggregate count(...) expects a ?variable, got "0"`,
-			cause:  `query: aggregate count(...) expects a ?variable, got "0"`,
+			name:  "invalid aggregate on left",
+			tail:  `having count(0) > 0`,
+			want:  `query: having "count(0) > 0": aggregate count(...) expects a ?variable, got "0"`,
+			cause: `query: aggregate count(...) expects a ?variable, got "0"`,
 		},
 		{
-			name:   "invalid variable on left",
-			having: `?bad-name > 0`,
-			want:   `query: having "?bad-name > 0": variable ?bad-name: a variable's name is letters, digits and _`,
-			cause:  `query: variable ?bad-name: a variable's name is letters, digits and _`,
+			name:  "invalid variable on left",
+			tail:  `having ?bad-name > 0`,
+			want:  `query: having "?bad-name > 0": variable ?bad-name: a variable's name is letters, digits and _`,
+			cause: `query: variable ?bad-name: a variable's name is letters, digits and _`,
 		},
 		{
-			name:   "empty term on right",
-			having: `count(?b) >=`,
-			want:   `query: having "count(?b) >=": empty term`,
-			cause:  `query: empty term`,
+			name:  "empty term on right",
+			tail:  `having count(?b) >=`,
+			want:  `query: having "count(?b) >=": empty term`,
+			cause: `query: empty term`,
 		},
 		{
-			name:   "query prefix in user text",
-			having: `count(?b) >= query: value`,
-			want:   `query: having "count(?b) >= query: value": bare identifier "query: value" — a term must be a ?variable, a "string", or a number`,
-			cause:  `query: bare identifier "query: value" — a term must be a ?variable, a "string", or a number`,
+			name:  "query prefix in user text",
+			tail:  `having count(?b) >= query: value`,
+			want:  `query: having "count(?b) >= query: value": bare identifier "query: value" — a term must be a ?variable, a "string", or a number`,
+			cause: `query: bare identifier "query: value" — a term must be a ?variable, a "string", or a number`,
+		},
+		{
+			name:  "invalid aggregate in order by",
+			tail:  `order by count(0)`,
+			want:  `query: order by: aggregate count(...) expects a ?variable, got "0"`,
+			cause: `query: aggregate count(...) expects a ?variable, got "0"`,
 		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			_, err := Parse(`imports(?a, ?b) => ?a, count(?b) having ` + tc.having)
+			_, err := Parse(`imports(?a, ?b) => ?a, count(?b) ` + tc.tail)
 			if err == nil {
-				t.Fatal("Parse succeeded; want a having error")
+				t.Fatal("Parse succeeded; want a contextual parse error")
 			}
-			t.Run("message", func(t *testing.T) {
-				if err.Error() != tc.want {
-					t.Errorf("err = %q, want %q", err, tc.want)
-				}
-			})
-			t.Run("cause", func(t *testing.T) {
-				cause := errors.Unwrap(err)
-				if cause == nil {
-					t.Fatal("having error lost its underlying parse error")
-				}
-				if cause.Error() != tc.cause {
-					t.Errorf("cause = %q, want %q", cause, tc.cause)
-				}
-				if errors.Unwrap(err) != cause || !errors.Is(err, cause) {
-					t.Error("having error does not preserve its cause's identity")
-				}
-			})
+			if err.Error() != tc.want {
+				t.Errorf("err = %q, want %q", err, tc.want)
+			}
+			cause := errors.Unwrap(err)
+			if cause == nil {
+				t.Fatal("contextual parse error lost its underlying parse error")
+			}
+			if cause.Error() != tc.cause {
+				t.Errorf("cause = %q, want %q", cause, tc.cause)
+			}
+			if errors.Unwrap(err) != cause || !errors.Is(err, cause) {
+				t.Error("contextual parse error does not preserve its cause's identity")
+			}
 		})
 	}
 }

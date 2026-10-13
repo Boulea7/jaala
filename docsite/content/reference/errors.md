@@ -169,7 +169,9 @@ It is `order by`.
 
 `query: order by: …`
 
-Wraps an error in one of `order by`'s columns, with that error's own text.
+Wraps an error in one of `order by`'s columns, omitting the underlying error's leading `query:` prefix.
+
+{{ demo "demos/errors/order-by-wrapped.yaml" }}
 
 `query: … … is not …`
 

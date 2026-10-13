@@ -193,7 +193,7 @@ func TestOrderAndLimitRefusals(t *testing.T) {
 		{`pin(?r, ?n) => ?r order ?r`, `order needs by`},
 		{`pin(?r, ?n) => ?r order by`, `order by needs a column`},
 		{`pin(?r, ?n) => ?r order by ?r,`, `order by needs a column`},
-		{`pin(?r, ?n) => ?r order by "x"`, `order by: query: projection column`},
+		{`pin(?r, ?n) => ?r order by "x"`, `order by: projection column`},
 		{`pin(?r, ?n) => ?r limit 0`, `limit "0" is not a positive whole number`},
 		{`pin(?r, ?n) => ?r limit -1`, `limit "-1" is not a positive whole number`},
 		{`pin(?r, ?n) => ?r limit +3`, `limit "+3" is not a positive whole number`},
