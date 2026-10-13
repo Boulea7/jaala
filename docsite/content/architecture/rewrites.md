@@ -38,7 +38,7 @@ Demand stands aside:
 
 ## Planning
 
-Each rule body is reordered so that what's cheap and selective runs first, given what's bound. A comparison, a test like `str.contains`, or a relation whose arguments are all bound runs as soon as it can, and a host's generator runs as soon as one of its modes is satisfied, so a host never has to write a body in a particular order ([#36](https://github.com/panyam/jaala/issues/36)). A body the demand rewrite guarded keeps its guard first.
+Each rule body is reordered so that what's cheap and selective runs first, given what's bound. A comparison, a test like `str.contains`, or a relation whose arguments are all bound runs as soon as it can, and a host's generator runs as soon as one of its modes is satisfied, so a host never has to write a body in a particular order ([#36](https://github.com/panyam/jaala/issues/36)). A body the demand rewrite guarded keeps its guard first. Among the relations left, the one with the most arguments bound goes first, since it fans out least. Two with as many bound go by how many tuples a call reads from the base relation's index ([#139](https://github.com/panyam/jaala/issues/139)), so `part(?r, "capacitor")` doesn't scan every capacitor once per net when `pin(?r, ?n)` could read one net's parts. A relation the Source looks up instead ([#126](https://github.com/panyam/jaala/issues/126)) isn't read to size it. If the Source says it has no index for a call's bound arguments, the call ranks as if nothing were bound, since the store scans either way, and an indexed call runs first ([#154](https://github.com/panyam/jaala/issues/154)).
 
 ## Holding the rewrites to account
 

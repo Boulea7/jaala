@@ -12,7 +12,7 @@ Every test that evaluates a query runs it through `Naive`, `SemiNaive{WrittenOrd
 
 ## Generated programs
 
-Hand-written tests only reach the shapes their authors thought of. A generator writes random programs over random graphs, with recursion, negation, aggregates, constants, bound goals and `Bind`, and runs each through all three evaluators, plainly and under `Witnesses()`. The test shrinks a disagreement to a small program and graph before it reports it, which makes a report pretty quick to read. Its first run found four bugs the hand-written tests had missed ([#87](https://github.com/panyam/jaala/issues/87)). The test lists known, filed disagreements, each with a program that reproduces it, so a fixed one shows up as fixed. CI runs a few hundred programs on every change, and `./selfcheck.sh` runs thousands.
+Hand-written tests only reach the shapes their authors thought of. A generator writes random programs over random graphs, with recursion, negation, aggregates, constants, bound goals and `Bind`, and runs each through all three evaluators, plainly and under `Witnesses()`. The test shrinks a disagreement to a small program and graph before it reports it, which makes a report pretty quick to read. Its first run found four bugs the hand-written tests had missed ([#87](https://github.com/panyam/jaala/issues/87)). The test lists known, filed disagreements, each with a program that reproduces it, so a fixed one shows up as fixed. Each program also runs over a Source that answers lookups ([#126](https://github.com/panyam/jaala/issues/126)) and over a federation of three such stores that index only their first argument ([#211](https://github.com/panyam/jaala/issues/211), [#154](https://github.com/panyam/jaala/issues/154)), and must answer as it does read whole. About a third of the graphs give their weights units, some all volts and some a mix ([#192](https://github.com/panyam/jaala/issues/192)). CI runs a few hundred programs on every change, and `./selfcheck.sh` runs thousands.
 
 ## Against Soufflé
 
@@ -24,7 +24,9 @@ The generator only writes programs that are well formed, so text a person or a p
 
 ## Work baselines
 
-Answers being right says nothing about cost. Sixteen workloads (closures, same-generation, a points-to analysis, a netlist the size of an agni board, and four of those again under `CanonicalCites()`) record the work the planned evaluator does, and a test fails when any of them moves more than 10% either way ([#88](https://github.com/panyam/jaala/issues/88)). Work is counted, not timed, so it's the same on every run and on every machine. The baselines found two costs worth fixing as soon as they existed ([#96](https://github.com/panyam/jaala/issues/96), [#97](https://github.com/panyam/jaala/issues/97)).
+Answers being right says nothing about cost. Seventeen workloads (closures, same-generation, a points-to analysis, a netlist the size of an agni board, and four of those again under `CanonicalCites()`) record the work the planned evaluator does, and a test fails when any of them moves more than 10% either way ([#88](https://github.com/panyam/jaala/issues/88)). Work is counted, not timed, so it's the same on every run and on every machine. The baselines found two costs worth fixing as soon as they existed ([#96](https://github.com/panyam/jaala/issues/96), [#97](https://github.com/panyam/jaala/issues/97)).
+
+Store costs are measured separately, since a store's round trips and scans aren't the engine's work. `BenchmarkStores` federates 1, 10 and 50 repo-shaped stores, each answering lookups from the patterns it indexes and scanning for the rest, and reports for a few host-shaped questions the stores asked, the calls made to them, the calls an index couldn't answer, and what asking again calls ([#218](https://github.com/panyam/jaala/issues/218)). It is the exercise of the [store federation mission](https://github.com/panyam/jaala/issues/219), and its smoke test runs in CI.
 
 ## The docs
 
