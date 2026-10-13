@@ -323,7 +323,8 @@ go list -deps ./... | grep '\.' | grep -v '^github.com/panyam/jaala' | grep -v '
   power-of-ten scale and symbols with exponents; `Vocabulary.AddUnit` names base units, prefixes
   and derived units (stdlib's `Units` registers SI prefixes and an electrical set), and a symbol
   nobody named is its own unit. A query literal (`3.3V`, `1kohm`; a bare `e` suffix stays #163's
-  error) is folded by `foldUnits` in `coerceConstants`: the scale goes into the number and the unit
+  error) is folded by `foldUnits` in `coerceConstants`, in rule heads too (#224), and a module's
+  rules are folded in `resolveAll` before their signatures are inferred: the scale goes into the number and the unit
   is written by its first name (`A*ohm` is V, at most one name factored out of a composite:
   `ohm/s`). `num.*` write results the same way, so every value inside the engine is in base units
   and unit strings still compare as strings. Source values are still expected in base units

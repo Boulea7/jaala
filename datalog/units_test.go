@@ -266,3 +266,89 @@ func TestABetterAnnotationReachesWhatWasDerivedBeforeIt(t *testing.T) {
 		}
 	}
 }
+
+// rails is the voltage on two nets, in base units as a Source keeps them, and a seed for rules whose
+// heads state their own values.
+func rails() *ns.MemSource {
+	src := ns.NewMemSource().Declare("seed", "value").
+		DeclareSchema("rail", ns.Schema{Arity: 2, Labels: []string{"net", "v"}, Types: []ns.ArgType{{}, {Type: ns.TypeNumber, Unit: "V"}}})
+	src.Add("seed", ns.Tuple{Vals: []ns.Value{ns.S("s")}})
+	src.Add("rail", ns.Tuple{Vals: []ns.Value{ns.S("VBUS"), ns.NU(5, "V")}})
+	src.Add("rail", ns.Tuple{Vals: []ns.Value{ns.S("HV"), ns.NU(1000, "V")}})
+	return src
+}
+
+const prefixedHeads = `limit(1kV) :- seed(_); limit(3.3V) :- seed(_);`
+
+// A unit in a rule head is folded as one in a body is (#224), so 1kV is 1000 V wherever it is read.
+func TestAUnitInARuleHeadIsFolded(t *testing.T) {
+	for _, c := range []struct{ name, query, col string }{
+		{"answers in base units", `limit(?v) => ?v`, "3.3[V],1000[V]"},
+		{"a goal in the same prefix finds it", `limit(1kV)`, ""},
+		{"a goal in base units finds it", `limit(1000V)`, ""},
+		{"compares with volts", `limit(?v), ?v > 5V => ?v`, "1000[V]"},
+		{"joins with a Source's volts", `limit(?v), rail(?n, ?v) => ?n`, "HV"},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			rows := eval(t, rails(), prefixedHeads+c.query)
+			if len(rows) != 1 && c.col == "" {
+				t.Errorf("%s answers %d rows, want one", c.query, len(rows))
+			}
+			if got := strings.Join(withUnits(rows, rows0(rows)...), ","); got != c.col {
+				t.Errorf("%s = %q, want %q", c.query, got, c.col)
+			}
+		})
+	}
+}
+
+// rows0 is the first row's one column name, for a single-column answer.
+func rows0(rows []Row) []string {
+	for _, r := range rows {
+		for v := range r.Bind {
+			return []string{string(v)}
+		}
+	}
+	return nil
+}
+
+// A module's head is folded before its signature is inferred, so the Domain and unit a host reads
+// are the values the module answers.
+func TestAUnitInAModuleRuleHeadIsFolded(t *testing.T) {
+	v := std(rails())
+	if err := v.AddModule("lim", LanguageName, prefixedHeads, ""); err != nil {
+		t.Fatal(err)
+	}
+	e, err := v.Lookup("lim.limit")
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := ns.ArgSig{Name: "arg0", ArgType: ns.ArgType{Type: ns.TypeNumber, Unit: "V", Domain: []string{"1000", "3.3"}}, Inferred: true}
+	if got := e.Args[0]; !reflect.DeepEqual(got, want) {
+		t.Errorf("signature = %#v, want %#v", got, want)
+	}
+	for q, want := range map[string]string{
+		`lim.limit(?v) => ?v`:               "3.3[V] 1000[V]",
+		`lim.limit(1kV)`:                    "",
+		`lim.limit(?v), ?v > 5V => ?v`:      "1000[V]",
+		`lim.limit(?v), rail(?n, ?v) => ?n`: "HV",
+	} {
+		rows, err := both(mustParse(t, q), baseFor(v))
+		if err != nil {
+			t.Errorf("%s: %v", q, err)
+			continue
+		}
+		if len(rows) == 0 {
+			t.Errorf("%s answers nothing", q)
+		}
+		if got := strings.Join(withUnits(rows, rows0(rows)...), " "); got != want {
+			t.Errorf("%s = %q, want %q", q, got, want)
+		}
+	}
+	kinds, err := ColumnKinds(mustParse(t, `limit(1kV) :- seed(_); limit(?v) => ?v`), v)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := kinds[0]; got.Type != ns.TypeNumber || got.Unit != "V" {
+		t.Errorf("a query rule's column kind = %+v, want number in V", got)
+	}
+}

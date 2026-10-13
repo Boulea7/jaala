@@ -1,0 +1,6 @@
+facts: |
+  res("R1", 1000ohm); res("R2", 20ohm)
+query: |
+  standard(1kohm) :- res(_, _);
+  res(?p, ?r), standard(?r) => ?p
+expect: [[R1]]
