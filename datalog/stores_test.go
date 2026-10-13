@@ -34,6 +34,9 @@ type store struct {
 	*ns.MemSource
 	indexed map[string][][]int
 	buckets map[string][]ns.Tuple
+	// uncatalogued hides the catalog from the planner: Indexed says every pattern is indexed, as a
+	// LookupSource that doesn't implement ns.IndexedLookups is taken to.
+	uncatalogued bool
 
 	mu                        sync.Mutex
 	calls, unindexed, scanned int
@@ -82,6 +85,22 @@ func bucketKey(rel string, pattern []int, val func(int) ns.Value) string {
 	return strings.Join(parts, "\x00")
 }
 
+// indexes reports the catalog pattern a lookup binding bound can read, if any.
+func (s *store) indexes(rel string, bound func(int) bool) ([]int, bool) {
+	for _, p := range s.indexed[rel] {
+		if !slices.ContainsFunc(p, func(i int) bool { return !bound(i) }) {
+			return p, true
+		}
+	}
+	return nil, false
+}
+
+// Indexed implements ns.IndexedLookups from the catalog.
+func (s *store) Indexed(rel string, bound []int) bool {
+	_, ok := s.indexes(rel, func(i int) bool { return slices.Contains(bound, i) })
+	return ok || s.uncatalogued
+}
+
 // Tuples counts a whole read as a call that scanned.
 func (s *store) Tuples(rel string) []ns.Tuple {
 	ts := s.MemSource.Tuples(rel)
@@ -97,10 +116,8 @@ func (s *store) Lookup(_ context.Context, rel string, bound map[int]ns.Value) ([
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.calls++
-	for _, p := range s.indexed[rel] {
-		if !slices.ContainsFunc(p, func(i int) bool { _, ok := bound[i]; return !ok }) {
-			return s.buckets[bucketKey(rel, p, func(i int) ns.Value { return bound[i] })], nil
-		}
+	if p, ok := s.indexes(rel, func(i int) bool { _, ok := bound[i]; return ok }); ok {
+		return s.buckets[bucketKey(rel, p, func(i int) ns.Value { return bound[i] })], nil
 	}
 	s.unindexed++
 	all := s.MemSource.Tuples(rel)
@@ -144,11 +161,14 @@ func repoStores(n int) ([]*store, *ns.Federation) {
 	return stores, f
 }
 
-// storeQuestions are the exercise's questions, about repo0, which every N has.
+// storeQuestions are the exercise's questions, about repo0, which every N has. callees-with-attr
+// binds attr's key and value, more than edge's source, but no store indexes attr by them, so a
+// planner that knows the catalog reads edge first (#154).
 var storeQuestions = []struct{ name, text string }{
 	{"attrs-by-id", `attr("repo0/n3", ?k, ?v) => ?k, ?v`},
 	{"two-hops", `edge("repo0/n20", _, ?m), edge(?m, _, ?o) => ?o`},
 	{"callers", `edge(?s, _, "repo0/n3") => ?s`},
+	{"callees-with-attr", `attr(?m, "lines", "7"), edge("repo0/n3", _, ?m) => ?m`},
 	{"reach", `reach(?a, ?b) :- edge(?a, _, ?b); reach(?a, ?c) :- reach(?a, ?b), edge(?b, _, ?c); reach("repo0/n0", ?x) => count(?x)`},
 }
 
@@ -171,6 +191,15 @@ func costOf(stores []*store) storeCost {
 		s.reset()
 	}
 	return c
+}
+
+// An uncatalogued storeSet's stores hide their catalog from the planner, as stores that don't say
+// what they index.
+func (s storeSet) uncatalogued() storeSet {
+	for _, st := range s.stores {
+		st.uncatalogued = true
+	}
+	return s
 }
 
 // A storeSet is n repos' stores, their federation and its vocabulary, built once so that what a
@@ -274,6 +303,13 @@ func TestStoresExercise(t *testing.T) {
 	}
 	if c := costs["reach"]; c.calls <= storeNodes {
 		t.Errorf("control: reach made %d store calls, want more than its repo's %d nodes (a call per demanded value, #153)", c.calls, storeNodes)
+	}
+	blind, _, _, err := newStoreSet(n).uncatalogued().askTwice(mustParse(t, storeQuestions[3].text))
+	if err != nil || blind.unindexed != n {
+		t.Errorf("control: without the catalog, callees with an attribute made %d unindexed calls, want %d (one scan per store): %v", blind.unindexed, n, err)
+	}
+	if c := costs["callees-with-attr"]; c.asked != 1 || c.unindexed != 0 {
+		t.Errorf("callees with an attribute asked %d stores with %d unindexed calls, want 1 and 0: the planner should read edge by its source first (#154)", c.asked, c.unindexed)
 	}
 	if c := costs["two-hops"]; c.asked != 2 {
 		t.Errorf("control: two hops from a node calling across repos asked %d stores, want 2", c.asked)

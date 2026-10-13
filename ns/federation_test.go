@@ -2,6 +2,7 @@ package ns
 
 import (
 	"reflect"
+	"slices"
 	"strings"
 	"testing"
 )
@@ -98,5 +99,40 @@ func TestAFederationNamesItsMembersInCitations(t *testing.T) {
 	}
 	if a.Tuples("node")[0].Cites[0] != "f.go:1" {
 		t.Error("naming a member rewrote its Source's own tuples")
+	}
+}
+
+type catalog map[string][]int
+
+func (c catalog) Indexed(rel string, bound []int) bool {
+	for _, p := range bound {
+		if slices.Contains(c[rel], p) {
+			return true
+		}
+	}
+	return false
+}
+
+type cataloguedMem struct {
+	*MemSource
+	catalog
+}
+
+// A pattern is indexed in a federation when every member serving its relation indexes it; a member
+// that doesn't say counts as indexing it.
+func TestAFederationIndexesAPatternOnlyWhenEveryMemberDoes(t *testing.T) {
+	mem := func() *MemSource { return NewMemSource().Declare("edge", "src", "dst") }
+	bySrc := cataloguedMem{mem(), catalog{"edge": {0}}}
+	byBoth := cataloguedMem{mem(), catalog{"edge": {0, 1}}}
+	f, _ := NewFederation(Member{Source: bySrc}, Member{Source: byBoth}, Member{Source: mem()})
+	if !f.Indexed("edge", []int{0}) {
+		t.Error("edge by src is indexed in every member that says")
+	}
+	if f.Indexed("edge", []int{1}) {
+		t.Error("edge by dst is indexed in one member and scanned in another, so it's a scan")
+	}
+	g, _ := NewFederation(Member{Source: byBoth}, Member{Source: mem()})
+	if !g.Indexed("edge", []int{1}) {
+		t.Error("control: edge by dst, indexed in the only member that says")
 	}
 }

@@ -166,7 +166,8 @@ func planGoal(b *Base, goal Body) Body {
 // whose Modes is satisfied (#36): a generator call is the host's own work, such as a graph walk, and
 // one placed after a relation runs once per row of it, where a relation bound only by constants is
 // a scan that costs a cheap comparison per row. Failing that, the relation with the most bound
-// arguments, since it fans out least and binds the most for what follows; on a tie with something
+// arguments (a call the Source looks up on a pattern it has no index for counting as none bound,
+// #154), since it fans out least and binds the most for what follows; on a tie with something
 // bound, the base relation estimated to yield fewer tuples per call (see fanOut), else the earliest
 // written. A literal nothing can make runnable keeps its written
 // place at the end, where solving reports it as it always has. bound is what is bound on entry, such
@@ -208,6 +209,9 @@ func planBody(b *Base, body Body, entry map[Var]bool) Body {
 					continue
 				}
 				n := count(flags)
+				if n > 0 && scansOnLookup(b, lit.Pos, flags) {
+					n = 0
+				}
 				if n < best {
 					continue
 				}
@@ -277,6 +281,22 @@ func fanOut(b *Base, a *Atom, flags []bool) int {
 		return len(rows) / max(len(idx), 1)
 	}
 	return len(idx[tupleKey(consts)])
+}
+
+// scansOnLookup reports whether a call with flags bound goes to the Source's Lookup on a pattern the
+// Source says it has no index for (ns.IndexedLookups, #154): the store scans the relation whatever is
+// bound, so planBody ranks it as if nothing were.
+func scansOnLookup(b *Base, a *Atom, flags []bool) bool {
+	if b.indexed == nil || !b.looksUp(a.Relation) {
+		return false
+	}
+	var bound []int
+	for i, f := range flags {
+		if f {
+			bound = append(bound, i)
+		}
+	}
+	return !b.indexed.Indexed(a.Relation, bound)
 }
 
 // isCheck reports whether a literal only tests: a comparison or a filter.
