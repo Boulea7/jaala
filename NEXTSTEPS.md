@@ -5,8 +5,11 @@ Maintained by /checkpoint: one thread per branch, pruned when the branch merges.
 
 ## At a glance
 
-- datalog-functions — #208, PR #214 (CI green, selfcheck and hosts clean) — next: owner review and
-  merge, then tag (no host upgrade note needed: agni's and Declaire's failure lists are unchanged).
+- Release v0.1.39 (#211, PR #217: `ns.NewFederation`, one Source over several stores, with lookups
+  routed by `Holds`); additive, upgrade note on #211.
+- Mission #219 `mission_store_federation` (new, active), 1/5: next ready is #218 (P1), the `Stores`
+  benchmark that is its exercise, then #154 → #153 → #212. A prompt to Declaire asks for
+  `Report.Lookups` evidence (#154, #153) and its routing keys and duplicates (#211's follow-ups).
 - Mission #193 `mission_browser_memory`: jaala's tickets shipped in v0.1.33. agni PR #976 builds
   #896 on it; when #896 closes, post #193's closing log and close it.
 - Mission #172 `mission_aggregate_answers`, 4/6. Both open tickets wait on the outside contributor
@@ -16,17 +19,5 @@ Maintained by /checkpoint: one thread per branch, pruned when the branch merges.
   now folding prefixes.
 - Arithmetic follow-ups: #205, #206, #207 (`waiting`), #209; #215 (P3, filed from #214: a head
   variable bound only by a filter passes validation, and evaluators then disagree on a broken goal).
-- Off-mission and ready: #179 (P2, timed facts), #211 (P2, a Source over several sources).
-- This run replaced the post-v0.1.37 glance.
-
-## datalog-functions
-
-- **Last touched**: 2026-10-12 (sri's machine:/home/sri/newstack/jaala/main)
-- **Ticket**: #208 (PR #214)
-- **Why**: let a one-rule datalog function (`power(?v, ?i, ?p) :- ?p = ?v * ?i`) be called as
-  `power(?v, ?i)`, by making #200's input detection read generator modes (`bindsFrom` in
-  `datalog/inputs.go`).
-- **Where it stopped**: done and pushed; all checks green. A self-comment on the PR explains that
-  the head's left-to-right input order only names inputs in the signature.
-- **Next action**: after merge, run the CI set and `./selfcheck.sh` on main, tag, release page, and
-  an upgrade note on #208 saying hosts need no change.
+- Off-mission: #179 (now P3, timed facts). #216 (computed float error) is labelled both P2 and `waiting`.
+- No open threads of ours.
