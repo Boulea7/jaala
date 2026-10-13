@@ -276,7 +276,7 @@ func evaluateOn(b *Base, gen int64, q Query, o evalOptions, rewrite func(*Base, 
 	}
 	// A rule taking an argument from its caller (#200) is checked as written with that argument bound,
 	// then inlined into each call before the evaluator reads the rules.
-	b.inputRels = inputRelations(q.Rules)
+	b.inputRels = inputRelations(q.Rules, b.reg)
 	if q, err = coerceConstants(q, b.reg); err != nil {
 		return nil, err
 	}
@@ -286,7 +286,7 @@ func evaluateOn(b *Base, gen int64, q Query, o evalOptions, rewrite func(*Base, 
 	if b.witnessing() {
 		q = tagWritten(q)
 	}
-	if err := checkWrittenAnchors(written.Goal, q.Rules, o.bind, b.inputRels); err != nil {
+	if err := checkWrittenAnchors(written.Goal, q.Rules, o.bind, b.inputRels, b.reg); err != nil {
 		return nil, err
 	}
 	if err := b.checkWrittenArity(q); err != nil {
@@ -298,7 +298,7 @@ func evaluateOn(b *Base, gen int64, q Query, o evalOptions, rewrite func(*Base, 
 	// Modes are checked on the program as linked, before any rewrite, so an evaluator that inlines a
 	// rule away still refuses what its body could never run, with the message Validate gives.
 	for _, r := range q.Rules {
-		if err := checkModesFrom(b, whereRule(r), r.Body, inputsBound(r, b.inputRels)); err != nil {
+		if err := checkModesFrom(b, whereRule(r), r.Body, inputsBound(r, b.inputRels, b.reg)); err != nil {
 			return nil, err
 		}
 	}
@@ -325,7 +325,7 @@ func evaluateOn(b *Base, gen int64, q Query, o evalOptions, rewrite func(*Base, 
 		if _, _, err := b.checkRules(q.Rules); err != nil {
 			return nil, err
 		}
-		if q, err = lowerInputs(q, o.bind); err != nil {
+		if q, err = lowerInputs(q, o.bind, b.reg); err != nil {
 			return nil, err
 		}
 	}
@@ -518,9 +518,9 @@ func (b *Base) checkWrittenArity(q Query) error {
 // written in the goal does), and the rules before a rewrite inlines or renames them (#92). Checked
 // after, a bound anchor became a constant and an inlined body's anchor a renamed variable, so a
 // negation anchored as written was refused, naming a variable nobody wrote.
-func checkWrittenAnchors(goal Body, rules []Rule, bind map[Var][]ns.Value, inputRels map[string]Rule) error {
+func checkWrittenAnchors(goal Body, rules []Rule, bind map[Var][]ns.Value, inputRels map[string]Rule, reg *ns.Vocabulary) error {
 	for _, r := range rules {
-		if err := checkAnchored(r.Body, inputsBound(r, inputRels)); err != nil {
+		if err := checkAnchored(r.Body, inputsBound(r, inputRels, reg)); err != nil {
 			return err
 		}
 	}

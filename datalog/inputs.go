@@ -18,11 +18,11 @@ import (
 
 // inputsBound is a qualifying rule's inputs as the bound set a check of its own body starts from, nil
 // for any other rule (see inputRelations).
-func inputsBound(r Rule, inputRels map[string]Rule) map[Var][]ns.Value {
+func inputsBound(r Rule, inputRels map[string]Rule, reg *ns.Vocabulary) map[Var][]ns.Value {
 	if _, ok := inputRels[r.Head.Relation]; !ok {
 		return nil
 	}
-	ins := inputsOf(r, inputRels)
+	ins := inputsOf(r, inputRels, reg)
 	if len(ins) == 0 {
 		return nil
 	}
@@ -33,41 +33,67 @@ func inputsBound(r Rule, inputRels map[string]Rule) map[Var][]ns.Value {
 	return out
 }
 
-// inputsOf is a rule's input arguments: head variables no positive body literal binds, which a
-// comparison or a negation reads. A call to a relation in ins binds only its other arguments, so an
-// input passed on to another input relation is an input here too. A head variable the body doesn't
-// use at all is still an error (validateRule's), so a typo isn't taken for an input.
-func inputsOf(r Rule, ins map[string]Rule) []Var {
-	bound := map[Var]bool{}
-	for _, l := range r.Body.Literals {
-		if l.Pos == nil {
-			continue
-		}
-		takes := map[int]bool{}
-		if callee, ok := ins[l.Pos.Relation]; ok && callee.Head.Relation != r.Head.Relation {
-			for _, v := range inputsOf(callee, ins) {
-				takes[headIndexOf(callee.Head, v)] = true
-			}
-		}
-		for i, t := range l.Pos.Args {
-			if t.Var != "" && !takes[i] {
-				bound[t.Var] = true
-			}
-		}
-	}
+// inputsOf is a rule's input arguments: head variables its body can't bind, which a comparison, a
+// negation or a generator reads. What the body binds is what checkModes computes, so a generator
+// binds its arguments only once one of its modes is satisfied, and a call to a relation in ins binds
+// only its other arguments. When the body binds some head variables only from others, as num.mul
+// binds any one of its three from the other two, the inputs are the head's earliest: each unbound
+// head variable, left to right, becomes an input and the body is bound again, so power(?v, ?i, ?p) :-
+// ?p = ?v * ?i takes ?v and ?i and computes its last argument (#208). A head variable the body
+// doesn't use at all is still an error (validateRule's), so a typo isn't taken for an input.
+func inputsOf(r Rule, ins map[string]Rule, reg *ns.Vocabulary) []Var {
 	used := map[Var]bool{}
 	for _, l := range r.Body.Literals {
 		for _, t := range literalTerms(l) {
 			used[t.Var] = true
 		}
 	}
+	bound := map[Var]bool{}
+	bindsFrom(r.Body.Literals, bound, r.Head.Relation, ins, reg)
 	var out []Var
 	for _, h := range r.Head.Args {
-		if h.Agg == nil && h.Var != "" && h.Var != "_" && !bound[h.Var] && used[h.Var] && !containsVar(out, h.Var) {
+		if h.Agg == nil && h.Var != "" && h.Var != "_" && !bound[h.Var] && used[h.Var] {
 			out = append(out, h.Var)
+			bound[h.Var] = true
+			bindsFrom(r.Body.Literals, bound, r.Head.Relation, ins, reg)
 		}
 	}
 	return out
+}
+
+// bindsFrom adds to bound every variable lits bind, given what is bound already, as checkModesFrom
+// computes it: a relation binds its arguments, a generator its arguments once a mode is satisfied, a
+// filter or comparison nothing, and a call to another of ins (not self) its arguments but its inputs.
+func bindsFrom(lits []Literal, bound map[Var]bool, self string, ins map[string]Rule, reg *ns.Vocabulary) {
+	done := make([]bool, len(lits))
+	for changed := true; changed; {
+		changed = false
+		for i, l := range lits {
+			if done[i] || l.Pos == nil {
+				continue
+			}
+			takes := map[int]bool{}
+			if callee, ok := ins[l.Pos.Relation]; ok && l.Pos.Relation != self {
+				for _, v := range inputsOf(callee, ins, reg) {
+					takes[headIndexOf(callee.Head, v)] = true
+				}
+			} else if bi, ok := reg.Predicate(l.Pos.Relation); ok {
+				if !bi.IsGenerator() {
+					done[i] = true
+					continue
+				}
+				if !bi.Satisfied(boundFlags(l.Pos, bound)) {
+					continue
+				}
+			}
+			done[i], changed = true, true
+			for j, t := range l.Pos.Args {
+				if t.Var != "" && t.Var != "_" && !takes[j] {
+					bound[t.Var] = true
+				}
+			}
+		}
+	}
 }
 
 func containsVar(vs []Var, v Var) bool {
@@ -83,7 +109,7 @@ func containsVar(vs []Var, v Var) bool {
 // distinct variables with no aggregate, and no recursion. It grows to a fixpoint, since a relation
 // passing its argument on to one that takes it takes it too. A relation that takes an input but isn't
 // one of these is left to validateRule, which refuses its unbound head variable as it always has.
-func inputRelations(rules []Rule) map[string]Rule {
+func inputRelations(rules []Rule, reg *ns.Vocabulary) map[string]Rule {
 	byHead := map[string][]Rule{}
 	for _, r := range rules {
 		byHead[r.Head.Relation] = append(byHead[r.Head.Relation], r)
@@ -93,7 +119,7 @@ func inputRelations(rules []Rule) map[string]Rule {
 	for changed := true; changed; {
 		changed = false
 		for rel, rs := range byHead {
-			if _, done := out[rel]; done || len(rs) != 1 || recursive[rel] || len(inputsOf(rs[0], out)) == 0 {
+			if _, done := out[rel]; done || len(rs) != 1 || recursive[rel] || len(inputsOf(rs[0], out, reg)) == 0 {
 				continue
 			}
 			seen, ok := map[Var]bool{}, true
@@ -114,12 +140,12 @@ func inputRelations(rules []Rule) map[string]Rule {
 // lowerInputs inlines every call to a relation taking an input, in the goal and in every rule, and
 // drops those relations' rules. bound is the goal variables the host binds, which count as bound
 // there. A caller's rule keeps its written text, so a witness shows the rule as written.
-func lowerInputs(q Query, bound map[Var][]ns.Value) (Query, error) {
-	ins := inputRelations(q.Rules)
+func lowerInputs(q Query, bound map[Var][]ns.Value, reg *ns.Vocabulary) (Query, error) {
+	ins := inputRelations(q.Rules, reg)
 	if len(ins) == 0 {
 		return q, nil
 	}
-	l := &inputLowerer{ins: ins}
+	l := &inputLowerer{ins: ins, reg: reg}
 	out := q
 	out.Rules = nil
 	for _, r := range q.Rules {
@@ -157,6 +183,7 @@ func lowerInputs(q Query, bound map[Var][]ns.Value) (Query, error) {
 
 type inputLowerer struct {
 	ins   map[string]Rule
+	reg   *ns.Vocabulary
 	fresh int
 }
 
@@ -167,8 +194,8 @@ type call struct {
 }
 
 // clause lowers one body, then requires each call to have bound its inputs: by a constant, or by a
-// variable a positive literal of the lowered body binds (the inlined body never binds an input), or
-// one the host binds.
+// variable the lowered body binds (bindsFrom: the inlined body never binds an input, and a generator
+// binds only once a mode is satisfied), or one the host binds.
 func (l *inputLowerer) clause(where string, b Body, hostBound map[Var]bool, counts bool) (Body, bool, error) {
 	var calls []call
 	lits, err := l.body(where, b.Literals, &calls, counts)
@@ -177,13 +204,14 @@ func (l *inputLowerer) clause(where string, b Body, hostBound map[Var]bool, coun
 	}
 	out := Body{Literals: lits}
 	bound := map[Var]bool{}
-	for _, v := range positiveVars(out) {
+	for v := range hostBound {
 		bound[v] = true
 	}
+	bindsFrom(out.Literals, bound, "", nil, l.reg)
 	for _, c := range calls {
-		for _, in := range inputsOf(l.ins[c.rel], l.ins) {
+		for _, in := range inputsOf(l.ins[c.rel], l.ins, l.reg) {
 			t := c.args[in]
-			if t.Const == nil && (t.Var == "" || t.Var == "_" || !(bound[t.Var] || hostBound[t.Var])) {
+			if t.Const == nil && (t.Var == "" || t.Var == "_" || !bound[t.Var]) {
 				return Body{}, false, fmt.Errorf("query: %s's ?%s is an input argument, and the call in %s doesn't bind it", displayName(c.rel), in, where)
 			}
 		}
@@ -238,7 +266,7 @@ func (l *inputLowerer) inline(r Rule, a Atom) ([]Literal, call) {
 		sub[h.Var] = c
 	}
 	c := call{rel: r.Head.Relation, args: map[Var]Term{}}
-	for _, in := range inputsOf(r, l.ins) {
+	for _, in := range inputsOf(r, l.ins, l.reg) {
 		c.args[in] = a.Args[headIndexOf(r.Head, in)]
 	}
 	rename := func(t Term) Term {
@@ -263,7 +291,7 @@ func (l *inputLowerer) inline(r Rule, a Atom) ([]Literal, call) {
 	for _, lit := range r.Body.Literals {
 		switch {
 		case lit.Pos != nil:
-			lits = append(lits, Literal{Pos: atom(*lit.Pos)})
+			lits = append(lits, Literal{Pos: atom(*lit.Pos), computed: lit.computed})
 		case lit.Neg != nil:
 			lits = append(lits, Literal{Neg: atom(*lit.Neg)})
 		case lit.Compare != nil:
