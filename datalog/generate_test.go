@@ -37,6 +37,10 @@ const (
 	genNum
 )
 
+// genTypes walks a body's bound variables in a fixed order: ranging over the map draws in Go's
+// random order, so one seed would generate different programs (#226).
+var genTypes = []genType{genNode, genNum}
+
 // genRel is a relation a program reads: one of the graph's, or one it derives. Derived relations are
 // layered. A body reads its own layer only positively (recursion, mutual within a layer) and lower
 // layers freely, so every program stratifies. An aggregating relation sits alone in its layer, since
@@ -395,8 +399,8 @@ func (g *generator) body(layer int, recursive bool) *genBody {
 func (g *generator) bodyAggregate(b *genBody, layer int) {
 	inner := newBody()
 	var shared []string
-	for t, vars := range b.bound {
-		for _, v := range vars {
+	for _, t := range genTypes {
+		for _, v := range b.bound[t] {
 			if !b.results[v] && len(shared) < 2 && g.chance(0.5) {
 				inner.bound[t] = append(inner.bound[t], v)
 				shared = append(shared, v)
@@ -408,8 +412,8 @@ func (g *generator) bodyAggregate(b *genBody, layer int) {
 		g.atom(inner, from[g.pick(len(from))], false)
 	}
 	fn := g.aggregate(inner, g.chance(0.1))
-	for t, vars := range inner.bound {
-		for _, v := range vars {
+	for _, t := range genTypes {
+		for _, v := range inner.bound[t] {
 			if !slices.Contains(shared, v) || slices.ContainsFunc(inner.lits, func(l genLit) bool { return slices.Contains(l.args, v) }) {
 				continue
 			}
@@ -1041,6 +1045,31 @@ func TestGeneratedProgramsAgree(t *testing.T) {
 // The shrinker has to reach the smallest case that still fails, or a reported disagreement buries
 // its cause in a dozen rules. Failing here means "a valid program with a rule that negates", whose
 // smallest form is one rule, a one-literal goal, and one node with no edges.
+// A seed generates one program, so JAALA_GEN_SEED=n replays what a run reported (#226).
+func TestASeedGeneratesOneProgram(t *testing.T) {
+	gen := func(seed int64) string {
+		rnd := rand.New(rand.NewSource(seed))
+		facts := genGraph(rnd)
+		p := (&generator{rnd: rnd, nodes: facts.n}).program()
+		return fmt.Sprintf("%s\n bind: %v\n facts: %s", p, p.goal.bind, facts)
+	}
+	aggregates := 0
+	for seed := int64(1); seed <= int64(envInt("JAALA_GEN_SEEDS", 300)); seed++ {
+		first := gen(seed)
+		if strings.Contains(first, ": {") {
+			aggregates++
+		}
+		for range 3 {
+			if again := gen(seed); again != first {
+				t.Fatalf("seed %d generated two programs:\n %s\n %s", seed, first, again)
+			}
+		}
+	}
+	if aggregates == 0 {
+		t.Error("control: no seed's program has a body aggregate, whose shared variables the map walk chose")
+	}
+}
+
 func TestShrinkReachesTheSmallestFailingCase(t *testing.T) {
 	negates := func(c genCase) (bool, string) {
 		if out, _ := c.check(); out == genInvalid {

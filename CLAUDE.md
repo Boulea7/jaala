@@ -195,7 +195,10 @@ go list -deps ./... | grep '\.' | grep -v '^github.com/panyam/jaala' | grep -v '
   seeded random-graph corpus, and `plan_test.go` a clause-order shuffle property.
 - **The generated corpus (`generate_test.go`, #87) runs random programs through `agree`**, the
   comparison `both()` makes, without the panic. Each program runs plain and under `Witnesses()`, and a
-  disagreement is shrunk before it's reported (`JAALA_GEN_SEED=n` replays one). A disagreement that is
+  disagreement is shrunk before it's reported (`JAALA_GEN_SEED=n` replays one). A replay needs the
+  generator to draw in a fixed order, so it never ranges over a map while drawing (`genTypes`, #226:
+  `bodyAggregate` did, and a seed's program changed between runs); `TestASeedGeneratesOneProgram`
+  generates each seed four times. A disagreement that is
   filed and unfixed goes in `knownDisagreements`, matched by its message, and is counted rather than
   failed. Each entry carries a repro that `TestKnownDisagreementsStillDisagree` runs, so a pattern
   that matches nothing fails at once (an inlined variable's name starts with a NUL, which a terminal
