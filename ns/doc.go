@@ -32,5 +32,7 @@
 // and Hint word an unknown name the way every engine over the vocabulary should.
 //
 // A Vocabulary holds no data. An engine pairs it with a Source per query, so a host composes its
-// vocabulary once, checks it at load, and binds each dataset as it reads it.
+// vocabulary once, checks it at load, and binds each dataset as it reads it. A Federation is one
+// Source over several, for facts kept in several stores: each relation is the union of its members',
+// and a lookup goes only to the members whose Holds says they can match.
 package ns
