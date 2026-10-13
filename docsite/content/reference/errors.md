@@ -707,6 +707,18 @@ A path with an empty part, like `a..b`.
 
 A path a query couldn't name.
 
+`query: federation: member … has no Source`
+
+A member passed to `ns.NewFederation` has a nil `Source`. The member is named by its `Name`, or by its position (`#2`) when it has none.
+
+`query: federation: member … lists … but has no schema for it`
+
+A member's source lists a relation it can't describe.
+
+`query: federation: … has a different schema in member … than in member …`
+
+Two members serve one relation with different arities, labels or types. The engine would read their facts as one relation, so they have to agree. `Doc` may differ.
+
 ## Internal
 
 These shouldn't reach anyone. If one does, please report it.
