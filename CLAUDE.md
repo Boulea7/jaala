@@ -66,6 +66,12 @@ go list -deps ./... | grep '\.' | grep -v '^github.com/panyam/jaala' | grep -v '
   two members serve is two facts, as in one Source serving it twice. The corpus runs every program
   over a three-member federation too (`agreeFederated`), whose limited answers without an `order by`
   are checked as a subset, since the tuples arrive in another order (#194).
+- **A Source may say which lookups it answers from an index** (`ns.IndexedLookups`, #154).
+  `planBody` ranks a looked-up call on a pattern the Source says is unindexed as if nothing were
+  bound (`scansOnLookup`), so an indexed call runs first; nothing else reads it, so a Source held in
+  memory plans as before and the work baselines don't move. A Federation's pattern is indexed only
+  when every member serving it is. `agreeFederated`'s stores index only the first argument, so the
+  corpus runs the reordering; `TestStoresExercise`'s `callees-with-attr` is its acceptance case.
 - **`Report.Cold` reruns the query when the Eval was warm** (`coldCost`, #147): it reused a derived
   relation, or probed a held relation a fresh Base would have looked up. The rerun is a copy with no
   derived cache, no work counter, a fresh `edb` when the Source looks up, and `o.cold` set so it can't

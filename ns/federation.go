@@ -47,7 +47,7 @@ func HoldsPrefix(prefix string, positions map[string][]int) func(rel string, bou
 // A fact two members serve is two facts, as it would be in one Source serving it twice: a goal's
 // answer rows are distinct either way, and an aggregate counting bindings counts both.
 //
-// It is a ContextSource, a LookupSource and Versioned whatever its members are. A relation is looked
+// It is a ContextSource, a LookupSource, IndexedLookups and Versioned whatever its members are. A relation is looked
 // up only when every member serving it looks it up (LooksUp), so a Federation can be a member of
 // another; otherwise the engine reads it
 // whole, from every member, and keeps it. Its version changes whenever a member's does, and a member
@@ -152,6 +152,18 @@ func (f *Federation) TuplesContext(ctx context.Context, rel string) ([]Tuple, er
 
 // LooksUp implements LookupRelations: rel is looked up when every member serving it answers lookups.
 func (f *Federation) LooksUp(rel string) bool { return f.lookups[rel] }
+
+// Indexed implements IndexedLookups: a pattern is indexed when every member serving rel indexes it, a
+// member that doesn't say counting as indexing everything, since one member's scan makes the call a
+// scan.
+func (f *Federation) Indexed(rel string, bound []int) bool {
+	for _, i := range f.serving[rel] {
+		if il, ok := f.members[i].Source.(IndexedLookups); ok && !il.Indexed(rel, bound) {
+			return false
+		}
+	}
+	return true
+}
 
 // Lookup implements LookupSource, asking each member serving rel whose Holds allows the bound values,
 // in member order, and returning what they answer together. A member that doesn't answer lookups

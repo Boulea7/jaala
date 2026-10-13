@@ -718,22 +718,31 @@ func agreeLookingUp(q Query, b *Base, want []Row, werr error, opts []Option) str
 }
 
 // agreeFederated is agreeLookingUp over b's facts dealt across three stores that each answer lookups
-// (#211), so a call's facts come back from several members' lookups at once.
+// (#211), so a call's facts come back from several members' lookups at once, and that index only
+// their first argument (#154), so the planner reorders bodies around their scans.
 func agreeFederated(q Query, b *Base, want []Row, werr error, opts []Option) string {
 	members := splitInto(b.src, 3, func(int) bool { return true })
+	for i := range members {
+		members[i].Source = firstIndexed{members[i].Source.(*looking)}
+	}
 	f, err := ns.NewFederation(members...)
 	if err != nil {
 		return err.Error()
 	}
 	diff := agreeOver(q, b, MustBase(b.reg, f), "federated", want, werr, opts)
 	for _, m := range members {
-		if len(m.Source.(*looking).lookups) > 0 {
+		if len(m.Source.(firstIndexed).lookups) > 0 {
 			federatedPrograms++
 			break
 		}
 	}
 	return diff
 }
+
+// firstIndexed is a looking store whose index covers a relation's first argument only.
+type firstIndexed struct{ *looking }
+
+func (firstIndexed) Indexed(_ string, bound []int) bool { return slices.Contains(bound, 0) }
 
 // agreeOver requires every evaluator over lb to answer q as Naive did over b, and Naive over lb to
 // cite as over b under CanonicalCites. A limit without an order by may answer other rows over lb,
