@@ -1,0 +1,3 @@
+fixture: deps
+query: loc("app", ?n), num.add(?n, 1, ?a), num.sub(?n, 1, ?s), num.mul(?n, 2, ?m), num.div(?n, 2, ?d), num.neg(?n, ?g) => ?n, ?a, ?s, ?m, ?d, ?g
+expect: [["300", "301", "299", "600", "150", "-300"]]

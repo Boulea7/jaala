@@ -151,7 +151,7 @@ func TestAComparisonAcrossDeclaredUnitsIsRefused(t *testing.T) {
 		{`volts(?n, ?v), amps(?n, ?i), ?i >= ?v => ?n`, nil, `?i >= ?v in the query compares number[A] with number[V]`},
 		{`r(?n) :- volts(?n, ?v), amps(?n, ?i), ?v > ?i; r(?n) => ?n`, nil, `?v > ?i in rule "r" compares number[V] with number[A]`},
 		{`a(?n, ?i) :- amps(?n, ?i); volts(?n, ?v), a(?n, ?x), ?v < ?x => ?n`, nil, `?v < ?x in the query compares number[V] with number[A]`},
-		{`volts(?n, ?v), ?v < ?lim => ?n`, []Option{bindAmp}, `?v < 1 in the query compares number[V] with number[A]`},
+		{`volts(?n, ?v), ?v < ?lim => ?n`, []Option{bindAmp}, `?v < 1A in the query compares number[V] with number[A]`},
 		{`volts(?n, ?v), amps(?n, ?i) => ?n, ?i, max(?v) having max(?v) > ?i`, nil, `max(?v) > ?i in having compares number[V] with number[A]`},
 	} {
 		q, err := Parse(c.q)

@@ -158,3 +158,26 @@ func Example_table() {
 	// app 3
 	// api 2
 }
+
+// AddUnit names a unit, so arithmetic writes it by name: a host's speed
+// is metres over seconds, and an acceleration, which nobody named, comes out
+// as that name over seconds.
+func Example_units() {
+	b, ctx := base(), context.Background()
+	if err := b.Vocabulary().AddUnit("speed", "m/s"); err != nil {
+		fmt.Println(err)
+		return
+	}
+	q := datalog.MustParse(`imports(?p, _), ?p = "app", ?v = 100m / 4s, ?a = 100m / (4s * 4s) => ?v, ?a`)
+	rows, err := datalog.SemiNaive{}.Eval(ctx, q, b)
+	if err != nil {
+		fmt.Println(err)
+		return
+	}
+	v, a := rows[0].Bind["v"], rows[0].Bind["a"]
+	fmt.Println(v.S, v.BaseUnit)
+	fmt.Println(a.S, a.BaseUnit)
+	// Output:
+	// 25 speed
+	// 6.25 speed/s
+}

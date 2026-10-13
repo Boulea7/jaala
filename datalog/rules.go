@@ -114,6 +114,9 @@ func (b *Base) checkRules(rules []Rule) (map[string][]Rule, [][]string, error) {
 			return nil, nil, err
 		}
 	}
+	if err := checkComputedRecursion(rules); err != nil {
+		return nil, nil, err
+	}
 	strata, err := stratify(rules, b.idbArity)
 	if err != nil {
 		return nil, nil, err
@@ -270,7 +273,7 @@ func (b *Base) applyRule(r Rule) (bool, error) {
 		return b.applyAggregate(r, pos, negs)
 	}
 	added := false
-	err := solve(deferComparisons(pos), 0, newBinding(), b, func(bnd *binding) error {
+	err := solve(deferComparisons(pos, b.reg), 0, newBinding(), b, func(bnd *binding) error {
 		ok, err := passesNegations(bnd, negs, b)
 		if err != nil {
 			return err
@@ -326,7 +329,7 @@ func (b *Base) applyAggregate(r Rule, pos, negs []Literal) (bool, error) {
 		}
 	}
 	ag := newAggregator(cols, nil, false)
-	err := solve(deferComparisons(pos), 0, newBinding(), b, func(bnd *binding) error {
+	err := solve(deferComparisons(pos, b.reg), 0, newBinding(), b, func(bnd *binding) error {
 		ok, err := passesNegations(bnd, negs, b)
 		if ok {
 			ag.add(bnd)

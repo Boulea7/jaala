@@ -1,0 +1,3 @@
+fixture: deps
+query: loc("app", ?n), num.mul(?x, 3, ?n) => ?x
+expect: [["100"]]

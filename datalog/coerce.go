@@ -23,6 +23,10 @@ import (
 // A position nothing types keeps its constant as given. A bound value is a constant by the time this
 // runs (bindGoal substitutes first), so it is checked like one written in the goal.
 func coerceConstants(q Query, reg *ns.Vocabulary) (Query, error) {
+	q, err := foldUnits(q, reg)
+	if err != nil {
+		return q, err
+	}
 	t := newTyper(reg, q.Rules)
 	out := q
 	out.Rules = make([]Rule, len(q.Rules))
@@ -163,4 +167,34 @@ func argName(rel string, labels []string, j int) string {
 		return fmt.Sprintf("%s's %q argument", displayName(rel), labels[j])
 	}
 	return fmt.Sprintf("%s's argument %d", displayName(rel), j+1)
+}
+
+// foldUnits writes each number a query states with a unit (3.3V, 1kohm) as the engine holds numbers:
+// in its unit's name, with any prefix folded into the number (#5), so 1kohm is 1000 ohm and compares
+// with a Source's ohms. A unit the vocabulary doesn't name is a unit of its own.
+func foldUnits(q Query, reg *ns.Vocabulary) (Query, error) {
+	var err error
+	fold := func(t Term) Term {
+		if err != nil || t.Const == nil || t.Const.Num == nil || t.Const.BaseUnit == "" {
+			return t
+		}
+		f, unit, e := reg.Units().Normalize(*t.Const.Num, t.Const.BaseUnit)
+		if e != nil {
+			err = fmt.Errorf("query: %s: %w", t, e)
+			return t
+		}
+		if unit == t.Const.BaseUnit && f == *t.Const.Num {
+			return t
+		}
+		v := ns.NU(f, unit)
+		return Term{Const: &v}
+	}
+	out := q
+	out.Rules = make([]Rule, len(q.Rules))
+	for i, r := range q.Rules {
+		r.Body = substBody(r.Body, fold)
+		out.Rules[i] = r
+	}
+	out.Goal = substBody(q.Goal, fold)
+	return out, err
 }

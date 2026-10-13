@@ -148,6 +148,7 @@ type IndexReport struct {
 // explainer is an Eval's Explain state, on its run: the report it fills, and the body and literal the
 // work being counted belongs to.
 type explainer struct {
+	reg     *ns.Vocabulary // for the order solve runs a body in (deferComparisons)
 	report  *Report
 	start   time.Time
 	bodies  map[string]*BodyReport
@@ -166,7 +167,7 @@ type explainer struct {
 
 func newExplainer(r *Report, b *Base) *explainer {
 	*r = Report{}
-	e := &explainer{report: r, start: time.Now(), bodies: map[string]*BodyReport{}, rounds: map[string]int{}, sources: map[string]*SourceReport{}}
+	e := &explainer{report: r, reg: b.reg, start: time.Now(), bodies: map[string]*BodyReport{}, rounds: map[string]int{}, sources: map[string]*SourceReport{}}
 	if b.edb != nil {
 		e.cachedTuples, e.cachedIndexes = b.edb.held()
 	}
@@ -198,7 +199,7 @@ func (e *explainer) enter(r *Rule, goal Body) func() {
 	br, ok := e.bodies[key]
 	if !ok {
 		pos, negs := splitNegations(body.Literals)
-		pos = deferComparisons(pos) // the order solve runs them in, which literal(i) indexes
+		pos = deferComparisons(pos, e.reg) // the order solve runs them in, which literal(i) indexes
 		br = &BodyReport{Rule: written, Ran: ExplainName(key), Relation: relation}
 		if r == nil {
 			br.Ran = ExplainName(goal.String())

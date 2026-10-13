@@ -2,7 +2,7 @@
 title: "Types and constants"
 description: "How jaala reads a constant against the type of the argument it stands in, and how numbers and text compare and sort."
 prev: {url: "/jaala/guide/syntax/", title: "Syntax"}
-next: {url: "/jaala/guide/negation/", title: "Negation"}
+next: {url: "/jaala/guide/arithmetic/", title: "Arithmetic and units"}
 ---
 
 Every value in jaala is a number or text (or absent, which the host-facing pages cover). A relation's arguments can have types, and when they do, jaala reads a constant as the type of the argument it stands in.

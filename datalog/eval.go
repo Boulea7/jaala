@@ -250,6 +250,9 @@ func evaluateOn(b *Base, gen int64, q Query, o evalOptions, rewrite func(*Base, 
 	if err != nil {
 		return nil, err
 	}
+	if q, err = lowerExpressions(q, b.reg); err != nil {
+		return nil, err
+	}
 	written := q
 	if o.after != nil {
 		if written.After, err = cursorOf(written, o.after); err != nil {
@@ -654,9 +657,18 @@ func (b *binding) clone() *binding {
 // planned one is, comes back unchanged. A comparison nothing binds stays at the end and fails there,
 // as it did; validateRule refuses one in a rule before any evaluator runs it. A comparison adds no
 // citations and its witness position travels with it, so moving one changes no answer.
-func deferComparisons(lits []Literal) []Literal {
+func deferComparisons(lits []Literal, reg *ns.Vocabulary) []Literal {
 	bound := map[Var]bool{}
-	ready := func(c *Compare) bool {
+	ready := func(l Literal) bool {
+		if l.computed && l.Pos != nil {
+			// A call an expression was written as waits for one of its function's modes (#5).
+			bi, ok := reg.Predicate(l.Pos.Relation)
+			return !ok || !bi.IsGenerator() || bi.Satisfied(boundFlags(l.Pos, bound))
+		}
+		c := l.Compare
+		if c == nil {
+			return true
+		}
 		for _, t := range []Term{c.Left, c.Right} {
 			if t.Var != "" && !bound[t.Var] {
 				return false
@@ -667,7 +679,7 @@ func deferComparisons(lits []Literal) []Literal {
 	out := make([]Literal, 0, len(lits))
 	var waiting []Literal
 	for _, lit := range lits {
-		if lit.Compare != nil && !ready(lit.Compare) {
+		if !ready(lit) {
 			waiting = append(waiting, lit)
 			continue
 		}
@@ -676,15 +688,22 @@ func deferComparisons(lits []Literal) []Literal {
 			continue
 		}
 		bindAll(lit.Pos, bound)
-		still := waiting[:0]
-		for _, w := range waiting {
-			if ready(w.Compare) {
-				out = append(out, w)
-			} else {
-				still = append(still, w)
+		for progress := true; progress; {
+			progress = false
+			still := waiting[:0]
+			for _, w := range waiting {
+				if ready(w) {
+					out = append(out, w)
+					if w.Pos != nil {
+						bindAll(w.Pos, bound)
+						progress = true
+					}
+				} else {
+					still = append(still, w)
+				}
 			}
+			waiting = still
 		}
-		waiting = still
 	}
 	return append(out, waiting...)
 }

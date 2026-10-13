@@ -6,6 +6,8 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"unicode"
+	"unicode/utf8"
 )
 
 // Parse reads a text query into a Query. Grammar (EBNF; whitespace is insignificant):
@@ -512,7 +514,7 @@ func parseLiteral(s string) (Literal, error) {
 		}
 		return Literal{Neg: &atom}, nil
 	}
-	if strings.Contains(s, "(") {
+	if strings.Contains(s, "(") && !hasTopComparison(s) {
 		atom, err := parseAtom(s)
 		if err != nil {
 			return Literal{}, err
@@ -601,14 +603,25 @@ func parseAtomArgs(s string, term func(string) (Term, error)) (Atom, error) {
 
 var compareOps = []string{"<=", ">=", "!=", "<", ">", "="} // longest first
 
+// hasTopComparison reports whether s has a comparison operator outside parentheses and quotes, so
+// ?y = f(?x) is a comparison over a call rather than an atom.
+func hasTopComparison(s string) bool {
+	for _, op := range compareOps {
+		if len(splitTop(s, op)) == 2 {
+			return true
+		}
+	}
+	return false
+}
+
 func parseComparison(s string) (Compare, error) {
 	for _, op := range compareOps {
 		if parts := splitTop(s, op); len(parts) == 2 {
-			l, err := parseTerm(parts[0])
+			l, err := parseOperand(parts[0])
 			if err != nil {
 				return Compare{}, err
 			}
-			r, err := parseTerm(parts[1])
+			r, err := parseOperand(parts[1])
 			if err != nil {
 				return Compare{}, err
 			}
@@ -639,6 +652,14 @@ func parseTerm(s string) (Term, error) {
 	default:
 		if f, err := strconv.ParseFloat(s, 64); err == nil && isDecimal(s) {
 			return Term{Const: &ns.Value{S: s, Num: &f}}, nil
+		}
+		// A number with a unit after it, as in 3.3V or 1kohm (#5, #79): the unit is read through the
+		// vocabulary when the query is checked (coerceConstants).
+		// A bare e or E reads as an exponent left unfinished, which #163 refuses (1eV is a unit).
+		if num, unit := splitUnitSuffix(s); unit != "" && unit != "e" && unit != "E" && isDecimal(num) {
+			if f, err := strconv.ParseFloat(num, 64); err == nil {
+				return Term{Const: &ns.Value{S: num, Num: &f, BaseUnit: unit}}, nil
+			}
 		}
 		return Term{}, fmt.Errorf("query: bare identifier %q — a term must be a ?variable, a \"string\", or a number", s)
 	}
@@ -691,6 +712,20 @@ func checkVarName(name string) error {
 		}
 	}
 	return nil
+}
+
+// splitUnitSuffix splits the letters at the end of s off it: 3.3V is 3.3 and V. Letters only, so a
+// compound unit is written as arithmetic: 3m / 1s.
+func splitUnitSuffix(s string) (num, unit string) {
+	i := len(s)
+	for i > 0 {
+		r, w := utf8.DecodeLastRuneInString(s[:i])
+		if !unicode.IsLetter(r) {
+			break
+		}
+		i -= w
+	}
+	return s[:i], s[i:]
 }
 
 // isDecimal reports whether s is a number as the grammar spells one: digits, an optional fraction and

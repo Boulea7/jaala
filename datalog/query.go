@@ -102,6 +102,9 @@ type Literal struct {
 	// at is the literal's written position in its body (1-based), set for a witnessed Eval before any
 	// rewrite; 0 marks a literal a rewrite added. See Witness.
 	at int
+	// computed marks a call lowerExpressions wrote for an expression, which waits until one of its
+	// function's modes is satisfied (deferComparisons) and can't feed recursion.
+	computed bool
 }
 
 // A BodyAggregate binds Result to an aggregate over the bindings of Body, reduced once per value of
@@ -142,6 +145,8 @@ type Term struct {
 	Var   Var
 	Const *ns.Value
 	Agg   *Aggregate
+	// Expr is arithmetic, or a call to a function relation, legal as a comparison's operand (#5).
+	Expr *Expr
 }
 
 // Var is a logic variable name (the leading "?" is stripped at parse time).

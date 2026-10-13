@@ -189,6 +189,28 @@ Such a rule is answered by writing its body into each call, and a `not` over a b
 
 Writing a rule's body into a caller that counts bindings would count each value of the variables the rule's head leaves out. `count(distinct …)` counts what the rule holds.
 
+`query: expression …: unexpected …`, `query: expression … ends early`, `query: expression …: unclosed (`, `query: expression …: want , or ) after …'s argument`
+
+An expression in a comparison that doesn't parse: an operator with nothing after it, a parenthesis left open, or a function call missing a comma ([#5](https://github.com/panyam/jaala/issues/5)).
+
+`query: arithmetic needs …, which stdlib.Arithmetic registers`
+
+Arithmetic is written in the standard library's `num.*` functions, so a vocabulary without them can't run an expression. For a host that composes its own vocabulary.
+
+`query: arithmetic needs two of its three values bound (a variable must appear in a relation before it is computed with)`, `query: arithmetic needs a value bound to negate (a variable must appear in a relation before it is computed with)`
+
+An arithmetic function called with too little bound, which the planner refuses before running in a query; a host calling the function from Go can still meet it.
+
+`query: rule … computes with arithmetic and reads …, which reaches it again, so it might never finish`
+
+A rule that computes a value and feeds it back into its own recursion has no fixpoint ([#207](https://github.com/panyam/jaala/issues/207) would allow it under a bound).
+
+{{ demo "demos/errors/computes-with-arithmetic.yaml" }}
+
+`query: unit … isn't a name: letters only`, `query: unit … is defined twice`, `query: prefix … is defined twice`, `query: unit …: …`
+
+`Vocabulary.AddUnit` refusing a name or a definition, for a host registering units.
+
 `query: after takes values, as in …, and … is not one`
 
 `after` lists the values a page continues from, one per `order by` column, not variables.
