@@ -17,8 +17,7 @@ Maintained by /checkpoint: one thread per branch, pruned when the branch merges.
   declaire#211: `ns.StreamSource`, and a Federation's whole reads now count against `Budget`.
 - fix/demand-spelling-227 (another clone): PR #243 open for #227, no thread recorded on it.
 - Off-mission and ready: #216 and #227 (P2); #179, #205, #206, #209, #215, #220, #222, #234 (P3);
-  #207 and #242 `waiting`. v0.1.37 (#5) still asks agni to reconcile its C24 with prefixed query
-  literals (#224).
+  #207 and #242 `waiting`.
 - This run: retriaged (mission #235 and tickets #236 to #241 filed, #233 to P1 on #219, #242 filed
   `waiting`); merged PR #245; deleted merged branches datalog-functions, federation,
   fix/selfcheck-replay-226, indexed-lookups and stores-benchmark, and the indexed-lookups worktree.
