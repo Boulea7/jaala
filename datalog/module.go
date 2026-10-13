@@ -130,6 +130,9 @@ func resolveAll(v *ns.Vocabulary) (*resolution, error) {
 		if err == nil {
 			rules, err = lowerRules(rules, "m"+strconv.Itoa(i))
 		}
+		if err == nil {
+			rules, err = lowerExprRules(rules, v)
+		}
 		if err != nil {
 			return nil, fail(i, fmt.Errorf("%w (in module %q)", err, m.Path))
 		}

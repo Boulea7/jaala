@@ -1,0 +1,6 @@
+fixture: deps
+program: |
+  grows(?n) :- loc(_, ?n);
+  grows(?m) :- grows(?n), ?m = ?n + 1;
+query: grows(?n) => ?n
+expect_error: "query: rule \"grows\" computes with arithmetic and reads grows, which reaches it again, so it might never finish"

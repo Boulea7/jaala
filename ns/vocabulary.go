@@ -44,6 +44,8 @@ type Vocabulary struct {
 	hinter NoVocabularyHinter
 	// cache holds Check's result and whatever engines Memo, and is replaced on every registration.
 	cache *memo
+	// units names units and prefixes (AddUnit), nil until one is added.
+	units *Units
 }
 
 // memberKind is what defines a path.

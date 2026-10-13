@@ -291,6 +291,25 @@ go list -deps ./... | grep '\.' | grep -v '^github.com/panyam/jaala' | grep -v '
   (`checkComparisonUnits`, #190), in the goal, rules, `having` and modules (at `Check`): a
   variable's unit is known only when every positive atom binding it declares that unit, since a
   value from a unitless binder compares with any.
+- **Arithmetic is syntax over function relations** (`exprs.go`, #5). An `Expr` term, legal only as
+  a comparison operand, is `+ - * /`, unary minus, or `name(args)` (a relation with one trailing
+  result argument). `lowerExpressions` runs first, with body-aggregate lowering (in `evaluateOn`,
+  `ValidateBound` and per module), writing each as calls to stdlib's `num.add/sub/mul/div/neg` on
+  fresh `\x00e` variables; `?y = expr` computes into `?y`, so it binds or tests. The calls are
+  `computed`: `deferComparisons` (which now takes the vocabulary) holds one until a mode of its
+  generator is satisfied, so written order doesn't matter in Naive, and `checkComputedRecursion`
+  refuses a computing rule that reaches itself (#207). `parseOperand` tries `parseTerm` first, so
+  a plain operand parses and errs exactly as before; a literal containing `(` is an atom only when
+  it has no top-level comparison operator.
+- **Units are symbolic, and the engine holds them normalized** (`ns/unit.go`, #5). A `Unit` is a
+  power-of-ten scale and symbols with exponents; `Vocabulary.AddUnit` names base units, prefixes
+  and derived units (stdlib's `Units` registers SI prefixes and an electrical set), and a symbol
+  nobody named is its own unit. A query literal (`3.3V`, `1kohm`; a bare `e` suffix stays #163's
+  error) is folded by `foldUnits` in `coerceConstants`: the scale goes into the number and the unit
+  is written by its first name (`A*ohm` is V, at most one name factored out of a composite:
+  `ohm/s`). `num.*` write results the same way, so every value inside the engine is in base units
+  and unit strings still compare as strings. Source values are still expected in base units
+  (prefixed ones are #205).
 - **A rule can take an argument from its caller** (`inputs.go`, #200): a head variable no positive
   body literal binds, which a comparison or a `not` reads, is an input (`inputsOf`; a call to an
   input relation binds only its other arguments, so `inputRelations` grows to a fixpoint). Only a

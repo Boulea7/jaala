@@ -1,13 +1,13 @@
 ---
 title: "Built-ins"
-description: "Everything the standard library adds to a vocabulary: string tests, edit distance, a number's value and unit, and absent, read from its registry."
+description: "Everything the standard library adds to a vocabulary: string tests, edit distance, a number's value and unit, arithmetic, and absent, read from its registry."
 ---
 
 `stdlib.Register` adds these to a vocabulary. The table is built from the registry itself when the site is built, with each name's signature and the doc it was registered with.
 
 {{ builtins }}
 
-All but `str.distance`, `num.value` and `num.unit` are tests: each holds or it doesn't, and binds nothing. So every argument needs a value from the rest of the goal, pretty much the way a comparison does. jaala's planner runs a test once its arguments are bound, wherever you wrote it in the goal, and refuses one whose arguments nothing binds:
+All but `str.distance`, `num.value`, `num.unit` and the arithmetic functions are tests: each holds or it doesn't, and binds nothing. So every argument needs a value from the rest of the goal, pretty much the way a comparison does. jaala's planner runs a test once its arguments are bound, wherever you wrote it in the goal, and refuses one whose arguments nothing binds:
 
 {{ demo "demos/reference/builtins-unbound.yaml" }}
 
@@ -56,6 +56,18 @@ A number can carry a unit (`5V`, `0.5A`), which a host's source sets. `num.value
 {{ demo "demos/reference/builtins-num.yaml" }}
 
 They're how a query says what it wants when the units in a column differ, which an aggregate won't guess at ([guide]({{.Site.PathPrefix}}/guide/aggregation/#units)).
+
+## Arithmetic
+
+`num.add`, `num.sub`, `num.mul`, `num.div` and `num.neg` are the functions arithmetic is written in: `?v = ?i * ?r` is `num.mul(?i, ?r, ?v)`. Called as relations, each takes its operands and then its result:
+
+{{ demo "demos/reference/builtins-arith.yaml" }}
+
+Each runs from any two of its three values (one of two for `num.neg`), so the same call finds a product or a missing factor. Here the factor that makes `app`'s 300 lines three times something:
+
+{{ demo "demos/reference/builtins-arith-inverse.yaml" }}
+
+Each carries units through the vocabulary's table. The [guide]({{.Site.PathPrefix}}/guide/arithmetic/) shows them in expressions.
 
 ## `absent`
 

@@ -1,0 +1,9 @@
+facts: |
+  res("R1", 1000ohm); res("R2", 20ohm)
+  cur("R1", 0.005A); cur("R2", 0.25A)
+  rail("R1", 5V); rail("R2", 5V)
+program: |
+  count_up(?n) :- res(_, ?n);
+  count_up(?m) :- count_up(?n), ?m = ?n + 1;
+query: count_up(?n) => ?n
+expect_error: "computes with arithmetic"
