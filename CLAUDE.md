@@ -445,6 +445,10 @@ merge and before every tag, and `mission_docsite` (#104) left the docs site with
 the engine. Several missions can be active at once (`queue.sh` prints them). A new issue gets a
 priority and a mission link when filed, or `waiting` with the trigger that would unpark it.
 
+Create the branch before the first commit (`git branch --show-current` says so). #200's work was
+committed on local `main`, so `git reset --soft main` to squash it did nothing and the PR opened
+with WIP commits. Squash against `origin/main`, never a local name that may have moved.
+
 Pushing a branch can get a PR opened for it under the owner's account (#168 was), titled and
 bodied from the commit. Check `gh pr list --head <branch>` before `gh pr create`, and edit that PR
 rather than opening a second one. A PR from an outside contributor gets the owner's review before
