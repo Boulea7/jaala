@@ -686,13 +686,18 @@ func (b *binding) clone() *binding {
 // planned one is, comes back unchanged. A comparison nothing binds stays at the end and fails there,
 // as it did; validateRule refuses one in a rule before any evaluator runs it. A comparison adds no
 // citations and its witness position travels with it, so moving one changes no answer.
+//
+// A call an expression was written as also waits for every relation that binds a variable it reads
+// (awaitsBinder), so it reads the spelling all of them agreed on. That can move one in a planned body,
+// which the planner ranks by modes alone.
 func deferComparisons(lits []Literal, reg *ns.Vocabulary) []Literal {
 	bound := map[Var]bool{}
+	var rest []Literal
 	ready := func(l Literal) bool {
 		if l.computed && l.Pos != nil {
 			// A call an expression was written as waits for one of its function's modes (#5).
 			bi, ok := reg.Predicate(l.Pos.Relation)
-			return !ok || !bi.IsGenerator() || bi.Satisfied(boundFlags(l.Pos, bound))
+			return !ok || !bi.IsGenerator() || bi.Satisfied(boundFlags(l.Pos, bound)) && !awaitsBinder(l, rest, bound, reg)
 		}
 		c := l.Compare
 		if c == nil {
@@ -707,7 +712,8 @@ func deferComparisons(lits []Literal, reg *ns.Vocabulary) []Literal {
 	}
 	out := make([]Literal, 0, len(lits))
 	var waiting []Literal
-	for _, lit := range lits {
+	for i, lit := range lits {
+		rest = lits[i+1:]
 		if !ready(lit) {
 			waiting = append(waiting, lit)
 			continue
@@ -840,6 +846,33 @@ func bindArg(bnd *binding, arg Term, val ns.Value) bool {
 		bnd.vals[arg.Var] = val
 		return true
 	}
+}
+
+// awaitsBinder reports whether a call an expression was written as reads a bound variable that a
+// relation among rest also binds. Arithmetic over 1 A, where the data says 1 V, answers in amps, so an
+// expression runs only once every relation binding what it reads has met it and bindArg has settled
+// the spelling, whatever order the body runs in (#227). Only relations count: a generator may itself
+// wait for the expression's result.
+func awaitsBinder(lit Literal, rest []Literal, bound map[Var]bool, reg *ns.Vocabulary) bool {
+	for _, t := range lit.Pos.Args {
+		if t.Var == "" || t.Var == "_" || !bound[t.Var] {
+			continue
+		}
+		for _, o := range rest {
+			if o.Pos == nil || o.computed {
+				continue
+			}
+			if _, ok := reg.Predicate(o.Pos.Relation); ok {
+				continue
+			}
+			for _, a := range o.Pos.Args {
+				if a.Var == t.Var {
+					return true
+				}
+			}
+		}
+	}
+	return false
 }
 
 // A number can reach a variable spelled several ways: a query's 01 or 3.3, a fact's 1 or 3.3V. Which

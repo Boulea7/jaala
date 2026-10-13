@@ -4,6 +4,9 @@ import (
 	"context"
 	"math"
 	"sort"
+	"strings"
+
+	"github.com/panyam/jaala/ns"
 )
 
 // SemiNaive is the evaluator a host should run. It answers exactly as Naive does, deriving rules by
@@ -317,17 +320,46 @@ func deltaFirst(b *Base, r Rule, i int) Rule {
 
 // derive applies one rule. A magic relation's tuples (see magic) record what a query asked for, not
 // what produced an answer, so they are kept without citations: an adorned rule reading its magic guard
-// must not pass the facts that worked out the demand on to the answer.
+// must not pass the facts that worked out the demand on to the answer. Nor may it, or a factored
+// reachable set, pass on their spelling: a demanded number is written plainly (plainDemand).
 func derive(b *Base, r Rule) error {
 	if _, err := b.applyRule(r); err != nil {
 		return err
 	}
-	if isMagic(r.Head.Relation) {
-		for i := range b.idb[r.Head.Relation] {
-			b.idb[r.Head.Relation][i].cites = nil
+	rel := r.Head.Relation
+	if isMagic(rel) || strings.Contains(rel, fromSep) {
+		for i := range b.idb[rel] {
+			t := &b.idb[rel][i]
+			if isMagic(rel) {
+				t.cites = nil
+			}
+			t.vals = plainDemand(t.vals)
 		}
 	}
 	return nil
+}
+
+// plainDemand writes each number among vals as the spelling bindArg ranks last, canonical text and no
+// unit, copying vals if it changes one. A guard binds its variables before the body's own relations
+// do, so a goal's 1A would otherwise outrank the data's 1 V where the two meet, and the planned answer
+// would carry the goal's unit where Naive's, which only filters on the constant, carries the data's
+// (#227). Every variable a guard binds is bound by the body too, so the data's spelling always wins.
+func plainDemand(vals []ns.Value) []ns.Value {
+	out, copied := vals, false
+	for j, v := range vals {
+		if v.Num == nil || v.BaseUnit == "" && spellsNumber(v) && canonicalNumber(v).S == v.S {
+			continue
+		}
+		if !copied {
+			out, copied = append([]ns.Value(nil), vals...), true
+		}
+		n := *v.Num
+		if n == 0 {
+			n = 0 // -0 is 0
+		}
+		out[j] = ns.Value{S: ftoa(n), Num: v.Num}
+	}
+	return out
 }
 
 // A roundMark is how many tuples each relation of a stratum held at some point, and how many of its

@@ -352,3 +352,82 @@ func TestAUnitInAModuleRuleHeadIsFolded(t *testing.T) {
 		t.Errorf("a query rule's column kind = %+v, want number in V", got)
 	}
 }
+
+// levels is a rail's level at each net: n1 at 1 V, n2 at a bare 1, the same number, and n3 at 2 V.
+// feeds gives the two-rule relations below a second rule, so they're demanded rather than inlined, and
+// want asks for 1 A from the data, so demand is seeded by a variable rather than factored.
+func levels() *ns.MemSource {
+	src := ns.NewMemSource().DeclareSchema("level", ns.Schema{Arity: 2, Types: []ns.ArgType{{}, {Type: ns.TypeNumber}}}).
+		DeclareSchema("feeds", ns.Schema{Arity: 2}).
+		DeclareSchema("want", ns.Schema{Arity: 1, Types: []ns.ArgType{{Type: ns.TypeNumber}}})
+	src.Add("level", ns.Tuple{Vals: []ns.Value{ns.S("n1"), ns.NU(1, "V")}})
+	src.Add("level", ns.Tuple{Vals: []ns.Value{ns.S("n2"), ns.N(1)}})
+	src.Add("level", ns.Tuple{Vals: []ns.Value{ns.S("n3"), ns.NU(2, "V")}})
+	src.Add("feeds", ns.Tuple{Vals: []ns.Value{ns.S("n0"), ns.S("n3")}})
+	src.Add("want", ns.Tuple{Vals: []ns.Value{ns.NU(1, "A")}})
+	return src
+}
+
+// A goal's 1A finds the levels equal to it, and each answers in the unit the data gave it, as Naive
+// answers: the planned SemiNaive used to carry the goal's unit through its demand guard (#227).
+func TestADemandedNumberAnswersInTheDataUnit(t *testing.T) {
+	for _, c := range []struct{ name, q, guard string }{
+		{"factored", `at(?v, ?v) :- level(_, ?v); at(1A, ?w) => ?w`, ":- at:from1(?v), level("},
+		{"demanded", `at(?n, ?v, ?v) :- level(?n, ?v); at(?n, ?v, ?v) :- feeds(?n, ?m), level(?m, ?v); want(?x), at(?n, ?x, ?w) => ?n, ?w`, ":- demand:at/fbf(?v), level("},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			_, r := reported(t, levels(), c.q)
+			if !strings.Contains(r.String(), c.guard) {
+				t.Fatalf("control: the planned SemiNaive ran no body starting %q, so demand never bound first:\n%s", c.guard, r.String())
+			}
+			cols := []string{"w"}
+			want := []string{"1[V]"} // 1 V and 1 are one value, and the unit ranks first
+			if c.name == "demanded" {
+				cols, want = []string{"n", "w"}, []string{"n1 1[V]", "n2 1"}
+			}
+			if got := withUnits(eval(t, levels(), c.q), cols...); !reflect.DeepEqual(got, want) {
+				t.Fatalf("got %v, want %v", got, want)
+			}
+		})
+	}
+}
+
+// Arithmetic over a demanded or inlined number reads the data's spelling of it, so 1 V doubles to 2 V
+// and a bare 1 to a bare 2, never to the goal's 2 A (#227).
+func TestArithmeticOverADemandedNumberReadsTheData(t *testing.T) {
+	for _, c := range []struct{ name, q string }{
+		{"inlined", `twice(?n, ?v, ?y) :- level(?n, ?v), ?y = ?v * 2; twice(?n, 1A, ?y) => ?n, ?y`},
+		{"demanded", `twice(?n, ?v, ?y) :- level(?n, ?v), ?y = ?v * 2; twice(?n, ?v, ?y) :- feeds(?n, ?m), level(?m, ?v), ?y = ?v * 2; twice(?n, 1A, ?y) => ?n, ?y`},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			want := []string{"n1 2[V]", "n2 2"}
+			if got := withUnits(eval(t, levels(), c.q), "n", "y"); !reflect.DeepEqual(got, want) {
+				t.Fatalf("got %v, want %v", got, want)
+			}
+		})
+	}
+}
+
+// An expression waits for every relation that binds what it reads, wherever it's written: n2's bare 1
+// meets n1's 1 V before it's doubled, so the pair answers in volts whichever net came first (#227).
+func TestArithmeticWaitsForEveryRelationBindingItsInput(t *testing.T) {
+	for _, q := range []string{
+		`level(?n, ?v), level(?m, ?v), ?y = ?v * 2 => ?n, ?m, ?y`,
+		`level(?n, ?v), ?y = ?v * 2, level(?m, ?v) => ?n, ?m, ?y`,
+		`pair(?n, ?m, ?v, ?y) :- level(?n, ?v), ?y = ?v * 2, level(?m, ?v); pair(?n, ?m, _, ?y) => ?n, ?m, ?y`, // inlined
+	} {
+		want := []string{"n1 n1 2[V]", "n1 n2 2[V]", "n2 n1 2[V]", "n2 n2 2", "n3 n3 4[V]"}
+		if got := withUnits(eval(t, levels(), q), "n", "m", "y"); !reflect.DeepEqual(got, want) {
+			t.Fatalf("%s: got %v, want %v", q, got, want)
+		}
+	}
+}
+
+// A goal's 1A isn't inlined into a comparison it would fail against 2 V, where the rule reads the
+// data's 1 V and passes it (#227).
+func TestAComparisonReadsTheDataUnitOfAGoalsNumber(t *testing.T) {
+	q := `under(?n, ?v) :- level(?n, ?v), ?v < 2V; under(?n, 1A) => ?n`
+	if got := withUnits(eval(t, levels(), q), "n"); !reflect.DeepEqual(got, []string{"n1", "n2"}) {
+		t.Fatalf("got %v, want n1 and n2", got)
+	}
+}
