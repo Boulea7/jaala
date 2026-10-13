@@ -39,6 +39,9 @@ type Base struct {
 	// derived keeps the derived relations SemiNaive evaluated in full, for later queries over the
 	// same Base (see derivedCache). Shared, and behind a pointer, for the reasons edb is.
 	derived *derivedCache
+	// lookups keeps what the Source's Lookup returned, for later queries over the same Base (see
+	// lookupCache). Shared, and behind a pointer, for the reasons edb is.
+	lookups *lookupCache
 	// idb holds the derived (IDB) relations materialized from a query's user-defined rules, and
 	// idbArity their positional arity (from the rule heads). Both are nil on the shared Base and
 	// populated on a per-query shallow copy, so rules never leak between queries that reuse a Base.
@@ -116,7 +119,7 @@ func NewBase(v *ns.Vocabulary, src ns.Source) (*Base, error) {
 	looker, _ := src.(ns.LookupSource)
 	lookRels, _ := src.(ns.LookupRelations)
 	indexed, _ := src.(ns.IndexedLookups)
-	return &Base{src: src, reg: v, looker: looker, lookRels: lookRels, indexed: indexed, edb: newEDBCache(), derived: newDerivedCache(), work: new(int64)}, nil
+	return &Base{src: src, reg: v, looker: looker, lookRels: lookRels, indexed: indexed, edb: newEDBCache(), derived: newDerivedCache(), lookups: newLookupCache(), work: new(int64)}, nil
 }
 
 // MustBase is NewBase for a Source known to match its vocabulary, such as a test fixture. It panics
@@ -236,7 +239,7 @@ func evaluate(ctx context.Context, q Query, b *Base, opts []Option, rewrite func
 	// are its own, while the Source's tuples and their indexes stay shared (see Base).
 	gen := b.refresh()
 	nb := *b
-	nb.run = &evalRun{ctx: ctx, budget: o.budget, witness: o.witness || o.canonical, canonical: o.canonical}
+	nb.run = &evalRun{ctx: ctx, budget: o.budget, witness: o.witness || o.canonical, canonical: o.canonical, lookGen: b.lookups.generation()}
 	if o.explain == nil {
 		return evaluateOn(&nb, gen, q, o, rewrite, fixpoint)
 	}

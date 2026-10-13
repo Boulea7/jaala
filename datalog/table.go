@@ -96,7 +96,7 @@ func answerGoal(b *Base, pos, negs []Literal, having []Compare, sel, cols []Term
 	if hasAggregate(sel) || len(having) > 0 {
 		ag := newAggregator(sel, having, true)
 		lits := deferComparisons(pos, b.reg)
-		if err := prefetch(b, lits); err != nil {
+		if err := prefetch(b, lits, negs); err != nil {
 			return nil, err
 		}
 		err := solve(lits, 0, newBinding(), b, func(bnd *binding) error {
@@ -150,7 +150,7 @@ func answerGoal(b *Base, pos, negs []Literal, having []Compare, sel, cols []Term
 		}
 		lits := deferComparisons(pos, b.reg)
 		if p.stopAt == 0 { // a limit without an order by stops at its first rows, before most lookups
-			if err := prefetch(b, lits); err != nil {
+			if err := prefetch(b, lits, negs); err != nil {
 				return nil, err
 			}
 		}

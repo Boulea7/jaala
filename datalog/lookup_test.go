@@ -263,7 +263,7 @@ func TestAFailedLookupIsReportedAndNotKept(t *testing.T) {
 	ctx, cancel := context.WithCancel(bg)
 	cancel()
 	src.fail = ctx.Err()
-	nb := *b
+	nb := *MustBase(v, src)
 	nb.run = &evalRun{ctx: ctx}
 	_, _, err = nb.lookup(q.Goal.Literals[0].Pos, newBinding())
 	if err == nil || !strings.HasPrefix(err.Error(), "query: evaluation stopped looking up edge") || !errors.Is(err, context.Canceled) {

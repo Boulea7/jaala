@@ -273,7 +273,7 @@ func (b *Base) applyRule(r Rule) (bool, error) {
 		return b.applyAggregate(r, pos, negs)
 	}
 	lits := deferComparisons(pos, b.reg)
-	if err := prefetch(b, lits); err != nil {
+	if err := prefetch(b, lits, negs); err != nil {
 		return false, err
 	}
 	added := false
@@ -334,7 +334,7 @@ func (b *Base) applyAggregate(r Rule, pos, negs []Literal) (bool, error) {
 	}
 	ag := newAggregator(cols, nil, false)
 	lits := deferComparisons(pos, b.reg)
-	if err := prefetch(b, lits); err != nil {
+	if err := prefetch(b, lits, negs); err != nil {
 		return false, err
 	}
 	err := solve(lits, 0, newBinding(), b, func(bnd *binding) error {

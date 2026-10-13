@@ -60,8 +60,8 @@ func (b *Base) LimitDerivedCache(tuples int) {
 	c.evict(0)
 }
 
-// Forget drops everything the Base has cached: base relations' tuples and indexes, and the derived
-// relations kept for later queries. The next query reads the Source again. A host calls it after
+// Forget drops everything the Base has cached: base relations' tuples and indexes, the derived
+// relations kept for later queries, and what the Source's Lookup returned (#212). The next query reads the Source again. A host calls it after
 // changing a Source's facts in place; a Source that reports a Version doesn't need it. A query running
 // meanwhile finishes on what it already read, and keeps nothing it derived.
 func (b *Base) Forget() {
@@ -71,6 +71,7 @@ func (b *Base) Forget() {
 	if b.derived != nil {
 		b.derived.drop()
 	}
+	b.lookups.drop()
 }
 
 // refresh reads a Versioned Source's version, for an Eval about to start, and drops every cache when
@@ -95,6 +96,7 @@ func (b *Base) refresh() int64 {
 		if b.edb != nil {
 			b.edb.reset()
 		}
+		b.lookups.drop()
 	}
 	return c.gen
 }

@@ -107,8 +107,10 @@ type evalRun struct {
 	// the Base already held (see reuseDerived). Both nil unless SemiNaive's rewrite ran.
 	keys    map[string]string
 	preload map[string]*derivedEntry
-	// looked holds what the Source's Lookup returned, by lookupKey, for this Eval only (see lookup).
-	looked map[string][]ns.Tuple
+	// looked holds what the Source's Lookup returned, by lookupKey, for this Eval only (see lookup),
+	// and lookGen is the generation of the Base's lookupCache it may store into.
+	looked  map[string][]ns.Tuple
+	lookGen int64
 	// explain is the Explain report being filled, or nil.
 	explain *explainer
 	// batch sets prefetch asking a batching Source for a body's lookups ahead of solving it (#153),
