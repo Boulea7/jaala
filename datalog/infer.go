@@ -140,6 +140,7 @@ func (t *typer) ofHead(rel string, j int, seen map[string]bool) ns.ArgType {
 
 	var got ns.ArgType
 	found, untyped := false, false
+	gotBare := false // only bare numeric literals have contributed so far
 	var domain []string
 	closed := true
 	for _, r := range t.rules[rel] {
@@ -152,37 +153,53 @@ func (t *typer) ofHead(rel string, j int, seen map[string]bool) ns.ArgType {
 			closed = false
 			continue // an aggregating relation has only this rule (see checkRules)
 		}
+		var at ns.ArgType
+		bare := false
 		if hv.Const != nil {
 			domain = unionSorted(domain, []string{hv.Const.S})
-			untyped = true // a constant head argument names a value, not a kind
-			continue
-		}
-		if hv.Var == "" || hv.Var == "_" || bodyTouches(r.Body, next) && !boundOutsideCycle(hv.Var, r.Body, next) {
-			closed = false
-			continue // only the cycle binds it: no new information, so it abstains rather than vetoing
-		}
-		vt := t.ofVar(hv.Var, r.Body, next)
-		if len(vt.Domain) == 0 {
-			closed = false
+			if hv.Const.Num == nil {
+				untyped = true // a text constant names a value, not a kind
+				continue
+			}
+			at = ns.ArgType{Type: ns.TypeNumber, Unit: hv.Const.BaseUnit}
+			bare = at.Unit == ""
 		} else {
-			domain = unionSorted(domain, vt.Domain)
-		}
-		at := ns.ArgType{Kind: vt.Kind, Type: vt.Type, Unit: vt.Unit}
-		if vt.kindVar != "" {
-			if m := headIndex(r.Head, vt.kindVar); m >= 0 {
-				at.KindFrom = labels[m]
+			if hv.Var == "" || hv.Var == "_" || bodyTouches(r.Body, next) && !boundOutsideCycle(hv.Var, r.Body, next) {
+				closed = false
+				continue // only the cycle binds it: no new information, so it abstains rather than vetoing
+			}
+			vt := t.ofVar(hv.Var, r.Body, next)
+			if len(vt.Domain) == 0 {
+				closed = false
+			} else {
+				domain = unionSorted(domain, vt.Domain)
+			}
+			at = ns.ArgType{Kind: vt.Kind, Type: vt.Type, Unit: vt.Unit}
+			if vt.kindVar != "" {
+				if m := headIndex(r.Head, vt.kindVar); m >= 0 {
+					at.KindFrom = labels[m]
+				}
+			}
+			if vt.owner != (Term{}) {
+				if m := headIndex(r.Head, vt.owner.Var); vt.owner.Var != "" && m >= 0 {
+					at.Owner = labels[m]
+				} else {
+					at = ns.ArgType{} // an entity the head cannot locate names nothing a reader can act on
+				}
 			}
 		}
-		if vt.owner != (Term{}) {
-			if m := headIndex(r.Head, vt.owner.Var); vt.owner.Var != "" && m >= 0 {
-				at.Owner = labels[m]
-			} else {
-				at = ns.ArgType{} // an entity the head cannot locate names nothing a reader can act on
+		if found && got.Type == ns.TypeNumber && at.Type == ns.TypeNumber {
+			// A bare literal is compatible with a column's unit; a typed unitless variable is not.
+			if bare {
+				at.Unit = got.Unit
+			} else if gotBare {
+				got.Unit = at.Unit
 			}
 		}
 		if found && !sameShape(got, at) {
 			untyped = true
 		}
+		gotBare = bare && (!found || gotBare)
 		got, found = at, true
 	}
 	if untyped || !found {

@@ -219,6 +219,308 @@ func TestARecursiveClauseVotesWithWhatItBindsOutsideTheCycle(t *testing.T) {
 	}
 }
 
+const numericHeadCounts = `
+_test_points(?n: net, count(distinct ?tp)) :- component.net(?tp, ?n), component.class(?tp, "test_point");
+test_point_count(?n: net, ?c) :- _test_points(?n, ?c);
+test_point_count(?n: net, 0) :- entity(?n, "net"), not _test_points(?n, _);
+`
+
+func TestNumericHeadSignatures(t *testing.T) {
+	for _, c := range []struct {
+		name, program, member string
+		want                  ns.ArgSig
+	}{
+		{
+			name: "default count", program: numericHeadCounts, member: "test_point_count",
+			want: ns.ArgSig{Name: "c", ArgType: ns.ArgType{Type: ns.TypeNumber}, Inferred: true},
+		},
+		{
+			name: "control: declared default count", member: "test_point_count",
+			program: strings.Replace(numericHeadCounts, "test_point_count(?n: net, ?c)", "test_point_count(?n: net, ?c: number)", 1),
+			want:    ns.ArgSig{Name: "c", ArgType: ns.ArgType{Type: ns.TypeNumber}},
+		},
+		{
+			name: "numeric domain", member: "bit",
+			program: `bit(0) :- net.ground(?n); bit(1) :- net.ground(?n);`,
+			want:    ns.ArgSig{Name: "arg0", ArgType: ns.ArgType{Type: ns.TypeNumber, Domain: []string{"0", "1"}}, Inferred: true},
+		},
+		{
+			name: "control: recursive constant heads stay numeric", member: "bit",
+			program: `bit(0) :- net.ground(?n); bit(1) :- bit(0);`,
+			want:    ns.ArgSig{Name: "arg0", ArgType: ns.ArgType{Type: ns.TypeNumber, Domain: []string{"0", "1"}}, Inferred: true},
+		},
+		{
+			name: "control: quoted numeric domain", member: "bit",
+			program: `bit("0") :- net.ground(?n); bit("1") :- net.ground(?n);`,
+			want:    ns.ArgSig{Name: "arg0", ArgType: ns.ArgType{Domain: []string{"0", "1"}}, Inferred: true},
+		},
+		{
+			name: "control: text domain", member: "role",
+			program: `role("source") :- net.ground(?n); role("sink") :- net.ground(?n);`,
+			want:    ns.ArgSig{Name: "arg0", ArgType: ns.ArgType{Domain: []string{"sink", "source"}}, Inferred: true},
+		},
+		{
+			name: "control: mixed numeric and text domain", member: "bit",
+			program: `bit(0) :- net.ground(?n); bit("1") :- net.ground(?n);`,
+			want:    ns.ArgSig{Name: "arg0", ArgType: ns.ArgType{Domain: []string{"0", "1"}}, Inferred: true},
+		},
+		{
+			name: "control: mixed text and numeric domain", member: "bit",
+			program: `bit("1") :- net.ground(?n); bit(0) :- net.ground(?n);`,
+			want:    ns.ArgSig{Name: "arg0", ArgType: ns.ArgType{Domain: []string{"0", "1"}}, Inferred: true},
+		},
+		{
+			name: "control: an untyped clause stays untyped", member: "value",
+			program: `value(?v) :- component.mpn(_, ?v); value(0) :- net.ground(?n);`,
+			want:    ns.ArgSig{Name: "v", Inferred: true},
+		},
+		{
+			name: "control: a numeric clause does not type an untyped one", member: "value",
+			program: `value(0) :- net.ground(?n); value(?v) :- component.mpn(_, ?v);`,
+			want:    ns.ArgSig{Name: "arg0", Inferred: true},
+		},
+		{
+			name: "control: a text clause stays untyped with a number", member: "value",
+			program: `value(?v) :- component.class(_, ?v); value(0) :- net.ground(?n);`,
+			want:    ns.ArgSig{Name: "v", Inferred: true},
+		},
+		{
+			name: "control: an entity clause stays untyped with a number", member: "value",
+			program: `value(?v) :- entity(?v, "net"); value(0) :- net.ground(?n);`,
+			want:    ns.ArgSig{Name: "v", Inferred: true},
+		},
+		{
+			name: "control: a typed base still types recursion", member: "value",
+			program: `value(?v) :- net.max_voltage(_, ?v); value(?v) :- value(?v);`,
+			want:    ns.ArgSig{Name: "v", ArgType: ns.ArgType{Type: ns.TypeNumber, Unit: "V"}, Inferred: true},
+		},
+		{
+			name: "a bare number adopts the column unit", member: "value",
+			program: `value(?v) :- net.max_voltage(_, ?v); value(0) :- net.ground(?n);`,
+			want:    ns.ArgSig{Name: "v", ArgType: ns.ArgType{Type: ns.TypeNumber, Unit: "V"}, Inferred: true},
+		},
+		{
+			name: "a bare number adopts the column unit reversed", member: "value",
+			program: `value(0) :- net.ground(?n); value(?v) :- net.max_voltage(_, ?v);`,
+			want:    ns.ArgSig{Name: "arg0", ArgType: ns.ArgType{Type: ns.TypeNumber, Unit: "V"}, Inferred: true},
+		},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			r := circuit()
+			if err := r.AddModule("net", LanguageName, c.program, ""); err != nil {
+				t.Fatal(err)
+			}
+			e, err := r.Lookup("net." + c.member)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got := e.Args[len(e.Args)-1]; !reflect.DeepEqual(got, c.want) {
+				t.Errorf("%s's last argument = %#v, want %#v", e.Signature(), got, c.want)
+			}
+		})
+	}
+}
+
+func TestNumericHeadValuesInQueries(t *testing.T) {
+	r := circuit()
+	if err := r.AddModule("net", LanguageName, numericHeadCounts+`
+bit(0) :- net.ground(?n); bit(1) :- net.ground(?n);
+mixed(1) :- net.ground(?n); mixed("1") :- net.ground(?n);
+`, ""); err != nil {
+		t.Fatal(err)
+	}
+	src := sources[r].(*ns.MemSource)
+	for _, tp := range []string{"TP1", "TP2"} {
+		src.Add("component.net", ns.Tuple{Vals: []ns.Value{ns.S(tp), ns.S("GND")}})
+		src.Add("component.class", ns.Tuple{Vals: []ns.Value{ns.S(tp), ns.S("test_point")}})
+	}
+	src.Add("entity", ns.Tuple{Vals: []ns.Value{ns.S("GND"), ns.S("net")}})
+	src.Add("net.ground", ns.Tuple{Vals: []ns.Value{ns.S("GND")}})
+	base := baseFor(r)
+	answer := func(query string, opts ...Option) []Row {
+		t.Helper()
+		rows, err := both(mustParse(t, query), base, opts...)
+		if err != nil {
+			t.Fatalf("Eval(%q): %v", query, err)
+		}
+		return rows
+	}
+	want := []map[Var]ns.Value{
+		{"n": ns.S("GND"), "c": ns.N(2)},
+		{"n": ns.S("VBUS"), "c": ns.N(0)},
+	}
+	if got := binds(answer(`net.test_point_count(?n, ?c) => ?n, ?c`)); !reflect.DeepEqual(got, want) {
+		t.Errorf("counts = %v, want %v", got, want)
+	}
+	if got := col(answer(`net.test_point_count(?n, "0") => ?n`), "n"); got != "VBUS" {
+		t.Errorf("a text constant in the numeric count column answers %q, want VBUS", got)
+	}
+	if got := col(answer(`net.test_point_count(?n, ?c) => ?n`, Bind(map[Var][]ns.Value{"c": {ns.S("0")}})), "n"); got != "VBUS" {
+		t.Errorf("a bound text count answers %q, want VBUS", got)
+	}
+	if rows := answer(`net.bit(?b) => ?b`); len(rows) != 2 || rows[0].Bind["b"].Num == nil || rows[1].Bind["b"].Num == nil || col(rows, "b") != "0,1" {
+		t.Errorf("numeric constant heads answer %v, want the numbers 0 and 1", binds(rows))
+	}
+	if rows := answer(`net.mixed(?x) => ?x`); len(rows) != 2 || rows[0].Bind["x"].Num == nil || rows[1].Bind["x"].Num != nil {
+		t.Errorf("mixed constant heads answer %v, want 1 then \"1\"", binds(rows))
+	}
+	if got := col(answer(`net.mixed(?x) => count(distinct ?x)`), "count(distinct x)"); got != "2" {
+		t.Errorf("mixed count(distinct) = %s, want 2", got)
+	}
+	if rows := answer(`net.mixed(?x) => ?x, count(?x)`); len(rows) != 2 {
+		t.Errorf("mixed groups = %v, want two", binds(rows))
+	}
+}
+
+func TestNumericHeadSeedDoesNotTypeARecursiveValue(t *testing.T) {
+	for _, c := range []struct{ name, program, label string }{
+		{"direct", `r(0) :- seed(_); r(?s) :- r(?n), bridge(?n, ?s);`, "arg0"},
+		{"direct reversed", `r(?s) :- r(?n), bridge(?n, ?s); r(0) :- seed(_);`, "s"},
+		{"through aliases", `seed_number(0) :- seed(_); alias(?n) :- seed_number(?n);
+r(?n) :- alias(?n); r(?s) :- r(?n), bridge(?n, ?s);`, "n"},
+		{"through aliases reversed", `seed_number(0) :- seed(_); alias(?n) :- seed_number(?n);
+r(?s) :- r(?n), bridge(?n, ?s); r(?n) :- alias(?n);`, "s"},
+		{"mutual recursion", `n(0) :- seed(_); r(?x) :- n(?x); r(?x) :- q(?x);
+q(?x) :- numbers(?x); q(?s) :- r(?n), bridge(?n, ?s);`, "x"},
+		{"mutual recursion reversed", `q(?s) :- r(?n), bridge(?n, ?s); q(?x) :- numbers(?x);
+r(?x) :- q(?x); r(?x) :- n(?x); n(0) :- seed(_);`, "x"},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			src := ns.NewMemSource().Declare("seed", "value").
+				DeclareSchema("numbers", ns.Schema{Arity: 1, Labels: []string{"n"}, Types: []ns.ArgType{{Type: ns.TypeNumber}}}).
+				DeclareSchema("bridge", ns.Schema{Arity: 2, Labels: []string{"n", "s"}, Types: []ns.ArgType{{Type: ns.TypeNumber}, {Type: ns.TypeString}}})
+			src.Add("seed", ns.Tuple{Vals: []ns.Value{ns.S("start")}}).
+				Add("numbers", ns.Tuple{Vals: []ns.Value{ns.N(0)}}).
+				Add("bridge", ns.Tuple{Vals: []ns.Value{ns.N(0), ns.S("x")}})
+			r := std(src)
+			if err := r.AddModule("rec", LanguageName, c.program, ""); err != nil {
+				t.Fatal(err)
+			}
+			e, err := r.Lookup("rec.r")
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got, want := e.Args[0], (ns.ArgSig{Name: c.label, Inferred: true}); !reflect.DeepEqual(got, want) {
+				t.Errorf("recursive argument = %#v, want %#v", got, want)
+			}
+			b := baseFor(r)
+			rows, err := both(mustParse(t, `rec.r(?x) => ?x`), b)
+			want := []map[Var]ns.Value{{"x": ns.N(0)}, {"x": ns.S("x")}}
+			if err != nil || !reflect.DeepEqual(binds(rows), want) {
+				t.Errorf("recursive values = %v, %v, want %v", binds(rows), err, want)
+			}
+			rows, err = both(mustParse(t, `rec.r("x")`), b)
+			if err != nil || len(rows) != 1 {
+				t.Errorf("a recursive text value answers %v, %v, want one row", binds(rows), err)
+			}
+			rows, err = both(mustParse(t, `rec.r(?x) => ?x`), b, Bind(map[Var][]ns.Value{"x": {ns.S("x")}}))
+			if err != nil || col(rows, "x") != "x" {
+				t.Errorf("a bound recursive text value answers %v, %v, want x", binds(rows), err)
+			}
+		})
+	}
+}
+
+func TestNumericHeadRecursionLeavesConflictingScalarTypesUntyped(t *testing.T) {
+	src := ns.NewMemSource().Declare("seed", "value").
+		DeclareSchema("numbers", ns.Schema{Arity: 1, Types: []ns.ArgType{{Type: ns.TypeNumber}}}).
+		DeclareSchema("strings", ns.Schema{Arity: 1, Types: []ns.ArgType{{Type: ns.TypeString}}})
+	src.Add("seed", ns.Tuple{Vals: []ns.Value{ns.S("start")}}).
+		Add("numbers", ns.Tuple{Vals: []ns.Value{ns.N(0)}}).
+		Add("strings", ns.Tuple{Vals: []ns.Value{ns.S("0")}})
+	r := std(src)
+	if err := r.AddModule("rec", LanguageName, `
+n(?v) :- numbers(?v); n(0) :- seed(_); a(?v) :- strings(?v);
+r(?v) :- n(?v), a(?v); r(?v) :- a(?v); r(?v) :- r(?v);
+`, ""); err != nil {
+		t.Fatal(err)
+	}
+	e, err := r.Lookup("rec.r")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, want := e.Args[0], (ns.ArgSig{Name: "v", Inferred: true}); !reflect.DeepEqual(got, want) {
+		t.Errorf("recursive scalar choice = %#v, want %#v", got, want)
+	}
+	b := baseFor(r)
+	rows, err := both(mustParse(t, `rec.r(?x) => ?x`), b)
+	want := []map[Var]ns.Value{{"x": ns.S("0")}}
+	if err != nil || !reflect.DeepEqual(binds(rows), want) {
+		t.Errorf("recursive text values = %v, %v, want %v", binds(rows), err, want)
+	}
+	rows, err = both(mustParse(t, `rec.r(0)`), b)
+	if err != nil || len(rows) != 0 {
+		t.Errorf("a number in the mixed recursive column answers %v, %v, want no rows", binds(rows), err)
+	}
+	rows, err = both(mustParse(t, `rec.r(?x) => ?x`), b, Bind(map[Var][]ns.Value{"x": {ns.N(0)}}))
+	if err != nil || len(rows) != 0 {
+		t.Errorf("a bound number in the mixed recursive column answers %v, %v, want no rows", binds(rows), err)
+	}
+}
+
+func TestNumericHeadUnitMerging(t *testing.T) {
+	v := `value(?v) :- voltage(?v);`
+	a := `value(?v) :- current(?v);`
+	zero := `value(0) :- seed(_);`
+	plain := `value(?v) :- plain(?v);`
+	for _, c := range []struct{ name, program string }{
+		{"V bare A", v + zero + a}, {"V A bare", v + a + zero},
+		{"bare V A", zero + v + a}, {"bare A V", zero + a + v},
+		{"A V bare", a + v + zero}, {"A bare V", a + zero + v},
+		{"control: unitless bare V", plain + zero + v},
+		{"control: V bare unitless", v + zero + plain},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			src := ns.NewMemSource().Declare("seed", "value").
+				DeclareSchema("voltage", ns.Schema{Arity: 1, Types: []ns.ArgType{{Type: ns.TypeNumber, Unit: "V"}}}).
+				DeclareSchema("current", ns.Schema{Arity: 1, Types: []ns.ArgType{{Type: ns.TypeNumber, Unit: "A"}}}).
+				DeclareSchema("plain", ns.Schema{Arity: 1, Types: []ns.ArgType{{Type: ns.TypeNumber}}})
+			r := std(src)
+			if err := r.AddModule("units", LanguageName, c.program, ""); err != nil {
+				t.Fatal(err)
+			}
+			e, err := r.Lookup("units.value")
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got := e.Args[0]; !got.ArgType.IsZero() || !got.Inferred || len(got.Domain) != 0 {
+				t.Errorf("conflicting units = %#v, want untyped and inferred", got)
+			}
+		})
+	}
+}
+
+func TestNumericHeadDeclarationUnits(t *testing.T) {
+	for _, c := range []struct {
+		unit    string
+		refused bool
+	}{{"A", true}, {"V", false}} {
+		t.Run(c.unit, func(t *testing.T) {
+			r := circuit()
+			err := r.AddModule("net", LanguageName, `x(?v: number[`+c.unit+`]) :- net.max_voltage(_, ?v); x(0) :- net.ground(_);`, "")
+			if err == nil {
+				_, err = r.Lookup("net.x")
+			}
+			if c.refused {
+				if err == nil || !strings.Contains(err.Error(), `declares ?v: number[A], but its rules make it number[V]`) {
+					t.Errorf("contradicting unit = %v, want declaration refused", err)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			e, err := r.Lookup("net.x")
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got, want := e.Args[0], (ns.ArgSig{Name: "v", ArgType: ns.ArgType{Type: ns.TypeNumber, Unit: "V"}}); !reflect.DeepEqual(got, want) {
+				t.Errorf("declared unit = %#v, want %#v", got, want)
+			}
+		})
+	}
+}
+
 func TestADeclarationItsRulesContradictIsRefused(t *testing.T) {
 	for text, frag := range map[string]string{
 		`x(?n: component) :- net.ground(?n);`:                               `net.x declares ?n: component, but its rules make it net`,
