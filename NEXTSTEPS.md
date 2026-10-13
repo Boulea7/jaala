@@ -13,21 +13,21 @@ Maintained by /checkpoint: one thread per branch, pruned when the branch merges.
   folding prefixes, now in rule heads too (#224).
 - Arithmetic follow-ups: #205, #206, #207 (`waiting`), #209, #215. Off-mission and ready: #216 (P2,
   computed float error), #179 (P3, timed facts).
-- fix/selfcheck-replay-226 — #226 (P1) — next: open the PR (seed replay, translator, two tests).
+- fix/selfcheck-replay-226 — #226 (P1) — PR open; next: merge, rerun selfcheck on main.
+- #227 (P2, filed): FuzzEval found Naive and planned SemiNaive answering `1 V` vs `1 A`.
 - This run: #226 filed, #172's exercise is flaky (noted on #172, left closed); no threads pruned.
 
 ## Across threads
 
-- `./selfcheck.sh` fails on about half its runs on `main` until #226 merges (Soufflé refuses seed
-  1209's translation). A failure there with "Ungrounded variable" is #226, not the change at hand.
+- Until #226 merges, `./selfcheck.sh` on `main` fails about half its runs with Soufflé's
+  "Ungrounded variable"; that's #226. FuzzEval can also find #227 (`1A` vs `1 V`), which is open.
 
 ## fix/selfcheck-replay-226
 
 - **Last touched**: 2026-10-13 (jaala/main)
 - **Ticket**: #226
 - **Why**: selfcheck is the check before every tag; a flaky Soufflé step makes it useless.
-- **Where it stopped**: diagnosed. `bodyAggregate` (`datalog/generate_test.go`) ranges over the
-  `b.bound` map while drawing `g.chance`, so a seed's program varies; the Soufflé translator
-  (`souffle_test.go`) counts a goal-bound variable it dropped from the bindings relation.
-- **Next action**: sort the map walks, keep the bound variable as its constant in the helper
-  relation, add a replay test and seed 1209's program as a translator case.
+- **Where it stopped**: PR open. Generator walks `genTypes` in order; translator writes a goal-bound
+  counted variable as its constant; `TestASeedGeneratesOneProgram` and a translator case added.
+  Selfcheck's Soufflé step passed three runs in a row on the branch with identical counts.
+- **Next action**: after merge, run selfcheck on `main` and say on #172 that its exercise holds.

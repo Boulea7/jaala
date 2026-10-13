@@ -95,6 +95,7 @@ func translateSouffle(q Query, bind map[Var][]ns.Value, prefix string) (souffleT
 	}
 	tr := &souffler{prefix: prefix}
 	body, one := bindGoalBody(q.Goal, bind)
+	tr.one = one
 	if err := tr.infer(q.Rules, body); err != nil {
 		return souffleTranslation{}, err
 	}
@@ -178,7 +179,8 @@ type souffler struct {
 	goalVK  map[Var]sKind
 	b       strings.Builder
 	aux     int
-	err     error // set by bodyAggregate, which can't return one
+	err     error            // set by bodyAggregate, which can't return one
+	one     map[Var]ns.Value // the goal's variables bound to one value, now constants (bindGoalBody)
 }
 
 func (tr *souffler) decl(rel string, ks []sKind) {
@@ -641,6 +643,17 @@ func (tr *souffler) bodyAggregate(a BodyAggregate, shared []Var, vk map[Var]sKin
 	same := ""
 	if slices.Contains(shared, x) {
 		same = ", " + local + " = " + souffleVar(x)
+	}
+	// A shared ?x the goal binds to one value is that constant in the braces (bindGoalBody), so it
+	// names no column, and each binding reduces the constant (#226).
+	if c, ok := tr.one[x]; ok && !slices.Contains(cols, x) {
+		same = ", " + local + " = " + souffleConst(c)
+		if vk[x] == sUnknown {
+			vk[x] = sSymbol
+			if c.Num != nil {
+				vk[x] = sNumber
+			}
+		}
 	}
 	keyed := func(rel string, extra Var) string {
 		args := make([]string, len(cols))
@@ -1285,6 +1298,11 @@ func TestSouffleTranslation(t *testing.T) {
 		}},
 		{`node(?n), ?c = count(?m) : { edge(?n, ?m) } => ?n, ?c`, nil, []string{
 			"p_answer(V_n, V_c) :- p_node(V_n), V_c = count : { p_ball1(V_n, _) }.",
+		}},
+		// The goal binds the counted ?n to one value, so the braces hold the constant and each binding
+		// counts it (#226); Soufflé refused the variable left ungrounded.
+		{`node(?n), ?c = count(distinct ?n) : { edge(?n, _) } => ?n, ?c`, map[Var][]ns.Value{"n": {ns.S("v6")}}, []string{
+			`p_bdist1(L_n) :- p_ball1(_), L_n = "v6".`,
 		}},
 		{`weight(_, ?w) => min(?w) having min(?w) < 5`, nil, []string{
 			"p_answer(A1_0) :- p_agg1_0(A1_0), A1_0 < 5, A1_0 != -999999.",
