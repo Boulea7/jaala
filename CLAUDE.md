@@ -40,7 +40,9 @@ go list -deps ./... | grep '\.' | grep -v '^github.com/panyam/jaala' | grep -v '
   depend on the standard vocabulary. `TestLayering` (module root) guards it.
 - **Error text keeps its `query:` prefix, and existing fragments stay stable** (`unknown relation
   "x"`, `takes N args`, `not stratifiable`). agni prints these messages and its tests match on
-  fragments of them. New cases get new wording; existing wording doesn't move.
+  fragments of them. New cases get new wording; existing wording doesn't move. A new message also
+  goes in the docsite's error catalogue (`content/reference/errors.md`), or `make -C docsite check`
+  fails (`TestErrorCatalogueListsEveryMessage`).
 - **`Base` is shared across concurrent `Eval`s.** Anything mutable reachable from it must be
   per-query (the `idb*` fields on Eval's shallow copy), atomic (`work`), or locked (`edbCache`,
   `derivedCache`, the vocabulary's `Memo` entries). `TestConcurrentEvalsShareOneCheck` and
@@ -55,10 +57,28 @@ go list -deps ./... | grep '\.' | grep -v '^github.com/panyam/jaala' | grep -v '
   (`Gen`'s first argument, `ns.ContextSource`), and every emitted generator row counts as work. A
   Source read that fails is not cached.
 - **A `LookupSource` is asked, never read whole, for a call with an argument bound** (`lookup.go`,
-  #126), unless the Base already holds the relation whole or is `Unindexed`. What it returns lives on
-  `evalRun.looked`, never the Base, so a probed relation never accumulates there. Anything that sizes
+  #126), unless the Base already holds the relation whole or is `Unindexed`. What it returns lives in
+  two tiers: `evalRun.looked`, the Eval's own for its whole run, and the Base's `lookupCache` (#212),
+  shared, LRU-bounded in tuples (`LimitLookupCache`, a million by default, 0 off; an empty result
+  counts one), dropped with the other caches by a version move or `Forget`, and stored into only in
+  the generation the Eval started in (`run.lookGen`). A probed relation is held only as far as it was
+  probed and never past the limit. Tests that reuse a Base and count lookups see the second query ask
+  nothing: give each its own Base, or `LimitLookupCache(0)`. Anything that sizes
   a base relation (`fanOut`, `scanSize`) checks `looksUp` first and reports "unknown" rather than
   reading it. The corpus runs every program over a `looking` wrapper too (`agreeLookingUp`).
+- **A `BatchLookupSource` is asked once per looked-up call for all its values** (`prefetch.go`,
+  #153, #230). Before solving a body, the planned SemiNaive (`run.batch`, set in its `rewrite`; Naive
+  and `WrittenOrder` never batch) runs the body's prefix up to each looked-up literal, and the whole
+  positive body once for every negated one, collecting values no tier holds, at most `batchSize` per
+  call; `solve` then only hits the cache, so it stays depth-first and #120 holds. A miss is looked up
+  as before, so answers never depend on it. It stops at a `Volatile` predicate and skips a goal with a
+  `limit` and no `order by`. `LookupBatch` returns one result per value, not a union: a union can't
+  tell a sloppy member's whole relation, once per value asked, from two members serving one fact.
+  The rerun prefix counts its work against the body with the explainer `quiet`, so no literal counts
+  it as reached. `prefetch` only peeks at the Base's cache, so a kept result reaches `solve` and is
+  counted `Kept`. A Federation always batches, a member without `LookupBatch` asked per value. A
+  recursive rule batches per round, so a walk costs a call per level (`deep-walk`); that's the floor
+  without the store walking itself (#231, moved to pushdown, #213).
 - **A `Federation` is a Source over several (`ns/federation.go`, #211), so it lives in `ns`, beside
   `MemSource`.** A relation is the union of its members'; a lookup goes only to the members whose
   `Holds` allows the bound values. The engine asks `ns.LookupRelations` per relation (`lookable`),
@@ -73,8 +93,9 @@ go list -deps ./... | grep '\.' | grep -v '^github.com/panyam/jaala' | grep -v '
   when every member serving it is. `agreeFederated`'s stores index only the first argument, so the
   corpus runs the reordering; `TestStoresExercise`'s `callees-with-attr` is its acceptance case.
 - **`Report.Cold` reruns the query when the Eval was warm** (`coldCost`, #147): it reused a derived
-  relation, or probed a held relation a fresh Base would have looked up. The rerun is a copy with no
-  derived cache, no work counter, a fresh `edb` when the Source looks up, and `o.cold` set so it can't
+  relation, answered a lookup from an earlier Eval's (`SourceReport.Kept`, #212), or probed a held
+  relation a fresh Base would have looked up. The rerun is a copy with no derived or lookup cache, no
+  work counter, a fresh `edb` when the Source looks up, and `o.cold` set so it can't
   start another (a cold run that could reuse recursed forever under mutation).
 - **A rewrite that rebuilds a `Literal` must keep its `at`, and one that rebuilds a `Rule` its
   `text`.** They carry the written position and form a witness follows (`witness.go`); dropping
@@ -441,8 +462,12 @@ go list -deps ./... | grep '\.' | grep -v '^github.com/panyam/jaala' | grep -v '
   counting bindings and distinct values disagree; `ohms` carries a unit) in `aggregate_test.go`; `params()` (a part's parameters in V, A and ohm, a
   bare number, and 5 V beside 5 A) in `units_test.go`; `digits()` (n(1) to n(10), so a three-way join finds a thousand bindings),
   `reported` (the planned SemiNaive with Explain) and `peakHeapDuring` in `paging_test.go`; `store` (a
-  repo's facts behind a LookupSource with an index catalog, counting calls and scans), `repoStores`
-  and `newStoreSet` (N of them federated by id prefix) in `stores_test.go`, mission #219's exercise. `both()` takes Eval options, so a `Bind`
+  repo's facts behind a LookupSource with an index catalog, counting calls and scans; a 60-long
+  `next` chain for `deep-walk`), `batchingStore`, `repoStores`, `newStoreSet` (N of them, batching,
+  federated by id prefix) and `unbatchedStoreSet` in `stores_test.go`, mission #219's exercise;
+  `looking` (a LookupSource, optionally sloppy or failing), `batching` (it with `LookupBatch`,
+  recording each batch) and `fanned(n)` (a hub calling n nodes with attributes) in `lookup_test.go`;
+  `versionedLooking` in `lookupcache_test.go`. `both()` takes Eval options, so a `Bind`
   case runs through all three evaluators. `both()` compares rows in order, so every test checks the
   answer order too. Don't compare rows by `fmt.Sprint`: `ns.Value.Num` is a pointer, so the text
   carries an address. datalog's tests import `stdlib` for `std()`; production datalog code must not.
@@ -467,8 +492,9 @@ passes too, so it can stay open after jaala's tickets close. One is active:
 `mission_store_federation` (#219), a host answers a question over many stores without holding them
 in memory, measured by the `Stores` benchmark (#218, its first ticket: stores asked, unindexed
 probes, round trips, peak heap and a repeated question's fetches as the number of stores grows) and
-Declaire's `bench -time` on a federated view. Its tickets (#154, #153, #212) are the first half of
-epic #213; pushdown is a later mission. jaala's earlier four are closed: `mission_selfcheck` (#86,
+Declaire's `bench -time` on a federated view. Its jaala tickets (#218, #211, #154, #153, #212,
+#230) are closed, the first half of epic #213; it stays open for Declaire's half of the exercise.
+Pushdown, including a walk in one call (#231), is a later mission. jaala's earlier four are closed: `mission_selfcheck` (#86,
 at v0.1.29) left `./selfcheck.sh` as the check to run on `main` after every merge and before every
 tag; `mission_docsite` (#104) left the docs site with every example run by the engine;
 `mission_aggregate_answers` (#172, at v0.1.42) left Soufflé checking every aggregate program but
