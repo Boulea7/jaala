@@ -231,30 +231,8 @@ func BenchmarkMemoryOfACountOverACrossProduct(b *testing.B) {
 			b.ReportAllocs()
 			var peak uint64
 			for i := 0; i < b.N; i++ {
-				runtime.GC()
-				var start runtime.MemStats
-				runtime.ReadMemStats(&start)
-				stop := make(chan struct{})
-				sampled := make(chan uint64)
-				go func() {
-					var ms runtime.MemStats
-					var top uint64
-					for {
-						runtime.ReadMemStats(&ms)
-						top = max(top, ms.HeapInuse)
-						select {
-						case <-stop:
-							sampled <- top
-							return
-						case <-time.After(time.Millisecond):
-						}
-					}
-				}()
-				_, err := SemiNaive{}.Eval(bg, q, base, Budget(budget))
-				close(stop)
-				if top := <-sampled; top > start.HeapInuse {
-					peak = max(peak, top-start.HeapInuse)
-				}
+				var err error
+				peak = max(peak, peakHeapDuring(func() { _, err = SemiNaive{}.Eval(bg, q, base, Budget(budget)) }))
 				var over *BudgetExceeded
 				if err != nil && !errors.As(err, &over) {
 					b.Fatal(err)
@@ -263,4 +241,34 @@ func BenchmarkMemoryOfACountOverACrossProduct(b *testing.B) {
 			b.ReportMetric(float64(peak)/1e6, "peak-MB")
 		})
 	}
+}
+
+// peakHeapDuring runs f and returns the peak heap in use above where it started, sampled every
+// millisecond.
+func peakHeapDuring(f func()) uint64 {
+	runtime.GC()
+	var start runtime.MemStats
+	runtime.ReadMemStats(&start)
+	stop := make(chan struct{})
+	sampled := make(chan uint64)
+	go func() {
+		var ms runtime.MemStats
+		var top uint64
+		for {
+			runtime.ReadMemStats(&ms)
+			top = max(top, ms.HeapInuse)
+			select {
+			case <-stop:
+				sampled <- top
+				return
+			case <-time.After(time.Millisecond):
+			}
+		}
+	}()
+	f()
+	close(stop)
+	if top := <-sampled; top > start.HeapInuse {
+		return top - start.HeapInuse
+	}
+	return 0
 }
