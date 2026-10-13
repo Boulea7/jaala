@@ -500,20 +500,19 @@ passes too, so it can stay open after jaala's tickets close. Two are active:
 `mission_store_federation` (#219), a host answers a question over many stores without holding them
 in memory, measured by the `Stores` benchmark (#218: stores asked, unindexed probes, round trips,
 peak heap and a repeated question's fetches as the number of stores grows) and Declaire's `bench
--time` on a federated view. Its first six tickets (#218, #211, #154, #153, #212, #230) are closed;
-#233 (a whole read charged to the budget as it's read, from declaire#211's measurement) is its
-last, and it stays open for Declaire's half. `mission_store_pushdown` (#235), epic #213's second
-half: a store answers the part of a question it can evaluate (a conjunction, a walk, an aggregate,
-a page) and jaala combines the results, measured by the same benchmark with tuples shipped added
-(#236, its first ticket), then #237 (a store evaluates a conjunction, with witnesses and
-`agreePushed`), #238 (across a federation), #239 (a walk in one call, #231), #240 and #241.
-jaala's earlier four are closed: `mission_selfcheck` (#86,
-at v0.1.29) left `./selfcheck.sh` as the check to run on `main` after every merge and before every
-tag; `mission_docsite` (#104) left the docs site with every example run by the engine;
-`mission_aggregate_answers` (#172, at v0.1.42) left Soufflé checking every aggregate program but
-`list`; and `mission_browser_memory` (#193, closed with agni #896) left the `Memory` benchmark's peak
-heap in use (not `B/op`, which the join's short-lived bindings dominate) as the measure of what a
-query holds. Several missions can be active at once (`queue.sh` prints them). A new issue gets a
+-time` on a federated view. Its seven jaala tickets are closed, the last #233 (a `StreamSource` read
+charged to the budget, from declaire#211's measurement); it stays open for Declaire's half.
+`mission_store_pushdown` (#235), epic #213's second half: a store answers the part of a question it
+can evaluate (a conjunction, a walk, an aggregate, a page) and jaala combines the results, measured
+by the same benchmark's `shipped` column and its questions `two-hops-in-repo`, `count-lines`, `page`
+and `self-loops` (#236, closed), then #237 (a store evaluates a conjunction, with witnesses and
+`agreePushed`), #238 (across a federation), #239 (a walk in one call, #231), #240 and #241. jaala's
+earlier four are closed: `mission_selfcheck` (#86, at v0.1.29) left `./selfcheck.sh` as the check to
+run on `main` after every merge and before every tag; `mission_docsite` (#104) left the docs site
+with every example run by the engine; `mission_aggregate_answers` (#172, at v0.1.42) left Soufflé
+checking every aggregate program but `list`; and `mission_browser_memory` (#193, closed with agni
+#896) left the `Memory` benchmark's peak heap in use (not `B/op`, which the join's short-lived
+bindings dominate) as the measure of what a query holds. Several missions can be active at once (`queue.sh` prints them). A new issue gets a
 priority and a mission link when filed, or `waiting` with the trigger that would unpark it.
 
 Create the branch before the first commit (`git branch --show-current` says so). #200's work was

@@ -5,17 +5,25 @@ Maintained by /checkpoint: one thread per branch, pruned when the branch merges.
 
 ## At a glance
 
-- Two active missions (retriage 2026-10-13): #219 `mission_store_federation`, whose last jaala ticket
-  is #233 (P1, a whole read stopped at the budget, from declaire#211), and #235
-  `mission_store_pushdown`, epic #213's second half, starting at #236 (the exercise: `Stores` reports
-  tuples shipped). Pushdown chain: #236 → #237 → #238 → #239/#240/#241.
-- v0.1.44 shipped #212 and #230 (PR #232): the Base keeps lookups across queries, a million tuples
-  by default. The upgrade note is on #212 (agni in the browser may want `LimitLookupCache` lower, or 0).
-- v0.1.43 shipped #153 (PR #229) and #226 (PR #228). v0.1.37 (#5) still asks agni to reconcile its
-  C24 with query literals folding prefixes (#224).
-- Off-mission and ready: #216 and #227 (P2), #179, #205, #206, #209, #215, #220, #222, #234 (P3); #207 `waiting`.
-- This run: tagged v0.1.44; dropped feat/batched-lookups-153 (PR #229) and feat/lookup-cache-212 (PR #232), both merged.
+- Two active missions. #219 `mission_store_federation` has all 7 jaala tickets closed (#233 merged
+  in PR #245) and waits on Declaire's `bench -time` over a federated view (declaire#199, #211).
+  #235 `mission_store_pushdown` is 1/6 (#236 merged in PR #245); next ready is #237 (a store
+  evaluates a conjunction, with witnesses and `agreePushed`).
+- Next action on `main`: post the mission logs for PR #245 on #219 and #235. #235's exercise has
+  never been logged; its baseline (the `shipped` column and the four new questions at 1/10/50 stores)
+  is in PR #245's body. `./selfcheck.sh` passed with Soufflé at 5000 seeds on the branch, and the
+  merge (556c547) changed nothing else.
+- PR #245 is untagged. The next tag (v0.1.45, the owner's pick) needs an upgrade note on #233 and
+  declaire#211: `ns.StreamSource`, and a Federation's whole reads now count against `Budget`.
+- fix/demand-spelling-227 (another clone): PR #243 open for #227, no thread recorded on it.
+- Off-mission and ready: #216 and #227 (P2); #179, #205, #206, #209, #215, #220, #222, #234 (P3);
+  #207 and #242 `waiting`. v0.1.37 (#5) still asks agni to reconcile its C24 with prefixed query
+  literals (#224).
+- This run: retriaged (mission #235 and tickets #236 to #241 filed, #233 to P1 on #219, #242 filed
+  `waiting`); merged PR #245; deleted merged branches datalog-functions, federation,
+  fix/selfcheck-replay-226, indexed-lookups and stores-benchmark, and the indexed-lookups worktree.
 
 ## Across threads
 
-- FuzzEval in `./selfcheck.sh` can find #227 (`1A` vs `1 V`, Naive and planned disagree), open.
+- FuzzEval in `./selfcheck.sh` can find #227 (`1A` vs `1 V`, Naive and planned disagree) until PR
+  #243 merges.
