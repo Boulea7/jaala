@@ -1,7 +1,6 @@
 package datalog
 
 import (
-	"context"
 	"fmt"
 	"github.com/panyam/jaala/ns"
 	"strconv"
@@ -122,7 +121,7 @@ func newEDBCache() *edbCache {
 
 // tuples returns rel's tuples, asking the Source the first time and normalizing what it read to types
 // (see normalizeTuples).
-func (c *edbCache) tuples(ctx context.Context, rel string, src ns.Source, types []ns.ArgType) ([]ns.Tuple, error) {
+func (c *edbCache) tuples(run *evalRun, rel string, src ns.Source, types []ns.ArgType) ([]ns.Tuple, error) {
 	c.mu.Lock()
 	r, ok := c.tup[rel]
 	if !ok {
@@ -135,10 +134,10 @@ func (c *edbCache) tuples(ctx context.Context, rel string, src ns.Source, types 
 	if r.done {
 		return r.tuples, nil
 	}
-	if err := ctx.Err(); err != nil {
+	if err := run.context().Err(); err != nil {
 		return nil, fmt.Errorf("query: evaluation stopped: %w", err)
 	}
-	t, err := readTuples(ctx, src, rel)
+	t, err := readTuples(run, src, rel)
 	if err != nil {
 		return nil, err
 	}

@@ -54,10 +54,12 @@ func Bind(values map[Var][]ns.Value) Option {
 }
 
 // Budget limits one Eval to maxWork units of the work Base.Work counts (candidate comparisons, and
-// each solution a generator emits). Exceeding it stops the Eval with a *BudgetExceeded. The budget is
-// the Eval's own: concurrent Evals on one Base do not spend each other's. It bounds work, not memory:
-// the goal holds one row per distinct answer or one accumulator per group, not its bindings (#120),
-// but the derived relations its rules produce are held whole.
+// each solution a generator emits), plus each tuple an ns.StreamSource yields as a relation is read
+// whole (#233). Exceeding it stops the Eval with a *BudgetExceeded. The budget is the Eval's own:
+// concurrent Evals on one Base do not spend each other's. It bounds work, and memory only so far: the
+// goal holds one row per distinct answer or one accumulator per group, not its bindings (#120), and a
+// streamed read stops at the budget, but a Source read as one slice arrives whole before it is
+// counted, and the derived relations its rules produce are held whole.
 func Budget(maxWork int64) Option {
 	return func(o *evalOptions) { o.budget = maxWork }
 }
@@ -79,7 +81,8 @@ func Total(n *int) Option {
 }
 
 // BudgetExceeded is the error an Eval stops with when its work passes its Budget, so a host can tell a
-// query that ran too long from one that is wrong.
+// query that ran too long from one that is wrong. Work counts the streamed tuples read too, so it can
+// be more than Base.Work or Report.Work saw.
 type BudgetExceeded struct {
 	Work, Limit int64
 }
@@ -91,9 +94,12 @@ func (e *BudgetExceeded) Error() string {
 // evalRun is one Eval's own state, carried on its copy of the Base: its context, and the work it has
 // done against its budget.
 type evalRun struct {
-	ctx     context.Context
-	budget  int64
-	used    int64
+	ctx    context.Context
+	budget int64
+	used   int64
+	// read counts the tuples a StreamSource has yielded, which the budget charges beside used (#233)
+	// but which aren't work: Work and Explain count what evaluation does with the tuples.
+	read    int64
 	held    int  // the answer rows or groups the goal held at its peak (Report.Held)
 	witness bool // record witnesses (see Witnesses)
 	// canonical keeps each tuple's canonical derivation (see CanonicalCites), and revised lists, by
@@ -133,10 +139,26 @@ func (r *evalRun) step() error {
 	if r.explain != nil {
 		r.explain.count()
 	}
-	if r.budget > 0 && r.used > r.budget {
-		return &BudgetExceeded{Work: r.used, Limit: r.budget}
+	return r.check(r.used)
+}
+
+// readOne records one tuple a StreamSource yielded and reports whether the Eval must stop, as step
+// does, so a relation read whole stops at the budget having held at most that many tuples (#233).
+func (r *evalRun) readOne() error {
+	if r == nil {
+		return nil
 	}
-	if r.used%ctxCheckEvery == 0 {
+	r.read++
+	return r.check(r.read)
+}
+
+// check stops the Eval once the work and reads together pass the budget, and every ctxCheckEvery
+// units of n when its context is done.
+func (r *evalRun) check(n int64) error {
+	if spent := r.used + r.read; r.budget > 0 && spent > r.budget {
+		return &BudgetExceeded{Work: spent, Limit: r.budget}
+	}
+	if n%ctxCheckEvery == 0 {
 		return r.done()
 	}
 	return nil
