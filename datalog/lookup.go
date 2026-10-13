@@ -27,7 +27,8 @@ func (b *Base) lookable(rel string) bool {
 }
 
 // lookup asks the Source for rel's facts matching atom's bound arguments, once per Eval for each
-// pattern and values. ok is false when nothing is bound, so the caller reads the relation whole.
+// pattern and values, and not at all when an earlier Eval's answer is still kept (#212). ok is false
+// when nothing is bound, so the caller reads the relation whole.
 func (b *Base) lookup(atom *Atom, bnd *binding) (rows []ns.Tuple, ok bool, err error) {
 	mask, vals, any := boundArgs(atom.Args, bnd)
 	if !any {
@@ -35,9 +36,9 @@ func (b *Base) lookup(atom *Atom, bnd *binding) (rows []ns.Tuple, ok bool, err e
 	}
 	r := b.run
 	key := lookupKey(atom.Relation, mask, vals)
-	if rows, hit := r.looked[key]; hit {
+	if rows, hit, kept := b.lookedUp(key); hit {
 		if r.explain != nil {
-			b.explainLookup(atom, mask, 0, true)
+			b.explainLookupHit(atom, mask, kept)
 		}
 		return rows, true, nil
 	}
@@ -58,14 +59,40 @@ func (b *Base) lookup(atom *Atom, bnd *binding) (rows []ns.Tuple, ok bool, err e
 		return nil, true, lookupErr(ctx, atom.Relation, err)
 	}
 	rows = normalizeTuples(rows, b.argTypesOf(atom.Relation))
+	b.keepLookup(key, rows)
+	if r.explain != nil {
+		b.explainLookup(atom, mask, len(rows))
+	}
+	return rows, true, nil
+}
+
+// lookedUp returns what this Eval or, failing that, an earlier one kept for a lookup's key (kept says
+// which), copying an earlier Eval's into this one's cache so it holds for the rest of the Eval
+// whatever the Base's cache evicts meanwhile.
+func (b *Base) lookedUp(key string) (rows []ns.Tuple, hit, kept bool) {
+	r := b.run
+	if rows, hit := r.looked[key]; hit {
+		return rows, true, false
+	}
+	rows, hit = b.lookups.get(key)
+	if !hit {
+		return nil, false, false
+	}
 	if r.looked == nil {
 		r.looked = map[string][]ns.Tuple{}
 	}
 	r.looked[key] = rows
-	if r.explain != nil {
-		b.explainLookup(atom, mask, len(rows), false)
+	return rows, true, true
+}
+
+// keepLookup keeps a lookup's result for the rest of the Eval, and for later ones on the Base.
+func (b *Base) keepLookup(key string, rows []ns.Tuple) {
+	r := b.run
+	if r.looked == nil {
+		r.looked = map[string][]ns.Tuple{}
 	}
-	return rows, true, nil
+	r.looked[key] = rows
+	b.lookups.put(r.lookGen, key, rows)
 }
 
 // lookupErr is a failed lookup's error, wrapped with the relation's name.
@@ -100,13 +127,10 @@ func (b *Base) lookupBatch(bl ns.BatchLookupSource, atom *Atom, mask patternMask
 	if len(res) != len(vals) {
 		return fmt.Errorf("query: looking up %s: a batch of %d lookups answered %d", atom.Relation, len(vals), len(res))
 	}
-	if r.looked == nil {
-		r.looked = map[string][]ns.Tuple{}
-	}
 	types, fetched := b.argTypesOf(atom.Relation), 0
 	for k, v := range vals {
 		rows := normalizeTuples(res[k], types)
-		r.looked[lookupKey(atom.Relation, mask, v)] = rows
+		b.keepLookup(lookupKey(atom.Relation, mask, v), rows)
 		fetched += len(rows)
 	}
 	if r.explain != nil {

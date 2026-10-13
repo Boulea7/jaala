@@ -24,6 +24,10 @@ import (
 // and a few leaves, however many repos there are.
 const storeNodes = 200
 
+// storeChain is how many nodes each repo's next chain (n0, n1, ...) links, a walk as deep as it is
+// long, so a recursive question's cost per level shows (#231).
+const storeChain = 60
+
 // storeLatencyMs is the round trip a store call stands for, SQLite over OPFS or a network, which
 // the benchmark reports from the calls rather than sleeping.
 const storeLatencyMs = 2
@@ -45,13 +49,14 @@ type store struct {
 
 // storeCatalog is what each store indexes: node, attr and edge by their first argument (an id, and
 // an edge's source). Edges by their target are deliberately missing, as a real store's might be.
-var storeCatalog = map[string][][]int{"node": {{0}}, "attr": {{0}}, "edge": {{0}}}
+var storeCatalog = map[string][][]int{"node": {{0}}, "attr": {{0}}, "edge": {{0}}, "next": {{0}}}
 
 func repoStore(repo, repos int) *store {
 	m := ns.NewMemSource().
 		Declare("node", "id", "kind").
 		Declare("attr", "id", "key", "value").
-		Declare("edge", "src", "kind", "dst")
+		Declare("edge", "src", "kind", "dst").
+		Declare("next", "src", "dst")
 	id := func(r, k int) ns.Value { return ns.S(fmt.Sprintf("repo%d/n%d", r, k)) }
 	for k := range storeNodes {
 		m.Add("node", ns.Tuple{Vals: []ns.Value{id(repo, k), ns.S("func")}})
@@ -61,6 +66,9 @@ func repoStore(repo, repos int) *store {
 			if c < storeNodes {
 				m.Add("edge", ns.Tuple{Vals: []ns.Value{id(repo, k), ns.S("calls"), id(repo, c)}})
 			}
+		}
+		if k+1 < storeChain {
+			m.Add("next", ns.Tuple{Vals: []ns.Value{id(repo, k), id(repo, k+1)}})
 		}
 		if k%20 == 0 {
 			m.Add("edge", ns.Tuple{Vals: []ns.Value{id(repo, k), ns.S("calls"), id((repo+1)%repos, storeNodes-1-k/20)}})
@@ -190,7 +198,7 @@ func repoStores(n int, batching bool) ([]*store, *ns.Federation) {
 		members[i] = ns.Member{
 			Name:   fmt.Sprintf("repo%d", i),
 			Source: src,
-			Holds:  ns.HoldsPrefix(fmt.Sprintf("repo%d/", i), map[string][]int{"node": {0}, "attr": {0}, "edge": {0}}),
+			Holds:  ns.HoldsPrefix(fmt.Sprintf("repo%d/", i), map[string][]int{"node": {0}, "attr": {0}, "edge": {0}, "next": {0}}),
 		}
 	}
 	f, err := ns.NewFederation(members...)
@@ -209,6 +217,7 @@ var storeQuestions = []struct{ name, text string }{
 	{"callers", `edge(?s, _, "repo0/n3") => ?s`},
 	{"callees-with-attr", `attr(?m, "lines", "7"), edge("repo0/n3", _, ?m) => ?m`},
 	{"reach", `reach(?a, ?b) :- edge(?a, _, ?b); reach(?a, ?c) :- reach(?a, ?b), edge(?b, _, ?c); reach("repo0/n0", ?x) => count(?x)`},
+	{"deep-walk", `walk(?a, ?b) :- next(?a, ?b); walk(?a, ?c) :- walk(?a, ?b), next(?b, ?c); walk("repo0/n0", ?x) => count(?x)`},
 }
 
 // storeCost is what one ask of a question cost the stores.
@@ -260,11 +269,14 @@ func unbatchedStoreSet(n int) storeSet {
 	return storeSet{stores: stores, fed: f, v: std(f)}
 }
 
-// askTwice asks q on a fresh Base over the stores, then again on the same Base, and returns each
-// ask's cost and the first ask's answer.
-func (s storeSet) askTwice(q Query) (first, second storeCost, rows []Row, err error) {
+// askTwice asks q on a fresh Base over the stores, set up by each of setup, then again on the same
+// Base, and returns each ask's cost and the first ask's answer.
+func (s storeSet) askTwice(q Query, setup ...func(*Base)) (first, second storeCost, rows []Row, err error) {
 	costOf(s.stores)
 	b := MustBase(s.v, s.fed)
+	for _, f := range setup {
+		f(b)
+	}
 	if rows, err = (SemiNaive{}).Eval(bg, q, b); err != nil {
 		return
 	}
@@ -307,8 +319,9 @@ func BenchmarkStores(b *testing.B) {
 }
 
 // The exercise's fixture can tell its cases apart: over three stores each question answers as one
-// Source of the same facts does, and the costs the mission sets out to cut show. They're controls,
-// not the mission's targets, which fail today by design.
+// Source of the same facts does, and the costs the mission sets out to cut show (the checks marked
+// control). The rest are the mission's targets met so far: an indexed pattern first (#154), a batch
+// per call (#153), and nothing fetched for a repeated question (#212).
 func TestStoresExercise(t *testing.T) {
 	const n = 3
 	set := newStoreSet(n)
@@ -335,8 +348,12 @@ func TestStoresExercise(t *testing.T) {
 		if len(want) == 0 {
 			t.Errorf("control: %s answers nothing", question.name)
 		}
-		if second.calls == 0 {
-			t.Errorf("control: asking %s again called no store, so the fixture can't show #212", question.name)
+		if second.calls != 0 {
+			t.Errorf("asking %s again made %d store calls, want none: the Base keeps what it looked up (#212)", question.name, second.calls)
+		}
+		uncached := func(b *Base) { b.LimitLookupCache(0) }
+		if _, again, _, err := set.askTwice(q, uncached); err != nil || again.calls == 0 {
+			t.Errorf("control: with the lookup cache off, asking %s again called no store: %v", question.name, err)
 		}
 		costs[question.name] = first
 	}
@@ -349,6 +366,9 @@ func TestStoresExercise(t *testing.T) {
 	reach := mustParse(t, storeQuestions[4].text)
 	if c, _, _, err := unbatchedStoreSet(n).askTwice(reach); err != nil || c.calls <= storeNodes {
 		t.Errorf("control: over stores that don't batch, reach made %d store calls, want more than its repo's %d nodes (a call per demanded value): %v", c.calls, storeNodes, err)
+	}
+	if c := costs["deep-walk"]; c.calls < storeChain-1 {
+		t.Errorf("control: a walk %d deep made %d calls, want one per level: batching can't go below that without the store walking itself (#231)", storeChain, c.calls)
 	}
 	if c, depth := costs["reach"], bits.Len(storeNodes); c.calls > c.asked*depth {
 		t.Errorf("reach made %d calls to %d stores, want at most a batch per store per level of its %d-level tree (#153)", c.calls, c.asked, depth)

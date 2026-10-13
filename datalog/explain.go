@@ -135,12 +135,14 @@ type SourceReport struct {
 	Scans   int64          `json:"scans,omitempty"` // reads of every tuple
 	Indexes []*IndexReport `json:"indexes,omitempty"`
 	// Lookups are the calls made to the Source's Lookup for it, Batches those to its LookupBatch,
-	// Fetched the tuples they returned, and Hits the calls this Eval answered from what an earlier
-	// lookup or batch of the same values returned.
+	// Fetched the tuples they returned, Hits the calls this Eval answered from what its own earlier
+	// lookup or batch of the same values returned, and Kept those it answered from what an earlier
+	// Eval's did, kept by the Base (#212).
 	Lookups int64 `json:"lookups,omitempty"`
 	Batches int64 `json:"batches,omitempty"`
 	Fetched int64 `json:"fetched,omitempty"`
 	Hits    int64 `json:"hits,omitempty"`
+	Kept    int64 `json:"kept,omitempty"`
 }
 
 // An IndexReport is one index of a base relation the Eval probed.
@@ -333,8 +335,9 @@ func (e *explainer) finish(b *Base, rows int, err error, budget int64) {
 }
 
 // warm reports whether the Eval's cost depended on what the Base kept from earlier queries in a way
-// its own numbers can't undo: it reused a derived relation, or probed the index of a relation the Base
-// held whole, where a fresh Base would have asked the Source to look the call up.
+// its own numbers can't undo: it reused a derived relation, answered a lookup from an earlier query's,
+// or probed the index of a relation the Base held whole, where a fresh Base would have asked the
+// Source to look the call up.
 func (e *explainer) warm(b *Base) bool {
 	if len(e.held) > 0 {
 		return true
@@ -343,7 +346,7 @@ func (e *explainer) warm(b *Base) bool {
 		return false
 	}
 	for _, s := range e.sources {
-		if s.Cached && len(s.Indexes) > 0 && b.lookable(s.Relation) {
+		if s.Kept > 0 || (s.Cached && len(s.Indexes) > 0 && b.lookable(s.Relation)) {
 			return true
 		}
 	}
@@ -354,7 +357,7 @@ func (e *explainer) warm(b *Base) bool {
 // Source looks relations up, no base relations either. It doesn't count toward b's Work.
 func coldCost(ctx context.Context, q Query, b *Base, opts []Option, rewrite func(*Base, Query) Query, fixpoint func(*Base, []Rule) error) *ColdReport {
 	cold := *b
-	cold.derived, cold.work = nil, nil
+	cold.derived, cold.work, cold.lookups = nil, nil, nil
 	if b.looker != nil {
 		cold.edb = newEDBCache()
 	}
@@ -578,7 +581,7 @@ func (r *Report) String() string {
 			} else {
 				fmt.Fprintf(&sb, "  %s: %d tuples, %s", s.Relation, s.Tuples, how)
 			}
-			if s.Lookups > 0 || s.Batches > 0 || s.Hits > 0 {
+			if s.Lookups > 0 || s.Batches > 0 || s.Hits > 0 || s.Kept > 0 {
 				fmt.Fprintf(&sb, ", %d lookups", s.Lookups)
 				if s.Batches > 0 {
 					fmt.Fprintf(&sb, " and %d batches", s.Batches)
@@ -586,6 +589,9 @@ func (r *Report) String() string {
 				fmt.Fprintf(&sb, " fetching %d tuples", s.Fetched)
 				if s.Hits > 0 {
 					fmt.Fprintf(&sb, ", %d answered from earlier lookups", s.Hits)
+				}
+				if s.Kept > 0 {
+					fmt.Fprintf(&sb, ", %d from earlier queries' lookups", s.Kept)
 				}
 			}
 			if s.Scans > 0 {
@@ -641,16 +647,24 @@ func (b *Base) explainEDB(atom *Atom, rows []ns.Tuple, bnd *binding) {
 	e.access("index (" + strings.Join(on, ", ") + ")")
 }
 
-// explainLookup records a call the Source looked up for atom: fetching tuples, or answered by an
-// earlier lookup of the same values when hit is set.
-func (b *Base) explainLookup(atom *Atom, mask patternMask, fetched int, hit bool) {
+// explainLookup records a call the Source looked up for atom, fetching tuples.
+func (b *Base) explainLookup(atom *Atom, mask patternMask, fetched int) {
 	e := b.run.explain
 	s := e.readSource(atom.Relation, 0, false)
-	if hit {
-		s.Hits++
+	s.Lookups++
+	s.Fetched += int64(fetched)
+	e.access("lookup (" + strings.Join(maskLabels(b, atom.Relation, mask), ", ") + ")")
+}
+
+// explainLookupHit records a call for atom's pattern answered from what this Eval looked up already,
+// or, when kept, from what an earlier Eval did (#212).
+func (b *Base) explainLookupHit(atom *Atom, mask patternMask, kept bool) {
+	e := b.run.explain
+	s := e.readSource(atom.Relation, 0, false)
+	if kept {
+		s.Kept++
 	} else {
-		s.Lookups++
-		s.Fetched += int64(fetched)
+		s.Hits++
 	}
 	e.access("lookup (" + strings.Join(maskLabels(b, atom.Relation, mask), ", ") + ")")
 }

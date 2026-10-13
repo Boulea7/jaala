@@ -1,6 +1,7 @@
 package datalog
 
 import (
+	"cmp"
 	"slices"
 
 	"github.com/panyam/jaala/ns"
@@ -20,9 +21,12 @@ import (
 // batchSize is the most values one batch carries, which bounds what prefetch holds at once.
 const batchSize = 1024
 
-// prefetch asks the Source for each looked-up call in lits, a body in the order solve runs it, in
-// batches. A Volatile predicate stops it, since running the prefix again could answer differently.
-func prefetch(b *Base, lits []Literal) error {
+// prefetch asks the Source for each looked-up call in lits, a body's positive literals in the order
+// solve runs them, and in negs, its negations, in batches. A negation is checked once the positive
+// literals have all matched, so its values come from one more run of the whole positive body, which
+// collects every negated call's at once (#230). A Volatile predicate stops it, since running the
+// prefix again could answer differently.
+func prefetch(b *Base, lits, negs []Literal) error {
 	if b.run == nil || !b.run.batch {
 		return nil
 	}
@@ -41,46 +45,83 @@ func prefetch(b *Base, lits []Literal) error {
 			}
 			continue
 		}
-		if _, base := b.schemaOf(atom.Relation); i == 0 || !base || !b.looksUp(atom.Relation) {
+		if i == 0 || !b.looksUpBase(atom) {
 			continue // the first literal has only its constants bound, one lookup
 		}
-		if err := prefetchAt(b, bl, lits, i); err != nil {
+		if err := prefetchFor(b, bl, lits[:i], []prefetchCall{{atom, i}}); err != nil {
 			return err
 		}
 	}
-	return nil
+	var negated []prefetchCall
+	for k, lit := range negs {
+		if lit.Neg != nil && b.looksUpBase(lit.Neg) {
+			negated = append(negated, prefetchCall{lit.Neg, len(lits) + k})
+		}
+	}
+	if len(negated) == 0 {
+		return nil
+	}
+	return prefetchFor(b, bl, lits, negated)
 }
 
-// prefetchAt solves lits[:i] and asks for the values it binds lits[i] to that the Eval hasn't looked up,
-// grouped by the positions bound.
-func prefetchAt(b *Base, bl ns.BatchLookupSource, lits []Literal, i int) error {
-	atom := lits[i].Pos
-	pending := map[patternMask][][]ns.Value{}
+// looksUpBase reports whether a call to atom goes to the Source's Lookup: a base relation it looks up.
+func (b *Base) looksUpBase(atom *Atom) bool {
+	if _, base := b.schemaOf(atom.Relation); !base {
+		return false
+	}
+	return b.looksUp(atom.Relation)
+}
+
+// A prefetchCall is a looked-up call to prefetch for, and its literal's place in the body as Explain
+// lists it (the positive literals, then the negations).
+type prefetchCall struct {
+	atom *Atom
+	at   int
+}
+
+// prefetchFor solves prefix and asks, for each of calls, for the values it binds the call to that no
+// Eval has looked up, grouped by the positions bound.
+func prefetchFor(b *Base, bl ns.BatchLookupSource, prefix []Literal, calls []prefetchCall) error {
+	type batch struct {
+		call int
+		mask patternMask
+	}
+	pending := map[batch][][]ns.Value{}
 	asked := map[string]bool{}
-	flush := func(mask patternMask) error {
-		vals := pending[mask]
-		delete(pending, mask)
-		return b.run.explain.at(i, func() error { return b.lookupBatch(bl, atom, mask, vals) })
+	flush := func(k batch) error {
+		vals := pending[k]
+		delete(pending, k)
+		c := calls[k.call]
+		return b.run.explain.at(c.at, func() error { return b.lookupBatch(bl, c.atom, k.mask, vals) })
 	}
 	e := b.run.explain
 	if e != nil {
 		e.quiet = true
 	}
-	err := solve(lits[:i], 0, newBinding(), b, func(bnd *binding) error {
-		mask, vals, any := boundArgs(atom.Args, bnd)
-		if !any {
-			return nil
+	err := solve(prefix, 0, newBinding(), b, func(bnd *binding) error {
+		for ci, c := range calls {
+			mask, vals, any := boundArgs(c.atom.Args, bnd)
+			if !any {
+				continue
+			}
+			key := lookupKey(c.atom.Relation, mask, vals)
+			if _, done := b.run.looked[key]; done || asked[key] {
+				continue
+			}
+			if _, kept := b.lookups.get(key); kept {
+				continue // left for solve to read, so Explain counts it as kept
+			}
+			asked[key] = true
+			k := batch{ci, mask}
+			pending[k] = append(pending[k], vals)
+			if len(pending[k]) < batchSize {
+				continue
+			}
+			if err := flush(k); err != nil {
+				return err
+			}
 		}
-		key := lookupKey(atom.Relation, mask, vals)
-		if _, done := b.run.looked[key]; done || asked[key] {
-			return nil
-		}
-		asked[key] = true
-		pending[mask] = append(pending[mask], vals)
-		if len(pending[mask]) < batchSize {
-			return nil
-		}
-		return flush(mask)
+		return nil
 	})
 	if e != nil {
 		e.quiet = false
@@ -88,20 +129,20 @@ func prefetchAt(b *Base, bl ns.BatchLookupSource, lits []Literal, i int) error {
 	if err != nil {
 		return err
 	}
-	for _, mask := range sortedMasks(pending) {
-		if err := flush(mask); err != nil {
+	keys := make([]batch, 0, len(pending))
+	for k := range pending {
+		keys = append(keys, k)
+	}
+	slices.SortFunc(keys, func(x, y batch) int {
+		if x.call != y.call {
+			return x.call - y.call
+		}
+		return cmp.Compare(x.mask, y.mask)
+	})
+	for _, k := range keys {
+		if err := flush(k); err != nil {
 			return err
 		}
 	}
 	return nil
-}
-
-// sortedMasks is pending's masks in order, so a body's batches go out in the same order every run.
-func sortedMasks(pending map[patternMask][][]ns.Value) []patternMask {
-	out := make([]patternMask, 0, len(pending))
-	for m := range pending {
-		out = append(out, m)
-	}
-	slices.Sort(out)
-	return out
 }

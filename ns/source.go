@@ -79,9 +79,12 @@ type ContextSource interface {
 // so a pin stored as N(3) matches a bound "3". A source whose stored kinds match its declared types
 // compares as stored. A source unsure how its index compares can return more.
 //
-// What Lookup returns is kept for the one Eval that asked, so a relation the queries only ever probe
-// is never held whole by the Base. A call with nothing bound still reads the relation whole, through
-// Tuples or TuplesContext, and the Base keeps that read and answers later calls from its own index.
+// What Lookup returns is kept for the rest of the Eval that asked, and by the Base for later Evals, up
+// to the Base's LimitLookupCache in tuples (#212), so a repeated question doesn't ask again and a
+// relation the queries only ever probe is held only as far as it was probed. A Versioned Source's
+// version moving drops what was kept, as Forget does. A call with nothing bound still reads the
+// relation whole, through Tuples or TuplesContext, and the Base keeps that read and answers later
+// calls from its own index.
 // Unindexed never calls Lookup. Each call counts one unit of work against the Eval's Budget, and a
 // failed call is wrapped with the relation's name and not kept.
 type LookupSource interface {
@@ -97,8 +100,8 @@ type LookupSource interface {
 // result count other than len(values) fails the query.
 //
 // The planned SemiNaive asks for a batch as it solves a body, for the values the literals before a
-// looked-up call bind it to, and keeps each result for the one Eval that asked, as Lookup's is, so the
-// calls it answers never reach Lookup. Each value asked counts one unit of work, as a Lookup does. A
+// looked-up call bind it to, or for a negated call those the whole positive body binds it to (#230),
+// and keeps each result as Lookup's is, so the calls it answers never reach Lookup. Each value asked counts one unit of work, as a Lookup does. A
 // Source that doesn't implement it is asked one value at a time through Lookup.
 type BatchLookupSource interface {
 	LookupBatch(ctx context.Context, rel string, positions []int, values [][]Value) ([][]Tuple, error)
