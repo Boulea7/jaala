@@ -198,6 +198,10 @@ go list -deps ./... | grep '\.' | grep -v '^github.com/panyam/jaala' | grep -v '
   test that loops until a condition (paging until a short page) needs a bound, or a mutation hangs
   it rather than failing it (#194). And a test comparing two APIs one of which is built on the other
   can't fail: `Eval` is `EvalTable` converted, so the table's test checks its content directly.
+  `both()` panics on a disagreement, which ends the whole `go test` run, so a mutation checked
+  against several tests runs each by its own `-run` (#227: one run reported only the first). A
+  planner change that `deferComparisons` redoes at solve time can't be seen by any answer; a
+  mutation that reverts it and stays green says so (#227's `planBody` hold, dropped).
 - **Give a test a control that proves its fixture can tell the cases apart.** Most surviving
   mutations here were fixtures that could not: a recursion guard tested only with two-rule
   relations, a column-order test whose sort orders coincided, a "free" call the planner bound, a
