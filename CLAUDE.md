@@ -227,7 +227,10 @@ go list -deps ./... | grep '\.' | grep -v '^github.com/panyam/jaala' | grep -v '
   Naive answers within `fuzzBudget` all three evaluators must `agree`. Plain `go test` (so CI) runs the
   seeds and every input in `testdata/fuzz/`; `./selfcheck.sh` fuzzes each target for
   `JAALA_FUZZ_TIME` (30s). A failing input is written to `testdata/fuzz/<Target>/`: fix it, rename the
-  file for what it caught, and commit it.
+  file for what it caught, and commit it. A failure is a finding only when the saved input fails
+  replayed; otherwise (a worker killed or hung, the machine under load, #169) selfcheck prints the
+  run's last lines, removes an input that passes replayed (a killed worker saves the one it was
+  running), and fuzzes once more, passing if the rerun does.
   Its first hour found a quadratic did-you-mean, a parser panic, `?_: T` not printing back,
   comparison and head-`_` cases the evaluators answered differently, and a `-0` the index missed.
 - **A comparison is checked where its body binds it, not where it is written** (#89). Every solve
