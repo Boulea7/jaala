@@ -649,6 +649,10 @@ The context ended while a source that looks facts up (`ns.LookupSource`) was ans
 
 The host's source failed to look up a relation's facts for a call with bound arguments. jaala doesn't keep a failed lookup.
 
+`query: looking up …: a batch of … lookups answered …`
+
+A source that answers lookups in batches (`ns.BatchLookupSource`) returned a different number of results than the values it was asked for. It must return one result per value, in the order asked.
+
 ## Setting up a vocabulary
 
 These come from a host's Go code registering a vocabulary, never from a query. They're listed so a host author can find them.

@@ -36,10 +36,12 @@ type Report struct {
 	// found (#120). A limit with an order by holds at most limit plus offset.
 	Held  int    `json:"held"`
 	Error string `json:"error,omitempty"`
-	// Lookups are the calls the Eval made to the Source's Lookup (ns.LookupSource), and Fetched the
-	// tuples the Source returned to this Eval: those lookups', and those of each relation it read whole
-	// that the Base didn't already hold.
+	// Lookups are the calls the Eval made to the Source's Lookup (ns.LookupSource), Batches those to
+	// its LookupBatch (ns.BatchLookupSource, #153), so the round trips are the two together, and
+	// Fetched the tuples the Source returned to this Eval: those calls', and those of each relation it
+	// read whole that the Base didn't already hold.
 	Lookups int64 `json:"lookups,omitempty"`
+	Batches int64 `json:"batches,omitempty"`
 	Fetched int64 `json:"fetched,omitempty"`
 	// Cold is what the Eval would have cost on a Base that kept nothing from earlier queries. Unset
 	// when the Eval failed.
@@ -66,6 +68,7 @@ type Report struct {
 type ColdReport struct {
 	Work    int64 `json:"work"`
 	Lookups int64 `json:"lookups,omitempty"`
+	Batches int64 `json:"batches,omitempty"`
 	Fetched int64 `json:"fetched,omitempty"`
 	// Error is why the cold run stopped, such as the Eval's Budget, when it did.
 	Error string `json:"error,omitempty"`
@@ -131,9 +134,11 @@ type SourceReport struct {
 	Cached  bool           `json:"cached"`
 	Scans   int64          `json:"scans,omitempty"` // reads of every tuple
 	Indexes []*IndexReport `json:"indexes,omitempty"`
-	// Lookups are the calls made to the Source's Lookup for it, Fetched the tuples they returned, and
-	// Hits the calls this Eval answered from what an earlier lookup of the same values returned.
+	// Lookups are the calls made to the Source's Lookup for it, Batches those to its LookupBatch,
+	// Fetched the tuples they returned, and Hits the calls this Eval answered from what an earlier
+	// lookup or batch of the same values returned.
 	Lookups int64 `json:"lookups,omitempty"`
+	Batches int64 `json:"batches,omitempty"`
 	Fetched int64 `json:"fetched,omitempty"`
 	Hits    int64 `json:"hits,omitempty"`
 }
@@ -163,6 +168,9 @@ type explainer struct {
 	// reads or builds itself, while planning or solving, shows as its own.
 	cachedTuples  map[string]bool
 	cachedIndexes map[idxKey]bool
+	// quiet is set while prefetch runs a body's prefix again, whose literals were reached already: its
+	// work still counts against the body, but no literal counts it as reached or passed.
+	quiet bool
 }
 
 func newExplainer(r *Report, b *Base) *explainer {
@@ -235,6 +243,18 @@ func (e *explainer) literal(i int) (lr, prev *LiteralReport) {
 	return lr, prev
 }
 
+// at runs f with literal i of the current body as the one its work and access count against, when e
+// explains an Eval.
+func (e *explainer) at(i int, f func() error) error {
+	if e == nil || e.body == nil || i >= len(e.body.Literals) {
+		return f()
+	}
+	prev := e.cur
+	e.cur = e.body.Literals[i]
+	defer func() { e.cur = prev }()
+	return f()
+}
+
 // access records how the current literal was read, once per way.
 func (e *explainer) access(how string) {
 	if e.cur == nil {
@@ -299,6 +319,7 @@ func (e *explainer) finish(b *Base, rows int, err error, budget int64) {
 		s := e.sources[rel]
 		r.Sources = append(r.Sources, s)
 		r.Lookups += s.Lookups
+		r.Batches += s.Batches
 		r.Fetched += s.Fetched
 		cold += s.Fetched + int64(s.Tuples)
 		if !s.Cached {
@@ -307,7 +328,7 @@ func (e *explainer) finish(b *Base, rows int, err error, budget int64) {
 	}
 	r.Relations = e.relations(b)
 	if err == nil {
-		r.Cold = &ColdReport{Work: r.Work, Lookups: r.Lookups, Fetched: cold}
+		r.Cold = &ColdReport{Work: r.Work, Lookups: r.Lookups, Batches: r.Batches, Fetched: cold}
 	}
 }
 
@@ -340,7 +361,7 @@ func coldCost(ctx context.Context, q Query, b *Base, opts []Option, rewrite func
 	var r Report
 	_, err := evaluate(ctx, q, &cold, append(opts[:len(opts):len(opts)], Explain(&r), func(o *evalOptions) { o.cold = true }), rewrite, fixpoint)
 	if err != nil {
-		return &ColdReport{Work: r.Work, Lookups: r.Lookups, Error: err.Error()}
+		return &ColdReport{Work: r.Work, Lookups: r.Lookups, Batches: r.Batches, Error: err.Error()}
 	}
 	return r.Cold
 }
@@ -494,15 +515,21 @@ func (r *Report) String() string {
 	if r.Error != "" {
 		fmt.Fprintf(&sb, "error: %s\n", r.Error)
 	}
-	if r.Lookups > 0 || r.Fetched > 0 {
+	if r.Lookups > 0 || r.Batches > 0 || r.Fetched > 0 {
 		fmt.Fprintf(&sb, "fetched %d tuples from the source", r.Fetched)
-		if r.Lookups > 0 {
+		if r.Lookups > 0 || r.Batches > 0 {
 			fmt.Fprintf(&sb, " in %d lookups", r.Lookups)
+		}
+		if r.Batches > 0 {
+			fmt.Fprintf(&sb, " and %d batches", r.Batches)
 		}
 		sb.WriteString("\n")
 	}
-	if c := r.Cold; c != nil && (c.Work != r.Work || c.Lookups != r.Lookups || c.Fetched != r.Fetched || c.Error != "") {
+	if c := r.Cold; c != nil && (c.Work != r.Work || c.Lookups != r.Lookups || c.Batches != r.Batches || c.Fetched != r.Fetched || c.Error != "") {
 		fmt.Fprintf(&sb, "cold: work %d, fetched %d tuples, %d lookups", c.Work, c.Fetched, c.Lookups)
+		if c.Batches > 0 {
+			fmt.Fprintf(&sb, ", %d batches", c.Batches)
+		}
 		if c.Error != "" {
 			fmt.Fprintf(&sb, ", error: %s", c.Error)
 		}
@@ -551,8 +578,12 @@ func (r *Report) String() string {
 			} else {
 				fmt.Fprintf(&sb, "  %s: %d tuples, %s", s.Relation, s.Tuples, how)
 			}
-			if s.Lookups > 0 || s.Hits > 0 {
-				fmt.Fprintf(&sb, ", %d lookups fetching %d tuples", s.Lookups, s.Fetched)
+			if s.Lookups > 0 || s.Batches > 0 || s.Hits > 0 {
+				fmt.Fprintf(&sb, ", %d lookups", s.Lookups)
+				if s.Batches > 0 {
+					fmt.Fprintf(&sb, " and %d batches", s.Batches)
+				}
+				fmt.Fprintf(&sb, " fetching %d tuples", s.Fetched)
 				if s.Hits > 0 {
 					fmt.Fprintf(&sb, ", %d answered from earlier lookups", s.Hits)
 				}
@@ -622,6 +653,14 @@ func (b *Base) explainLookup(atom *Atom, mask patternMask, fetched int, hit bool
 		s.Fetched += int64(fetched)
 	}
 	e.access("lookup (" + strings.Join(maskLabels(b, atom.Relation, mask), ", ") + ")")
+}
+
+// explainBatch records a batch of lookups for atom's pattern that fetched tuples.
+func (b *Base) explainBatch(atom *Atom, mask patternMask, fetched int) {
+	s := b.run.explain.readSource(atom.Relation, 0, false)
+	s.Batches++
+	s.Fetched += int64(fetched)
+	b.run.explain.access("batched lookup (" + strings.Join(maskLabels(b, atom.Relation, mask), ", ") + ")")
 }
 
 // explainIDB records how a derived relation is about to be read for atom.

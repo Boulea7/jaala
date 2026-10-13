@@ -683,6 +683,9 @@ var lookedUpPrograms int
 // federatedPrograms counts those whose evaluation made a lookup through a Federation's members.
 var federatedPrograms int
 
+// batchedPrograms counts those whose planned evaluation asked a batching Source for a batch (#153).
+var batchedPrograms int
+
 // unitAnswers counts the corpus answers holding a number with a unit, and mixedAnswers those with an
 // aggregate absent over mixed units, for the control that units reach the goals (#192).
 var unitAnswers, mixedAnswers int
@@ -705,14 +708,18 @@ func countUnitAnswers(rows []Row) {
 	}
 }
 
-// agreeLookingUp runs q over b's facts through a Source answering lookups (#126): every evaluator must
+// agreeLookingUp runs q over b's facts through a Source answering lookups (#126), and the planned
+// SemiNaive's in batches (#153): every evaluator must
 // give the rows and error Naive gave reading them whole, and Naive the same citations and witnesses
 // under CanonicalCites.
 func agreeLookingUp(q Query, b *Base, want []Row, werr error, opts []Option) string {
-	src := lookingAt(b.src)
+	src := batchingAt(b.src)
 	diff := agreeOver(q, b, MustBase(b.reg, src), "looking up", want, werr, opts)
 	if len(src.lookups) > 0 {
 		lookedUpPrograms++
+	}
+	if len(src.batches) > 0 {
+		batchedPrograms++
 	}
 	return diff
 }
@@ -722,16 +729,19 @@ func agreeLookingUp(q Query, b *Base, want []Row, werr error, opts []Option) str
 // their first argument (#154), so the planner reorders bodies around their scans.
 func agreeFederated(q Query, b *Base, want []Row, werr error, opts []Option) string {
 	members := splitInto(b.src, 3, func(int) bool { return true })
+	stores := make([]*looking, len(members))
 	for i := range members {
-		members[i].Source = firstIndexed{members[i].Source.(*looking)}
+		stores[i] = members[i].Source.(*looking)
+		members[i].Source = firstIndexed{stores[i]}
 	}
+	members[0].Source = firstIndexedBatching{&batching{looking: stores[0]}}
 	f, err := ns.NewFederation(members...)
 	if err != nil {
 		return err.Error()
 	}
 	diff := agreeOver(q, b, MustBase(b.reg, f), "federated", want, werr, opts)
-	for _, m := range members {
-		if len(m.Source.(firstIndexed).lookups) > 0 {
+	for _, st := range stores {
+		if len(st.lookups) > 0 {
 			federatedPrograms++
 			break
 		}
@@ -743,6 +753,11 @@ func agreeFederated(q Query, b *Base, want []Row, werr error, opts []Option) str
 type firstIndexed struct{ *looking }
 
 func (firstIndexed) Indexed(_ string, bound []int) bool { return slices.Contains(bound, 0) }
+
+// firstIndexedBatching is a firstIndexed store that also answers lookups in batches.
+type firstIndexedBatching struct{ *batching }
+
+func (firstIndexedBatching) Indexed(_ string, bound []int) bool { return slices.Contains(bound, 0) }
 
 // agreeOver requires every evaluator over lb to answer q as Naive did over b, and Naive over lb to
 // cite as over b under CanonicalCites. A limit without an order by may answer other rows over lb,
@@ -943,7 +958,7 @@ func TestGeneratedProgramsAgree(t *testing.T) {
 		first, seeds = int64(s), 1
 	}
 	compared, known, skipped, failed := map[string]int{}, map[int]int{}, 0, 0
-	lookedUpPrograms, federatedPrograms, unitAnswers, mixedAnswers = 0, 0, 0, 0
+	lookedUpPrograms, federatedPrograms, batchedPrograms, unitAnswers, mixedAnswers = 0, 0, 0, 0, 0
 	withUnits := 0
 	for seed := first; seed < first+int64(seeds); seed++ {
 		rnd := rand.New(rand.NewSource(seed))
@@ -1002,6 +1017,9 @@ func TestGeneratedProgramsAgree(t *testing.T) {
 	}
 	if federatedPrograms == 0 {
 		t.Errorf("control: no program made a lookup through a Federation's members")
+	}
+	if batchedPrograms == 0 {
+		t.Errorf("control: no program asked a batching Source for a batch")
 	}
 	if unitAnswers < seeds/100 {
 		t.Errorf("control: %d answers held a unit over %d seeds: units aren't reaching the goals", unitAnswers, seeds)

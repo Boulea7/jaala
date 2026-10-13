@@ -47,7 +47,7 @@ func HoldsPrefix(prefix string, positions map[string][]int) func(rel string, bou
 // A fact two members serve is two facts, as it would be in one Source serving it twice: a goal's
 // answer rows are distinct either way, and an aggregate counting bindings counts both.
 //
-// It is a ContextSource, a LookupSource, IndexedLookups and Versioned whatever its members are. A relation is looked
+// It is a ContextSource, a LookupSource, a BatchLookupSource, IndexedLookups and Versioned whatever its members are. A relation is looked
 // up only when every member serving it looks it up (LooksUp), so a Federation can be a member of
 // another; otherwise the engine reads it
 // whole, from every member, and keeps it. Its version changes whenever a member's does, and a member
@@ -188,6 +188,86 @@ func (f *Federation) Lookup(ctx context.Context, rel string, bound map[int]Value
 		out = append(out, f.cited(i, ts)...)
 	}
 	return out, nil
+}
+
+// LookupBatch implements BatchLookupSource: each member serving rel is asked once for the values its
+// Holds allows, through its own LookupBatch, or one Lookup per value when it has none, so a batch
+// costs a member that batches one round trip however many values it carries. A value's result is its
+// members' results in member order, as Lookup's is. A member that doesn't answer lookups returns its
+// whole relation, read once, as in Lookup. A member's failure fails the batch, wrapped with the
+// member's name.
+func (f *Federation) LookupBatch(ctx context.Context, rel string, positions []int, values [][]Value) ([][]Tuple, error) {
+	out := make([][]Tuple, len(values))
+	bounds := make([]map[int]Value, len(values))
+	for k, vals := range values {
+		bounds[k] = boundAt(positions, vals)
+	}
+	for _, i := range f.serving[rel] {
+		m := f.members[i]
+		var held []int
+		for k := range values {
+			if m.Holds == nil || m.Holds(rel, bounds[k]) {
+				held = append(held, k)
+			}
+		}
+		if len(held) == 0 {
+			continue
+		}
+		res, err := lookupEach(ctx, m.Source, rel, positions, values, held)
+		if err != nil {
+			return nil, fmt.Errorf("member %s: %w", f.name(i), err)
+		}
+		for j, k := range held {
+			out[k] = append(out[k], f.cited(i, res[j])...)
+		}
+	}
+	return out, nil
+}
+
+// lookupEach asks src for rel's facts matching values[k] at positions, for each k in held, returning a
+// result per k: in one call when it batches, one Lookup per value when it only looks up, and its whole
+// relation, read once, otherwise.
+func lookupEach(ctx context.Context, src Source, rel string, positions []int, values [][]Value, held []int) ([][]Tuple, error) {
+	res := make([][]Tuple, len(held))
+	if bs, ok := src.(BatchLookupSource); ok {
+		asked := make([][]Value, len(held))
+		for j, k := range held {
+			asked[j] = values[k]
+		}
+		got, err := bs.LookupBatch(ctx, rel, positions, asked)
+		if err != nil {
+			return nil, err
+		}
+		if len(got) != len(asked) {
+			return nil, fmt.Errorf("a batch of %d lookups of %s answered %d", len(asked), rel, len(got))
+		}
+		return got, nil
+	}
+	ls, ok := src.(LookupSource)
+	if !ok {
+		all := src.Tuples(rel)
+		for j := range res {
+			res[j] = all
+		}
+		return res, nil
+	}
+	for j, k := range held {
+		ts, err := ls.Lookup(ctx, rel, boundAt(positions, values[k]))
+		if err != nil {
+			return nil, err
+		}
+		res[j] = ts
+	}
+	return res, nil
+}
+
+// boundAt is one batched lookup's values as Lookup's bound map.
+func boundAt(positions []int, vals []Value) map[int]Value {
+	bound := make(map[int]Value, len(positions))
+	for j, p := range positions {
+		bound[p] = vals[j]
+	}
+	return bound
 }
 
 // Version implements Versioned: the members' versions together, each length-prefixed so no two lists

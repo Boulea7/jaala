@@ -88,6 +88,22 @@ type LookupSource interface {
 	Lookup(ctx context.Context, rel string, bound map[int]Value) ([]Tuple, error)
 }
 
+// BatchLookupSource is optionally implemented by a LookupSource that answers many lookups of one
+// pattern in one call, such as a database asked `WHERE (a, b) IN (...)` across a worker boundary or a
+// network, where each call is a round trip (#153). positions are the bound argument positions, from 0
+// and sorted, and each of values is one lookup's values at those positions, in that order. LookupBatch
+// returns one result per value, in values' order, each what Lookup would return for it and under
+// Lookup's contract: it may hold facts that don't match, and must not leave out one that does. A
+// result count other than len(values) fails the query.
+//
+// The planned SemiNaive asks for a batch as it solves a body, for the values the literals before a
+// looked-up call bind it to, and keeps each result for the one Eval that asked, as Lookup's is, so the
+// calls it answers never reach Lookup. Each value asked counts one unit of work, as a Lookup does. A
+// Source that doesn't implement it is asked one value at a time through Lookup.
+type BatchLookupSource interface {
+	LookupBatch(ctx context.Context, rel string, positions []int, values [][]Value) ([][]Tuple, error)
+}
+
 // LookupRelations is optionally implemented by a LookupSource that answers lookups for some of its
 // relations and not others, such as a Federation whose members differ (#211). The engine looks up a
 // relation only when LooksUp reports true for it, and reads any other relation whole, once per Base,
