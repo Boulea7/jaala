@@ -717,7 +717,7 @@ func deferComparisons(lits []Literal, reg *ns.Vocabulary) []Literal {
 }
 
 func solve(lits []Literal, i int, bnd *binding, b *Base, emit func(*binding) error) error {
-	if b.run == nil || b.run.explain == nil {
+	if b.run == nil || b.run.explain == nil || b.run.explain.quiet {
 		return solveAt(lits, i, bnd, b, emit, nil)
 	}
 	// Explaining: the work from here is literal i's, and what a solution costs to keep (its

@@ -1,6 +1,7 @@
 package ns
 
 import (
+	"context"
 	"reflect"
 	"slices"
 	"strings"
@@ -134,5 +135,84 @@ func TestAFederationIndexesAPatternOnlyWhenEveryMemberDoes(t *testing.T) {
 	g, _ := NewFederation(Member{Source: byBoth}, Member{Source: mem()})
 	if !g.Indexed("edge", []int{1}) {
 		t.Error("control: edge by dst, indexed in the only member that says")
+	}
+}
+
+// lookupMem answers Lookup by scanning, counting its calls.
+type lookupMem struct {
+	*MemSource
+	calls int
+}
+
+func (m *lookupMem) Lookup(_ context.Context, rel string, bound map[int]Value) ([]Tuple, error) {
+	m.calls++
+	var out []Tuple
+	for _, t := range m.Tuples(rel) {
+		ok := true
+		for i, v := range bound {
+			ok = ok && t.Vals[i].S == v.S
+		}
+		if ok {
+			out = append(out, t)
+		}
+	}
+	return out, nil
+}
+
+// batchMem is a lookupMem that also answers a batch in one call, recording what each batch asked.
+type batchMem struct {
+	*lookupMem
+	asked [][]string
+}
+
+func (m *batchMem) LookupBatch(ctx context.Context, rel string, positions []int, values [][]Value) ([][]Tuple, error) {
+	var asked []string
+	out := make([][]Tuple, len(values))
+	for k, vals := range values {
+		asked = append(asked, vals[0].S)
+		out[k], _ = m.lookupMem.Lookup(ctx, rel, map[int]Value{positions[0]: vals[0]})
+	}
+	m.lookupMem.calls -= len(values)
+	m.asked = append(m.asked, asked)
+	return out, nil
+}
+
+// A batch goes to each member serving the relation once, carrying only the values its Holds allows: in
+// one call to a member that batches, one Lookup per value to one that only looks up. Each value's
+// result is its members' answers in member order, cited by member. A batch to a member asked for
+// none of its values is never made.
+func TestAFederationBatchesPerMember(t *testing.T) {
+	mem := func(ids ...string) *MemSource {
+		m := NewMemSource().Declare("node", "id")
+		for _, id := range ids {
+			m.Add("node", Tuple{Vals: []Value{S(id)}, Cites: []string{"f"}})
+		}
+		return m
+	}
+	x := &batchMem{lookupMem: &lookupMem{MemSource: mem("x/1", "x/2")}}
+	y := &lookupMem{MemSource: mem("y/1", "y/2")}
+	z := &batchMem{lookupMem: &lookupMem{MemSource: mem("z/1")}}
+	f, _ := NewFederation(
+		Member{Name: "x", Source: x, Holds: HoldsPrefix("x/", map[string][]int{"node": {0}})},
+		Member{Name: "y", Source: y, Holds: HoldsPrefix("y/", map[string][]int{"node": {0}})},
+		Member{Name: "z", Source: z, Holds: HoldsPrefix("z/", map[string][]int{"node": {0}})},
+	)
+	got, err := f.LookupBatch(context.Background(), "node", []int{0}, [][]Value{{S("x/1")}, {S("y/2")}, {S("x/3")}, {S("y/1")}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var cites []string
+	for _, ts := range got {
+		var c []string
+		for _, t := range ts {
+			c = append(c, t.Vals[0].S+"@"+strings.Join(t.Cites, ","))
+		}
+		cites = append(cites, strings.Join(c, " "))
+	}
+	if want := []string{"x/1@x:f", "y/2@y:f", "", "y/1@y:f"}; !reflect.DeepEqual(cites, want) {
+		t.Errorf("results %q, want %q", cites, want)
+	}
+	if !reflect.DeepEqual(x.asked, [][]string{{"x/1", "x/3"}}) || x.calls != 0 || y.calls != 2 || len(z.asked) != 0 {
+		t.Errorf("x batched %v with %d lookups, y looked up %d times, z batched %v", x.asked, x.calls, y.calls, z.asked)
 	}
 }

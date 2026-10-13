@@ -111,6 +111,9 @@ type evalRun struct {
 	looked map[string][]ns.Tuple
 	// explain is the Explain report being filled, or nil.
 	explain *explainer
+	// batch sets prefetch asking a batching Source for a body's lookups ahead of solving it (#153),
+	// which only the planned SemiNaive does.
+	batch bool
 }
 
 // ctxCheckEvery is how many units of work pass between checks of the context. Checking on every

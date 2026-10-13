@@ -95,7 +95,11 @@ func answerGoal(b *Base, pos, negs []Literal, having []Compare, sel, cols []Term
 	total := 0
 	if hasAggregate(sel) || len(having) > 0 {
 		ag := newAggregator(sel, having, true)
-		err := solve(deferComparisons(pos, b.reg), 0, newBinding(), b, func(bnd *binding) error {
+		lits := deferComparisons(pos, b.reg)
+		if err := prefetch(b, lits); err != nil {
+			return nil, err
+		}
+		err := solve(lits, 0, newBinding(), b, func(bnd *binding) error {
 			ok, err := passesNegations(bnd, negs, b)
 			if ok {
 				ag.add(bnd)
@@ -144,7 +148,13 @@ func answerGoal(b *Base, pos, negs []Literal, having []Compare, sel, cols []Term
 		if o.total != nil {
 			p.total = map[string]bool{}
 		}
-		err := solve(deferComparisons(pos, b.reg), 0, newBinding(), b, func(bnd *binding) error {
+		lits := deferComparisons(pos, b.reg)
+		if p.stopAt == 0 { // a limit without an order by stops at its first rows, before most lookups
+			if err := prefetch(b, lits); err != nil {
+				return nil, err
+			}
+		}
+		err := solve(lits, 0, newBinding(), b, func(bnd *binding) error {
 			ok, err := passesNegations(bnd, negs, b)
 			if err != nil || !ok {
 				return err

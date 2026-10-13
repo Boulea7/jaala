@@ -1,6 +1,7 @@
 package datalog
 
 import (
+	"context"
 	"fmt"
 	"strconv"
 	"strings"
@@ -54,10 +55,7 @@ func (b *Base) lookup(atom *Atom, bnd *binding) (rows []ns.Tuple, ok bool, err e
 	ctx := r.context()
 	rows, err = b.looker.Lookup(ctx, atom.Relation, bound)
 	if err != nil {
-		if ctx.Err() != nil {
-			return nil, true, fmt.Errorf("query: evaluation stopped looking up %s: %w", atom.Relation, ctx.Err())
-		}
-		return nil, true, fmt.Errorf("query: looking up %s: %w", atom.Relation, err)
+		return nil, true, lookupErr(ctx, atom.Relation, err)
 	}
 	rows = normalizeTuples(rows, b.argTypesOf(atom.Relation))
 	if r.looked == nil {
@@ -68,6 +66,53 @@ func (b *Base) lookup(atom *Atom, bnd *binding) (rows []ns.Tuple, ok bool, err e
 		b.explainLookup(atom, mask, len(rows), false)
 	}
 	return rows, true, nil
+}
+
+// lookupErr is a failed lookup's error, wrapped with the relation's name.
+func lookupErr(ctx context.Context, rel string, err error) error {
+	if ctx.Err() != nil {
+		return fmt.Errorf("query: evaluation stopped looking up %s: %w", rel, ctx.Err())
+	}
+	return fmt.Errorf("query: looking up %s: %w", rel, err)
+}
+
+// lookupBatch asks the Source in one call (ns.BatchLookupSource, #153) for rel's facts matching each
+// of vals at mask's positions, and keeps each value's result in the Eval's cache as lookup would have,
+// so the calls it answers are hits. Each value counts a unit of work, as its own lookup would.
+func (b *Base) lookupBatch(bl ns.BatchLookupSource, atom *Atom, mask patternMask, vals [][]ns.Value) error {
+	for range vals {
+		if err := b.countWork(); err != nil {
+			return err
+		}
+	}
+	var positions []int
+	for i := range atom.Args {
+		if i < maskWidth && mask&(1<<uint(i)) != 0 {
+			positions = append(positions, i)
+		}
+	}
+	r := b.run
+	ctx := r.context()
+	res, err := bl.LookupBatch(ctx, atom.Relation, positions, vals)
+	if err != nil {
+		return lookupErr(ctx, atom.Relation, err)
+	}
+	if len(res) != len(vals) {
+		return fmt.Errorf("query: looking up %s: a batch of %d lookups answered %d", atom.Relation, len(vals), len(res))
+	}
+	if r.looked == nil {
+		r.looked = map[string][]ns.Tuple{}
+	}
+	types, fetched := b.argTypesOf(atom.Relation), 0
+	for k, v := range vals {
+		rows := normalizeTuples(res[k], types)
+		r.looked[lookupKey(atom.Relation, mask, v)] = rows
+		fetched += len(rows)
+	}
+	if r.explain != nil {
+		b.explainBatch(atom, mask, fetched)
+	}
+	return nil
 }
 
 // lookupKey is a lookup's key in the Eval's cache: the relation, the bound positions, and their values'

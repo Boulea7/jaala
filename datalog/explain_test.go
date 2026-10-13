@@ -75,6 +75,7 @@ func TestExplainAccountsForEveryUnitOfWork(t *testing.T) {
 		{func() *Base { return baseFor(std(reversedLine(30))) }, closure + `reach(?a, ?b) => ?a, count(?b)`},
 		{func() *Base { return baseFor(std(probedBoard(30))) }, probed + `probed_both(?r) => count(?r)`},
 		{func() *Base { return baseFor(std(graph())) }, `deg(?n, count(?m)) :- edge(?n, ?m); node(?n), not deg(?n, _) => ?n`},
+		{func() *Base { return MustBase(std(fanned(40)), batchingAt(fanned(40))) }, fannedQueries[1].text},
 	}
 	for _, q := range queries {
 		for _, ev := range evaluators {

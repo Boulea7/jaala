@@ -3,6 +3,7 @@ package datalog
 import (
 	"context"
 	"errors"
+	"fmt"
 	"reflect"
 	"strings"
 	"sync"
@@ -54,9 +55,14 @@ func (l *looking) Lookup(ctx context.Context, rel string, bound map[int]ns.Value
 	if fail != nil {
 		return nil, fail
 	}
+	return l.answer(rel, bound), nil
+}
+
+// answer is what a lookup of rel's bound values returns, uncounted.
+func (l *looking) answer(rel string, bound map[int]ns.Value) []ns.Tuple {
 	all := l.Source.Tuples(rel)
 	if l.sloppy {
-		return all, nil
+		return all
 	}
 	s, _ := l.Source.Schema(rel)
 	read := normalizeTuples(all, s.Types)
@@ -70,7 +76,7 @@ func (l *looking) Lookup(ctx context.Context, rel string, bound map[int]ns.Value
 			out = append(out, t)
 		}
 	}
-	return out, nil
+	return out
 }
 
 func (l *looking) looked(rel string) int {
@@ -323,5 +329,191 @@ func TestColdCostCountsTheLookupsAHeldRelationSaved(t *testing.T) {
 	r := explained(t, SemiNaive{}, `edge("v1", ?y) => ?y`, b)
 	if r.Lookups != 0 || r.Cold == nil || r.Cold.Lookups != 1 || r.Cold.Fetched != 1 {
 		t.Errorf("lookups %d, cold %+v; want none, and cold one lookup fetching one tuple", r.Lookups, r.Cold)
+	}
+}
+
+// batching is a looking Source that also answers a batch of lookups in one call (#153), each value's
+// result being looking's, and records each batch's relation and size. short answers one result too
+// few, and failBatch fails every batch with it.
+type batching struct {
+	*looking
+	short     bool
+	failBatch error
+	batches   []string
+}
+
+func batchingAt(src ns.Source) *batching { return &batching{looking: lookingAt(src)} }
+
+func (s *batching) LookupBatch(_ context.Context, rel string, positions []int, values [][]ns.Value) ([][]ns.Tuple, error) {
+	s.mu.Lock()
+	s.batches = append(s.batches, fmt.Sprintf("%s×%d", rel, len(values)))
+	fail := s.failBatch
+	s.mu.Unlock()
+	if fail != nil {
+		return nil, fail
+	}
+	out := make([][]ns.Tuple, len(values))
+	for k, vals := range values {
+		bound := map[int]ns.Value{}
+		for j, p := range positions {
+			bound[p] = vals[j]
+		}
+		out[k] = s.answer(rel, bound)
+	}
+	if s.short {
+		out = out[1:]
+	}
+	return out, nil
+}
+
+// fanned is a hub calling n nodes, each with one attribute, and a node the hub doesn't call.
+func fanned(n int) *ns.MemSource {
+	m := ns.NewMemSource().Declare("edge", "src", "dst").Declare("attr", "id", "value")
+	for i := range n {
+		id := ns.S(fmt.Sprintf("b%d", i))
+		m.Add("edge", ns.Tuple{Vals: []ns.Value{ns.S("a"), id}})
+		m.Add("attr", ns.Tuple{Vals: []ns.Value{id, ns.S(fmt.Sprintf("v%d", i%3))}})
+	}
+	m.Add("attr", ns.Tuple{Vals: []ns.Value{ns.S("lone"), ns.S("v0")}})
+	return m
+}
+
+var fannedQueries = []struct {
+	text    string
+	batches []string // with fanned(40)
+}{
+	{`edge("a", ?x), attr(?x, ?v) => ?x, ?v`, []string{"attr×40"}},
+	{`has(?x, ?v) :- attr(?x, ?v); has(?x, ?v) :- edge(?x, ?v); edge("a", ?x), has(?x, ?v) => count(?v)`, []string{"attr×40", "edge×40"}},
+}
+
+// The planned SemiNaive asks a batching Source for the values a body binds a looked-up call to in one
+// batch, rather than one lookup per value, and answers as reading it whole does; so it does when every
+// batch result holds the whole relation, which the contract allows. Naive, the reference, never batches.
+// control: a Source that doesn't batch is asked once per value.
+func TestABatchingSourceIsAskedOncePerCallNotPerValue(t *testing.T) {
+	const n = 40
+	v := std(fanned(n))
+	for _, c := range fannedQueries {
+		text := c.text
+		q := mustParse(t, text)
+		want, werr := both(q, baseFor(v))
+		for _, sloppy := range []bool{false, true} {
+			src := batchingAt(fanned(n))
+			src.sloppy = sloppy
+			got, err := both(q, MustBase(v, src))
+			if err != nil || werr != nil || !reflect.DeepEqual(binds(got), binds(want)) {
+				t.Errorf("sloppy %v: %s\n batched: %v %v\n whole:   %v %v", sloppy, text, binds(got), err, binds(want), werr)
+			}
+			src = batchingAt(fanned(n))
+			src.sloppy = sloppy
+			if _, err := (SemiNaive{}).Eval(bg, q, MustBase(v, src)); err != nil {
+				t.Fatal(err)
+			}
+			if got := src.looked("attr"); got != 0 || !reflect.DeepEqual(src.batches, c.batches) {
+				t.Errorf("sloppy %v: %s made %d attr lookups and batches %v, want none and %v", sloppy, text, got, src.batches, c.batches)
+			}
+		}
+		src := batchingAt(fanned(n))
+		if _, err := (Naive{}).Eval(bg, q, MustBase(v, src)); err != nil || len(src.batches) != 0 {
+			t.Errorf("Naive batched %v: %v", src.batches, err)
+		}
+		plain := lookingAt(fanned(n))
+		if _, err := (SemiNaive{}).Eval(bg, q, MustBase(v, plain)); err != nil || plain.looked("attr") != n {
+			t.Errorf("control: %s over a Source that doesn't batch looked attr up %d times, want %d: %v", text, plain.looked("attr"), n, err)
+		}
+	}
+}
+
+// A batch that fails, or answers a result count other than the values asked, fails the query with
+// the relation's name, and a failed batch isn't kept: the same Base asks again.
+func TestABatchThatFailsFailsTheQuery(t *testing.T) {
+	q := mustParse(t, fannedQueries[0].text)
+	src := batchingAt(fanned(5))
+	src.failBatch = errors.New("store unreachable")
+	b := MustBase(std(fanned(5)), src)
+	if _, err := (SemiNaive{}).Eval(bg, q, b); err == nil || err.Error() != "query: looking up attr: store unreachable" {
+		t.Errorf("err %v", err)
+	}
+	src.failBatch = nil
+	if rows, err := (SemiNaive{}).Eval(bg, q, b); err != nil || len(rows) != 5 || len(src.batches) != 2 {
+		t.Errorf("asked again: %d rows, batches %v, %v", len(rows), src.batches, err)
+	}
+	short := batchingAt(fanned(5))
+	short.short = true
+	if _, err := (SemiNaive{}).Eval(bg, q, MustBase(std(fanned(5)), short)); err == nil || err.Error() != "query: looking up attr: a batch of 5 lookups answered 4" {
+		t.Errorf("short: %v", err)
+	}
+}
+
+// Explain counts a batch apart from the lookups, on the report and on its relation, and names the
+// batched pattern on the literal that reads it.
+func TestExplainCountsBatches(t *testing.T) {
+	var r Report
+	q := mustParse(t, fannedQueries[0].text)
+	if _, err := (SemiNaive{}).Eval(bg, q, MustBase(std(fanned(40)), batchingAt(fanned(40))), Explain(&r)); err != nil {
+		t.Fatal(err)
+	}
+	var attr *SourceReport
+	for _, s := range r.Sources {
+		if s.Relation == "attr" {
+			attr = s
+		}
+	}
+	if r.Lookups != 1 || r.Batches != 1 || attr == nil || attr.Batches != 1 || attr.Lookups != 0 || attr.Fetched != 40 {
+		t.Fatalf("lookups %d, batches %d, attr %+v\n%s", r.Lookups, r.Batches, attr, &r)
+	}
+	text := r.String()
+	if !strings.Contains(text, "in 1 lookups and 1 batches") || !strings.Contains(text, "batched lookup (id)") {
+		t.Errorf("text doesn't show the batch:\n%s", text)
+	}
+	var plain Report
+	if _, err := (SemiNaive{}).Eval(bg, q, MustBase(std(fanned(40)), lookingAt(fanned(40))), Explain(&plain)); err != nil {
+		t.Fatal(err)
+	}
+	for i, l := range r.Goal.Literals {
+		if p := plain.Goal.Literals[i]; l.Reached != p.Reached || l.Passed != p.Passed {
+			t.Errorf("%s reached %d and passed %d, %d and %d unbatched: the prefetch's rerun counted", l.Literal, l.Reached, l.Passed, p.Reached, p.Passed)
+		}
+	}
+}
+
+// Prefetching runs a body's prefix again, so it stops at a Volatile predicate, which could answer
+// differently the second time, and leaves a limit without an order by, which stops at its first rows,
+// to look up as it goes. control: the same predicate not Volatile is run twice and the call batched.
+func TestPrefetchLeavesVolatilePrefixesAndEarlyStops(t *testing.T) {
+	q := mustParse(t, `step(?h, ?x), attr(?x, ?v) => ?x, ?v`)
+	for _, volatile := range []bool{true, false} {
+		v := std(fanned(10))
+		calls := stepper(t, v, volatile)
+		src := batchingAt(fanned(10))
+		rows, err := (SemiNaive{}).Eval(bg, q, MustBase(v, src))
+		if err != nil || len(rows) != 10 {
+			t.Fatalf("volatile %v: %d rows, %v", volatile, len(rows), err)
+		}
+		if batched := len(src.batches) > 0; batched == volatile || *calls != map[bool]int{true: 1, false: 2}[volatile] {
+			t.Errorf("volatile %v: batches %v, step called %d times", volatile, src.batches, *calls)
+		}
+	}
+	src := batchingAt(fanned(10))
+	limited := mustParse(t, fannedQueries[0].text+` limit 2`)
+	if rows, err := (SemiNaive{}).Eval(bg, limited, MustBase(std(fanned(10)), src)); err != nil || len(rows) != 2 || len(src.batches) != 0 || src.looked("attr") > 2 {
+		t.Errorf("limit 2: %d rows, batches %v, %d attr lookups, %v", len(rows), src.batches, src.looked("attr"), err)
+	}
+	ordered := mustParse(t, fannedQueries[0].text+` order by ?x limit 2`)
+	src = batchingAt(fanned(10))
+	if _, err := (SemiNaive{}).Eval(bg, ordered, MustBase(std(fanned(10)), src)); err != nil || len(src.batches) != 1 {
+		t.Errorf("control: ordered limit 2: batches %v, %v", src.batches, err)
+	}
+}
+
+// A batch counts a unit of work per value it asks, as a lookup of each would.
+func TestABatchCountsWorkPerValue(t *testing.T) {
+	q := mustParse(t, `attr(?x, ?v) => ?x`)
+	src := batchingAt(fanned(3))
+	nb := *MustBase(std(fanned(3)), src)
+	nb.run = &evalRun{ctx: bg}
+	vals := [][]ns.Value{{ns.S("b0")}, {ns.S("b1")}, {ns.S("b2")}}
+	if err := nb.lookupBatch(src, q.Goal.Literals[0].Pos, 1, vals); err != nil || nb.run.used != 3 || len(nb.run.looked) != 3 {
+		t.Errorf("work %d, kept %d, %v", nb.run.used, len(nb.run.looked), err)
 	}
 }

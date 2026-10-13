@@ -3,6 +3,7 @@ package datalog
 import (
 	"context"
 	"fmt"
+	"math/bits"
 	"reflect"
 	"slices"
 	"strconv"
@@ -116,14 +117,21 @@ func (s *store) Lookup(_ context.Context, rel string, bound map[int]ns.Value) ([
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.calls++
-	if p, ok := s.indexes(rel, func(i int) bool { _, ok := bound[i]; return ok }); ok {
-		return s.buckets[bucketKey(rel, p, func(i int) ns.Value { return bound[i] })], nil
+	out, scan := s.match(rel, bound)
+	if scan {
+		s.scanned += len(s.MemSource.Tuples(rel))
+		s.unindexed++
 	}
-	s.unindexed++
-	all := s.MemSource.Tuples(rel)
-	s.scanned += len(all)
+	return out, nil
+}
+
+// match is rel's facts matching bound, from an index when the catalog has one, and whether it scanned.
+func (s *store) match(rel string, bound map[int]ns.Value) ([]ns.Tuple, bool) {
+	if p, ok := s.indexes(rel, func(i int) bool { _, ok := bound[i]; return ok }); ok {
+		return s.buckets[bucketKey(rel, p, func(i int) ns.Value { return bound[i] })], false
+	}
 	var out []ns.Tuple
-	for _, t := range all {
+	for _, t := range s.MemSource.Tuples(rel) {
 		match := true
 		for i, v := range bound {
 			match = match && t.Vals[i].S == v.S
@@ -131,6 +139,32 @@ func (s *store) Lookup(_ context.Context, rel string, bound map[int]ns.Value) ([
 		if match {
 			out = append(out, t)
 		}
+	}
+	return out, true
+}
+
+// A batchingStore is a store answering a batch of lookups in one call (ns.BatchLookupSource, #153),
+// as a database asked `WHERE id IN (...)` does; an unindexed batch scans the relation once.
+type batchingStore struct{ *store }
+
+func (s batchingStore) LookupBatch(_ context.Context, rel string, positions []int, values [][]ns.Value) ([][]ns.Tuple, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.calls++
+	out := make([][]ns.Tuple, len(values))
+	scanned := false
+	for k, vals := range values {
+		bound := map[int]ns.Value{}
+		for j, p := range positions {
+			bound[p] = vals[j]
+		}
+		var scan bool
+		out[k], scan = s.match(rel, bound)
+		scanned = scanned || scan
+	}
+	if scanned {
+		s.scanned += len(s.MemSource.Tuples(rel))
+		s.unindexed++
 	}
 	return out, nil
 }
@@ -142,15 +176,20 @@ func (s *store) reset() {
 }
 
 // repoStores is n repos' stores, each held by the repo's id prefix wherever an argument is a
-// repo's own id. An edge lives in its source's repo, so its target names no store.
-func repoStores(n int) ([]*store, *ns.Federation) {
+// repo's own id, and answering a batch of lookups in one call when batching. An edge lives in its
+// source's repo, so its target names no store.
+func repoStores(n int, batching bool) ([]*store, *ns.Federation) {
 	stores := make([]*store, n)
 	members := make([]ns.Member, n)
 	for i := range n {
 		stores[i] = repoStore(i, n)
+		var src ns.Source = stores[i]
+		if batching {
+			src = batchingStore{stores[i]}
+		}
 		members[i] = ns.Member{
 			Name:   fmt.Sprintf("repo%d", i),
-			Source: stores[i],
+			Source: src,
 			Holds:  ns.HoldsPrefix(fmt.Sprintf("repo%d/", i), map[string][]int{"node": {0}, "attr": {0}, "edge": {0}}),
 		}
 	}
@@ -211,7 +250,13 @@ type storeSet struct {
 }
 
 func newStoreSet(n int) storeSet {
-	stores, f := repoStores(n)
+	stores, f := repoStores(n, true)
+	return storeSet{stores: stores, fed: f, v: std(f)}
+}
+
+// unbatchedStoreSet is newStoreSet over stores asked one lookup at a time, as before #153.
+func unbatchedStoreSet(n int) storeSet {
+	stores, f := repoStores(n, false)
 	return storeSet{stores: stores, fed: f, v: std(f)}
 }
 
@@ -301,8 +346,12 @@ func TestStoresExercise(t *testing.T) {
 	if c := costs["callers"]; c.asked != n || c.unindexed != n {
 		t.Errorf("control: callers asked %d stores with %d unindexed calls, want %d and %d (#154)", c.asked, c.unindexed, n, n)
 	}
-	if c := costs["reach"]; c.calls <= storeNodes {
-		t.Errorf("control: reach made %d store calls, want more than its repo's %d nodes (a call per demanded value, #153)", c.calls, storeNodes)
+	reach := mustParse(t, storeQuestions[4].text)
+	if c, _, _, err := unbatchedStoreSet(n).askTwice(reach); err != nil || c.calls <= storeNodes {
+		t.Errorf("control: over stores that don't batch, reach made %d store calls, want more than its repo's %d nodes (a call per demanded value): %v", c.calls, storeNodes, err)
+	}
+	if c, depth := costs["reach"], bits.Len(storeNodes); c.calls > c.asked*depth {
+		t.Errorf("reach made %d calls to %d stores, want at most a batch per store per level of its %d-level tree (#153)", c.calls, c.asked, depth)
 	}
 	blind, _, _, err := newStoreSet(n).uncatalogued().askTwice(mustParse(t, storeQuestions[3].text))
 	if err != nil || blind.unindexed != n {
