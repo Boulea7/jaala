@@ -157,7 +157,7 @@ func (b *Base) validateRule(r Rule) error {
 			return fmt.Errorf("query: rule %q reads %s", r.Head.Relation, b.reg.Unknown(rel))
 		}
 	}
-	inputs := inputsBound(r, b.inputRels) // a caller's arguments (#200), which every call has to bind
+	inputs := inputsBound(r, b.inputRels, b.reg) // a caller's arguments (#200), which every call has to bind
 	if err := checkModesFrom(b, whereRule(r), r.Body, inputs); err != nil {
 		return err
 	}

@@ -169,7 +169,7 @@ func resolveAll(v *ns.Vocabulary) (*resolution, error) {
 	// for the whole program, such as recursion through negation across modules, belongs to no one
 	// module and stays a plain error.
 	b := newValidationBase(v)
-	b.inputRels = inputRelations(all)
+	b.inputRels = inputRelations(all, v)
 	for _, r := range all {
 		b.idbArity[r.Head.Relation] = len(r.Head.Args)
 	}
@@ -184,7 +184,7 @@ func resolveAll(v *ns.Vocabulary) (*resolution, error) {
 		return nil, err
 	}
 	// Every call to a rule taking an input binds it, so a library's mistake fails at Check (#200).
-	if _, err := lowerInputs(Query{Rules: all}, nil); err != nil {
+	if _, err := lowerInputs(Query{Rules: all}, nil, v); err != nil {
 		return nil, err
 	}
 	t := newTyper(v, all)
@@ -213,7 +213,7 @@ func resolveAll(v *ns.Vocabulary) (*resolution, error) {
 					return nil, fail(i, fmt.Errorf("%w (in module rule %q)", err, displayName(rule.Head.Relation)))
 				}
 				_, negs := splitNegations(rule.Body.Literals)
-				if err := b.validateNegationsFrom(rule.Body, negs, inputsBound(rule, b.inputRels)); err != nil {
+				if err := b.validateNegationsFrom(rule.Body, negs, inputsBound(rule, b.inputRels, b.reg)); err != nil {
 					return nil, fail(i, fmt.Errorf("%w (in module rule %q)", err, displayName(rule.Head.Relation)))
 				}
 				if err := t.checkUnits(whereRule(rule), rule.Head.Relation, rule.Body); err != nil {

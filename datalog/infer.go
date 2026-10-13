@@ -283,9 +283,9 @@ func (t *typer) signature(rel string) ([]ns.ArgSig, error) {
 		all = append(all, rs...)
 	}
 	inputs := map[Var]bool{}
-	ins := inputRelations(all)
+	ins := inputRelations(all, t.reg)
 	if r, ok := ins[rel]; ok {
-		for _, v := range inputsOf(r, ins) {
+		for _, v := range inputsOf(r, ins, t.reg) {
 			inputs[v] = true
 		}
 	}

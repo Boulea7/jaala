@@ -25,6 +25,14 @@ and can call a function by name, in which case the function's last argument is i
 
 A division by zero, or a value that isn't a number, has no result, so that row has none rather than the query failing.
 
+## Functions written as rules
+
+A rule can be a function too. `power` below has no relation to read: its body computes `?p` from `?v` and `?i`, which it takes from its caller ([#208](https://github.com/panyam/jaala/issues/208)), so an expression calls it as `power(?v, ?i)` with the result filling its last argument:
+
+{{ demo "demos/guide/arithmetic-rule-function.yaml" }}
+
+The call is written into its caller before the query runs, so `power` runs in any direction `num.mul` does, and called as a relation, `power(?v, ?i, ?w)`, it means the same. Its signature marks as inputs the head's earliest arguments its body can't compute, here `?v` and `?i`, and a call that leaves `num.mul` too little to run from is refused. Like any [rule taking arguments from its caller](/jaala/guide/modules-and-vocabulary/#arguments-from-the-caller), a function has one rule and doesn't reach itself.
+
 ## Units
 
 A number can carry a unit, and a query can write one after a number: `1kohm`, `3.3V`, `0.5A`. A prefix is folded in, so `1kohm` is 1000 ohm and compares with a source's ohms:

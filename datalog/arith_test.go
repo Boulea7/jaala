@@ -101,3 +101,82 @@ func TestAnExpressionPrintsAsItParses(t *testing.T) {
 		}
 	}
 }
+
+const powerFn = `power(?v, ?i, ?p) :- ?p = ?v * ?i;`
+
+func TestARuleIsAFunctionAnExpressionCalls(t *testing.T) {
+	for _, c := range []struct {
+		name, q string
+		cols    []string
+		want    []string
+	}{
+		{"called in an expression", powerFn + `rail(?x, ?v), cur(?x, ?i), ?w = power(?v, ?i) => ?x, ?w`, []string{"x", "w"}, []string{"R1 0.01[W]", "R2 0.033[W]"}},
+		{"called as a relation", powerFn + `rail(?x, ?v), cur(?x, ?i), power(?v, ?i, ?w) => ?x, ?w`, []string{"x", "w"}, []string{"R1 0.01[W]", "R2 0.033[W]"}},
+		{"written before what binds it", powerFn + `?w = power(?v, ?i), rail(?x, ?v), cur(?x, ?i) => ?x, ?w`, []string{"x", "w"}, []string{"R1 0.01[W]", "R2 0.033[W]"}},
+		{"in a comparison", powerFn + `rail(?x, ?v), cur(?x, ?i), power(?v, ?i) > 0.02W => ?x`, []string{"x"}, []string{"R2"}},
+		{"over an expression", powerFn + `res(?x, ?r), cur(?x, ?i), ?w = power(?i * ?r, ?i) => ?x, ?w`, []string{"x", "w"}, []string{"R1 0.004[W]", "R2 0.047[W]"}},
+		{"calling another", powerFn + `heat(?i, ?r, ?w) :- ?w = power(?i * ?r, ?i); res(?x, ?r), cur(?x, ?i), ?w = heat(?i, ?r) => ?x, ?w`, []string{"x", "w"}, []string{"R1 0.004[W]", "R2 0.047[W]"}},
+		// An expression's call fills the relation's last argument, so one body is two functions.
+		{"solved for its last argument", `half(?x, ?h) :- ?x = ?h * 2; rail(?p, ?v), ?h = half(?v) => ?p, ?h`, []string{"p", "h"}, []string{"R1 2.5[V]", "R2 1.65[V]"}},
+		{"the same body, its head the other way", `double(?h, ?x) :- ?x = ?h * 2; rail(?p, ?v), ?d = double(?v) => ?p, ?d`, []string{"p", "d"}, []string{"R1 10[V]", "R2 6.6[V]"}},
+		{"a filter's argument", `named(?x) :- str.contains(?x, "R"); rail(?x, _), named(?x) => ?x`, []string{"x"}, []string{"R1", "R2"}},
+		{"a generator called directly", `dbl(?a, ?b) :- num.mul(?a, 2, ?b); rail(?p, ?v), dbl(?v, ?d) => ?p, ?d`, []string{"p", "d"}, []string{"R1 10[V]", "R2 6.6[V]"}},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			for _, extra := range [][]Option{nil, {Witnesses()}} {
+				rows, err := both(mustParse(t, c.q), baseFor(std(ohmsLaw())), extra...)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if got := withUnits(rows, c.cols...); !reflect.DeepEqual(got, c.want) {
+					t.Errorf("%d extra options: %v, want %v", len(extra), got, c.want)
+				}
+			}
+		})
+	}
+}
+
+func TestAFunctionsCallMustBindItsInputs(t *testing.T) {
+	for _, c := range []struct{ q, want string }{
+		{powerFn + `rail(?x, ?v), ?w = power(?q, ?v) => ?x, ?w`, `power's ?v is an input argument, and the call in the query doesn't bind it`},
+		{powerFn + `rail(?x, ?v), ?w = power(?v, ?q) => ?x, ?w`, `power's ?i is an input argument, and the call in the query doesn't bind it`},
+		{powerFn + `rail(?x, ?v), not power(?v, 1A, 5W) => ?x`, `power takes an argument from its caller, so the query can't negate it`},
+		// A relation of two rules isn't inlined, so it keeps the mode error.
+		{powerFn + `power(?v, ?i, ?p) :- rail(_, ?v), cur(_, ?i), ?p = ?v * ?i; rail(?x, ?v), cur(?x, ?i), ?w = power(?v, ?i) => ?x`, `rule "power" calls num.mul(?v, ?i, ?p), and nothing binds what num.mul needs first`},
+	} {
+		q := mustParse(t, c.q)
+		if _, err := both(q, baseFor(std(ohmsLaw()))); err == nil || !strings.Contains(err.Error(), c.want) || !strings.HasPrefix(err.Error(), "query: ") {
+			t.Errorf("%s: err = %v, want it to say %q", c.q, err, c.want)
+		}
+		if err := Validate(q, std(ohmsLaw())); err == nil || !strings.Contains(err.Error(), c.want) {
+			t.Errorf("Validate(%s) = %v, want it to say %q", c.q, err, c.want)
+		}
+	}
+}
+
+func TestAModuleExportsAFunction(t *testing.T) {
+	v := std(ohmsLaw())
+	if err := v.AddModule("elec", LanguageName, powerFn, ""); err != nil {
+		t.Fatal(err)
+	}
+	if err := v.Check(); err != nil {
+		t.Fatalf("Check: %v", err)
+	}
+	e, err := v.Lookup("elec.power")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var inputs []string
+	for _, a := range e.Args {
+		if a.Input {
+			inputs = append(inputs, a.Name)
+		}
+	}
+	if !reflect.DeepEqual(inputs, []string{"v", "i"}) {
+		t.Errorf("elec.power's inputs = %v, want [v i]", inputs)
+	}
+	rows, err := both(mustParse(t, `rail(?x, ?v), cur(?x, ?i), ?w = elec.power(?v, ?i) => ?x, ?w`), baseFor(v))
+	if got := withUnits(rows, "x", "w"); err != nil || !reflect.DeepEqual(got, []string{"R1 0.01[W]", "R2 0.033[W]"}) {
+		t.Errorf("elec.power = %v, %v", got, err)
+	}
+}

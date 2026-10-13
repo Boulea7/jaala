@@ -310,9 +310,14 @@ go list -deps ./... | grep '\.' | grep -v '^github.com/panyam/jaala' | grep -v '
   `ohm/s`). `num.*` write results the same way, so every value inside the engine is in base units
   and unit strings still compare as strings. Source values are still expected in base units
   (prefixed ones are #205).
-- **A rule can take an argument from its caller** (`inputs.go`, #200): a head variable no positive
-  body literal binds, which a comparison or a `not` reads, is an input (`inputsOf`; a call to an
-  input relation binds only its other arguments, so `inputRelations` grows to a fixpoint). Only a
+- **A rule can take an argument from its caller** (`inputs.go`, #200): a head variable its body
+  can't bind, which a comparison, a `not` or a generator reads, is an input (`inputsOf`; a call to an
+  input relation binds only its other arguments, so `inputRelations` grows to a fixpoint). What a
+  body binds is `bindsFrom`, the fixpoint `checkModes` computes (a generator binds once a mode is
+  satisfied), so `power(?v, ?i, ?p) :- ?p = ?v * ?i` is a function an expression calls as
+  `power(?v, ?i)` (#208). Where the body binds head variables only from each other, the head's
+  earliest unbound ones are the inputs, which only names them in the signature: a call is accepted
+  whenever `bindsFrom` over the inlined body binds them, and `inline` keeps `computed`. Only a
   relation with one rule, a head of distinct variables, no aggregate and no recursion qualifies;
   anything else keeps today's `head variable ?x is not bound` error. The written-program checks
   treat inputs as bound (`inputsBound`, `b.inputRels`), then `lowerInputs` inlines each call into
