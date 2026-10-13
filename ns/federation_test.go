@@ -2,6 +2,8 @@ package ns
 
 import (
 	"context"
+	"errors"
+	"iter"
 	"reflect"
 	"slices"
 	"strings"
@@ -214,5 +216,78 @@ func TestAFederationBatchesPerMember(t *testing.T) {
 	}
 	if !reflect.DeepEqual(x.asked, [][]string{{"x/1", "x/3"}}) || x.calls != 0 || y.calls != 2 || len(z.asked) != 0 {
 		t.Errorf("x batched %v with %d lookups, y looked up %d times, z batched %v", x.asked, x.calls, y.calls, z.asked)
+	}
+}
+
+// streamingMem streams its MemSource's tuples, counting those yielded, and fails a read when failing.
+type streamingMem struct {
+	*MemSource
+	yielded int
+	failing bool
+}
+
+func (s *streamingMem) TuplesSeq(_ context.Context, rel string) iter.Seq2[Tuple, error] {
+	return func(yield func(Tuple, error) bool) {
+		if s.failing {
+			yield(Tuple{}, errors.New("disk gone"))
+			return
+		}
+		for _, t := range s.Tuples(rel) {
+			s.yielded++
+			if !yield(t, nil) {
+				return
+			}
+		}
+	}
+}
+
+// countingMem counts its whole reads.
+type countingMem struct {
+	*MemSource
+	reads int
+}
+
+func (s *countingMem) Tuples(rel string) []Tuple {
+	s.reads++
+	return s.MemSource.Tuples(rel)
+}
+
+// A Federation streams its members in order, a streaming member one tuple at a time and any other
+// read whole, each tuple cited to its member, and stops reading once its consumer stops (#233).
+func TestAFederationStreamsItsMembers(t *testing.T) {
+	a := &streamingMem{MemSource: NewMemSource().Declare("node", "id")}
+	for _, id := range []string{"a1", "a2", "a3"} {
+		a.Add("node", Tuple{Vals: []Value{S(id)}, Cites: []string{id + ".go"}})
+	}
+	b := &countingMem{MemSource: NewMemSource().Declare("node", "id")}
+	b.Add("node", Tuple{Vals: []Value{S("b1")}, Cites: []string{"b1.go"}})
+	f, _ := NewFederation(Member{Name: "a", Source: a}, Member{Name: "b", Source: b})
+
+	var got []string
+	for tu, err := range f.TuplesSeq(context.Background(), "node") {
+		if err != nil {
+			t.Fatal(err)
+		}
+		got = append(got, tu.Vals[0].S+"@"+strings.Join(tu.Cites, ","))
+	}
+	if want := []string{"a1@a:a1.go", "a2@a:a2.go", "a3@a:a3.go", "b1@b:b1.go"}; !reflect.DeepEqual(got, want) {
+		t.Errorf("streamed %v, want %v", got, want)
+	}
+
+	a.yielded, b.reads = 0, 0
+	for range f.TuplesSeq(context.Background(), "node") {
+		break
+	}
+	if a.yielded != 1 || b.reads != 0 {
+		t.Errorf("stopping after one tuple yielded %d from a and read b %d times, want 1 and 0", a.yielded, b.reads)
+	}
+
+	a.failing = true
+	var failed error
+	for _, err := range f.TuplesSeq(context.Background(), "node") {
+		failed = err
+	}
+	if failed == nil || !strings.Contains(failed.Error(), `member "a": disk gone`) {
+		t.Errorf("a failing member streamed %v, want its error named", failed)
 	}
 }

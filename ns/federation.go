@@ -3,6 +3,7 @@ package ns
 import (
 	"context"
 	"fmt"
+	"iter"
 	"reflect"
 	"strconv"
 	"strings"
@@ -47,7 +48,7 @@ func HoldsPrefix(prefix string, positions map[string][]int) func(rel string, bou
 // A fact two members serve is two facts, as it would be in one Source serving it twice: a goal's
 // answer rows are distinct either way, and an aggregate counting bindings counts both.
 //
-// It is a ContextSource, a LookupSource, a BatchLookupSource, IndexedLookups and Versioned whatever its members are. A relation is looked
+// It is a ContextSource, a StreamSource, a LookupSource, a BatchLookupSource, IndexedLookups and Versioned whatever its members are. A relation is looked
 // up only when every member serving it looks it up (LooksUp), so a Federation can be a member of
 // another; otherwise the engine reads it
 // whole, from every member, and keeps it. Its version changes whenever a member's does, and a member
@@ -148,6 +149,45 @@ func (f *Federation) TuplesContext(ctx context.Context, rel string) ([]Tuple, er
 		out = append(out, f.cited(i, ts)...)
 	}
 	return out, nil
+}
+
+// TuplesSeq implements StreamSource: the members' tuples for rel in member order, a member that
+// streams one at a time and any other as it reads them whole, so the engine charges each to the
+// budget and stops a large read before the next member is read. A member's failure ends the
+// sequence with it, wrapped with the member's name.
+func (f *Federation) TuplesSeq(ctx context.Context, rel string) iter.Seq2[Tuple, error] {
+	return func(yield func(Tuple, error) bool) {
+		for _, i := range f.serving[rel] {
+			src := f.members[i].Source
+			if ss, ok := src.(StreamSource); ok {
+				for t, err := range ss.TuplesSeq(ctx, rel) {
+					if err != nil {
+						yield(Tuple{}, fmt.Errorf("member %s: %w", f.name(i), err))
+						return
+					}
+					if !yield(f.cite(i, t), nil) {
+						return
+					}
+				}
+				continue
+			}
+			var ts []Tuple
+			if cs, ok := src.(ContextSource); ok {
+				var err error
+				if ts, err = cs.TuplesContext(ctx, rel); err != nil {
+					yield(Tuple{}, fmt.Errorf("member %s: %w", f.name(i), err))
+					return
+				}
+			} else {
+				ts = src.Tuples(rel)
+			}
+			for _, t := range ts {
+				if !yield(f.cite(i, t), nil) {
+					return
+				}
+			}
+		}
+	}
 }
 
 // LooksUp implements LookupRelations: rel is looked up when every member serving it answers lookups.
@@ -288,17 +328,25 @@ func (f *Federation) Version() string {
 
 // cited is member i's tuples with their citations named for it, or ts itself when it has no Name.
 func (f *Federation) cited(i int, ts []Tuple) []Tuple {
-	name := f.members[i].Name
-	if name == "" || len(ts) == 0 {
+	if f.members[i].Name == "" || len(ts) == 0 {
 		return ts
 	}
 	out := make([]Tuple, len(ts))
 	for k, t := range ts {
-		cites := make([]string, len(t.Cites))
-		for j, c := range t.Cites {
-			cites[j] = name + ":" + c
-		}
-		out[k] = Tuple{Vals: t.Vals, Cites: cites}
+		out[k] = f.cite(i, t)
 	}
 	return out
+}
+
+// cite is t with member i's Name before each citation, as cited writes them.
+func (f *Federation) cite(i int, t Tuple) Tuple {
+	name := f.members[i].Name
+	if name == "" {
+		return t
+	}
+	cites := make([]string, len(t.Cites))
+	for j, c := range t.Cites {
+		cites[j] = name + ":" + c
+	}
+	return Tuple{Vals: t.Vals, Cites: cites}
 }

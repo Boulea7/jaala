@@ -2,6 +2,7 @@ package ns
 
 import (
 	"context"
+	"iter"
 	"sort"
 )
 
@@ -62,6 +63,22 @@ type Source interface {
 // context. A read error stops the query that asked, wrapped with the relation's name.
 type ContextSource interface {
 	TuplesContext(ctx context.Context, rel string) ([]Tuple, error)
+}
+
+// StreamSource is optionally implemented by a Source that can hand over a relation's facts one at a
+// time, such as one reading a database cursor (#233). When a Source implements it, the engine reads
+// a relation whole through TuplesSeq rather than TuplesContext or Tuples, and charges each tuple to
+// the Eval's Budget as it arrives, so a query over a relation larger than its budget stops having
+// held at most that many tuples rather than after the whole relation is in memory. A Source that
+// returns a slice is read as before, and its read is not charged.
+//
+// The engine stops ranging when the budget is spent or the query's context ends, so the sequence
+// should release what it holds (close its cursor) when yield returns false. An error yielded stops
+// the read and fails the query, wrapped with the relation's name; a read that stops for any reason
+// is not kept, and the next query needing the relation reads it again. Each relation is still read
+// at most once per Base when a read completes, as Tuples is.
+type StreamSource interface {
+	TuplesSeq(ctx context.Context, rel string) iter.Seq2[Tuple, error]
 }
 
 // LookupSource is optionally implemented by a Source that answers a relation's facts matching some

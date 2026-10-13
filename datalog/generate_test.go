@@ -1,9 +1,11 @@
 package datalog
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"hash/fnv"
+	"iter"
 	"math/rand"
 	"os"
 	"reflect"
@@ -739,6 +741,7 @@ func agreeFederated(q Query, b *Base, want []Row, werr error, opts []Option) str
 		members[i].Source = firstIndexed{stores[i]}
 	}
 	members[0].Source = firstIndexedBatching{&batching{looking: stores[0]}}
+	members[2].Source = streamingFirstIndexed{firstIndexed{stores[2]}}
 	f, err := ns.NewFederation(members...)
 	if err != nil {
 		return err.Error()
@@ -757,6 +760,19 @@ func agreeFederated(q Query, b *Base, want []Row, werr error, opts []Option) str
 type firstIndexed struct{ *looking }
 
 func (firstIndexed) Indexed(_ string, bound []int) bool { return slices.Contains(bound, 0) }
+
+// streamingFirstIndexed is a firstIndexed store that streams a relation read whole (#233).
+type streamingFirstIndexed struct{ firstIndexed }
+
+func (s streamingFirstIndexed) TuplesSeq(_ context.Context, rel string) iter.Seq2[ns.Tuple, error] {
+	return func(yield func(ns.Tuple, error) bool) {
+		for _, t := range s.Tuples(rel) {
+			if !yield(t, nil) {
+				return
+			}
+		}
+	}
+}
 
 // firstIndexedBatching is a firstIndexed store that also answers lookups in batches.
 type firstIndexedBatching struct{ *batching }

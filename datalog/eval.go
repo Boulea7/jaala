@@ -161,17 +161,38 @@ func (b *Base) Work() int64 {
 // edbTuples returns a base relation's tuples, reading them from the Source once per Base.
 func (b *Base) edbTuples(rel string) ([]ns.Tuple, error) {
 	if b.edb == nil {
-		t, err := readTuples(b.run.context(), b.src, rel)
+		t, err := readTuples(b.run, b.src, rel)
 		return normalizeTuples(t, b.argTypesOf(rel)), err
 	}
-	return b.edb.tuples(b.run.context(), rel, b.src, b.argTypesOf(rel))
+	return b.edb.tuples(b.run, rel, b.src, b.argTypesOf(rel))
 }
 
-// readTuples reads one relation from the Source, through TuplesContext when the Source can be
-// cancelled, wrapping a failure with the relation's name.
-func readTuples(ctx context.Context, src ns.Source, rel string) ([]ns.Tuple, error) {
+// readTuples reads one relation from the Source for run, through TuplesSeq when the Source streams,
+// charging each tuple to run's budget (#233), else through TuplesContext when it can be cancelled,
+// wrapping a failure with the relation's name.
+func readTuples(run *evalRun, src ns.Source, rel string) ([]ns.Tuple, error) {
 	if src == nil {
 		return nil, nil
+	}
+	ctx := run.context()
+	failed := func(err error) error {
+		if ctx.Err() != nil {
+			return fmt.Errorf("query: evaluation stopped reading %s: %w", rel, ctx.Err())
+		}
+		return fmt.Errorf("query: reading %s: %w", rel, err)
+	}
+	if ss, ok := src.(ns.StreamSource); ok {
+		var out []ns.Tuple
+		for t, err := range ss.TuplesSeq(ctx, rel) {
+			if err != nil {
+				return nil, failed(err)
+			}
+			if err := run.readOne(); err != nil {
+				return nil, err
+			}
+			out = append(out, t)
+		}
+		return out, nil
 	}
 	cs, ok := src.(ns.ContextSource)
 	if !ok {
@@ -179,10 +200,7 @@ func readTuples(ctx context.Context, src ns.Source, rel string) ([]ns.Tuple, err
 	}
 	t, err := cs.TuplesContext(ctx, rel)
 	if err != nil {
-		if ctx.Err() != nil {
-			return nil, fmt.Errorf("query: evaluation stopped reading %s: %w", rel, ctx.Err())
-		}
-		return nil, fmt.Errorf("query: reading %s: %w", rel, err)
+		return nil, failed(err)
 	}
 	return t, nil
 }

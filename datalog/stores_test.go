@@ -2,7 +2,9 @@ package datalog
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"iter"
 	"math/bits"
 	"reflect"
 	"slices"
@@ -33,8 +35,10 @@ const storeChain = 60
 const storeLatencyMs = 2
 
 // A store is one repo's facts behind a LookupSource with an index catalog: a lookup binding every
-// position of an indexed pattern reads that pattern's bucket, and any other scans the relation. It
-// counts the calls made to it, the calls that scanned, and the tuples it scanned.
+// position of an indexed pattern reads that pattern's bucket, and any other scans the relation. A
+// relation read whole streams (ns.StreamSource, #233), or, sliced, is read whole before the first
+// tuple goes, as a store returning one slice is. It counts the calls made to it, the calls that
+// scanned, the tuples it scanned and the tuples it shipped to the engine.
 type store struct {
 	*ns.MemSource
 	indexed map[string][][]int
@@ -42,9 +46,10 @@ type store struct {
 	// uncatalogued hides the catalog from the planner: Indexed says every pattern is indexed, as a
 	// LookupSource that doesn't implement ns.IndexedLookups is taken to.
 	uncatalogued bool
+	sliced       bool
 
-	mu                        sync.Mutex
-	calls, unindexed, scanned int
+	mu                                 sync.Mutex
+	calls, unindexed, scanned, shipped int
 }
 
 // storeCatalog is what each store indexes: node, attr and edge by their first argument (an id, and
@@ -69,6 +74,9 @@ func repoStore(repo, repos int) *store {
 		}
 		if k+1 < storeChain {
 			m.Add("next", ns.Tuple{Vals: []ns.Value{id(repo, k), id(repo, k+1)}})
+		}
+		if k%50 == 0 {
+			m.Add("edge", ns.Tuple{Vals: []ns.Value{id(repo, k), ns.S("recurses"), id(repo, k)}})
 		}
 		if k%20 == 0 {
 			m.Add("edge", ns.Tuple{Vals: []ns.Value{id(repo, k), ns.S("calls"), id((repo+1)%repos, storeNodes-1-k/20)}})
@@ -117,8 +125,36 @@ func (s *store) Tuples(rel string) []ns.Tuple {
 	s.calls++
 	s.unindexed++
 	s.scanned += len(ts)
+	s.shipped += len(ts)
 	s.mu.Unlock()
 	return ts
+}
+
+// TuplesSeq counts a streamed read as a call that scanned what it shipped, the tuples the engine
+// took before it stopped.
+func (s *store) TuplesSeq(_ context.Context, rel string) iter.Seq2[ns.Tuple, error] {
+	return func(yield func(ns.Tuple, error) bool) {
+		ts := s.MemSource.Tuples(rel)
+		s.mu.Lock()
+		s.calls++
+		s.unindexed++
+		if s.sliced {
+			s.scanned += len(ts)
+			s.shipped += len(ts)
+		}
+		s.mu.Unlock()
+		for _, t := range ts {
+			if !s.sliced {
+				s.mu.Lock()
+				s.scanned++
+				s.shipped++
+				s.mu.Unlock()
+			}
+			if !yield(t, nil) {
+				return
+			}
+		}
+	}
 }
 
 func (s *store) Lookup(_ context.Context, rel string, bound map[int]ns.Value) ([]ns.Tuple, error) {
@@ -126,6 +162,7 @@ func (s *store) Lookup(_ context.Context, rel string, bound map[int]ns.Value) ([
 	defer s.mu.Unlock()
 	s.calls++
 	out, scan := s.match(rel, bound)
+	s.shipped += len(out)
 	if scan {
 		s.scanned += len(s.MemSource.Tuples(rel))
 		s.unindexed++
@@ -168,6 +205,7 @@ func (s batchingStore) LookupBatch(_ context.Context, rel string, positions []in
 		}
 		var scan bool
 		out[k], scan = s.match(rel, bound)
+		s.shipped += len(out[k])
 		scanned = scanned || scan
 	}
 	if scanned {
@@ -179,7 +217,7 @@ func (s batchingStore) LookupBatch(_ context.Context, rel string, positions []in
 
 func (s *store) reset() {
 	s.mu.Lock()
-	s.calls, s.unindexed, s.scanned = 0, 0, 0
+	s.calls, s.unindexed, s.scanned, s.shipped = 0, 0, 0, 0
 	s.mu.Unlock()
 }
 
@@ -210,7 +248,9 @@ func repoStores(n int, batching bool) ([]*store, *ns.Federation) {
 
 // storeQuestions are the exercise's questions, about repo0, which every N has. callees-with-attr
 // binds attr's key and value, more than edge's source, but no store indexes attr by them, so a
-// planner that knows the catalog reads edge first (#154).
+// planner that knows the catalog reads edge first (#154). The last four are mission #235's: a join
+// whose facts are all in one store (n5's callees and theirs stay in repo0), a count and a page over
+// every store, and an unbound call read whole (#233).
 var storeQuestions = []struct{ name, text string }{
 	{"attrs-by-id", `attr("repo0/n3", ?k, ?v) => ?k, ?v`},
 	{"two-hops", `edge("repo0/n20", _, ?m), edge(?m, _, ?o) => ?o`},
@@ -218,11 +258,21 @@ var storeQuestions = []struct{ name, text string }{
 	{"callees-with-attr", `attr(?m, "lines", "7"), edge("repo0/n3", _, ?m) => ?m`},
 	{"reach", `reach(?a, ?b) :- edge(?a, _, ?b); reach(?a, ?c) :- reach(?a, ?b), edge(?b, _, ?c); reach("repo0/n0", ?x) => count(?x)`},
 	{"deep-walk", `walk(?a, ?b) :- next(?a, ?b); walk(?a, ?c) :- walk(?a, ?b), next(?b, ?c); walk("repo0/n0", ?x) => count(?x)`},
+	{"two-hops-in-repo", `edge("repo0/n5", _, ?m), edge(?m, _, ?o) => ?o`},
+	{"count-lines", `attr(?id, "lines", "7") => count(?id)`},
+	{"page", `attr(?id, "lines", ?n) => ?id, ?n order by ?id limit 10`},
+	{"self-loops", `edge(?a, ?k, ?a) => ?a, ?k`},
 }
+
+// storeBudget is the budget self-loops is asked under too, less than one store's edges, to show a
+// whole read stopping at it.
+const storeBudget = 100
+
+var selfLoopsQuestion = storeQuestions[len(storeQuestions)-1].text
 
 // storeCost is what one ask of a question cost the stores.
 type storeCost struct {
-	asked, calls, unindexed, scanned int
+	asked, calls, unindexed, scanned, shipped int
 }
 
 func costOf(stores []*store) storeCost {
@@ -235,10 +285,30 @@ func costOf(stores []*store) storeCost {
 		c.calls += s.calls
 		c.unindexed += s.unindexed
 		c.scanned += s.scanned
+		c.shipped += s.shipped
 		s.mu.Unlock()
 		s.reset()
 	}
 	return c
+}
+
+// A sliced storeSet's stores read a relation whole before shipping any of it.
+func (s storeSet) sliced() storeSet {
+	for _, st := range s.stores {
+		st.sliced = true
+	}
+	return s
+}
+
+// askBudgeted asks q once on a fresh Base under storeBudget, which it must exceed, and returns
+// what the ask cost the stores.
+func (s storeSet) askBudgeted(q Query) (storeCost, error) {
+	costOf(s.stores)
+	_, err := (SemiNaive{}).Eval(bg, q, MustBase(s.v, s.fed), Budget(storeBudget))
+	if over := (*BudgetExceeded)(nil); !errors.As(err, &over) {
+		return storeCost{}, fmt.Errorf("under a budget of %d: %v, want it exceeded", storeBudget, err)
+	}
+	return costOf(s.stores), nil
 }
 
 // An uncatalogued storeSet's stores hide their catalog from the planner, as stores that don't say
@@ -287,10 +357,11 @@ func (s storeSet) askTwice(q Query, setup ...func(*Base)) (first, second storeCo
 	return first, costOf(s.stores), rows, nil
 }
 
-// BenchmarkStores is mission #219's exercise: each question over 1, 10 and 50 stores, reporting the
-// stores it asked, its calls to them (round trips, and the latency they stand for), the calls an index
-// couldn't answer and the tuples they scanned, what asking it again on the same Base called, and the
-// peak heap in use.
+// BenchmarkStores is the exercise of missions #219 and #235: each question over 1, 10 and 50 stores,
+// reporting the stores it asked, its calls to them (round trips, and the latency they stand for), the
+// calls an index couldn't answer and the tuples they scanned, the tuples they shipped to the engine,
+// what asking it again on the same Base called, and the peak heap in use. self-loops-budgeted is
+// self-loops under storeBudget, which a streamed read stops at (#233).
 func BenchmarkStores(b *testing.B) {
 	for _, question := range storeQuestions {
 		q := MustParse(question.text)
@@ -311,10 +382,30 @@ func BenchmarkStores(b *testing.B) {
 				b.ReportMetric(float64(first.calls*storeLatencyMs), "latency-ms")
 				b.ReportMetric(float64(first.unindexed), "unindexed-calls")
 				b.ReportMetric(float64(first.scanned), "scanned")
+				b.ReportMetric(float64(first.shipped), "shipped")
 				b.ReportMetric(float64(second.calls), "calls-again")
 				b.ReportMetric(float64(peak)/1e6, "peak-MB")
 			})
 		}
+	}
+	q := MustParse(selfLoopsQuestion)
+	for _, n := range []int{1, 10, 50} {
+		b.Run(fmt.Sprintf("self-loops-budgeted/stores=%d", n), func(b *testing.B) {
+			set := newStoreSet(n)
+			var c storeCost
+			var peak uint64
+			for i := 0; i < b.N; i++ {
+				var err error
+				peak = max(peak, peakHeapDuring(func() { c, err = set.askBudgeted(q) }))
+				if err != nil {
+					b.Fatal(err)
+				}
+			}
+			b.ReportMetric(float64(c.asked), "stores-asked")
+			b.ReportMetric(float64(c.calls), "store-calls")
+			b.ReportMetric(float64(c.shipped), "shipped")
+			b.ReportMetric(float64(peak)/1e6, "peak-MB")
+		})
 	}
 }
 
@@ -351,8 +442,9 @@ func TestStoresExercise(t *testing.T) {
 		if second.calls != 0 {
 			t.Errorf("asking %s again made %d store calls, want none: the Base keeps what it looked up (#212)", question.name, second.calls)
 		}
+		// A relation read whole is kept apart from the lookup cache, so only a lookup is asked again.
 		uncached := func(b *Base) { b.LimitLookupCache(0) }
-		if _, again, _, err := set.askTwice(q, uncached); err != nil || again.calls == 0 {
+		if _, again, _, err := set.askTwice(q, uncached); question.name != "self-loops" && (err != nil || again.calls == 0) {
 			t.Errorf("control: with the lookup cache off, asking %s again called no store: %v", question.name, err)
 		}
 		costs[question.name] = first
@@ -382,5 +474,25 @@ func TestStoresExercise(t *testing.T) {
 	}
 	if c := costs["two-hops"]; c.asked != 2 {
 		t.Errorf("control: two hops from a node calling across repos asked %d stores, want 2", c.asked)
+	}
+	if c := costs["two-hops-in-repo"]; c.asked != 1 || c.calls < 2 {
+		t.Errorf("control: two hops within repo0 asked %d stores in %d calls, want 1 store and a call per hop until it's pushed down (#237)", c.asked, c.calls)
+	}
+	// A pushed-down count ships a row per store and a page its limit; today each store ships every match.
+	for name, pushed := range map[string]int{"count-lines": n, "page": 10 * n} {
+		if c := costs[name]; c.asked != n || c.shipped <= pushed {
+			t.Errorf("control: %s asked %d stores, which shipped %d tuples, want %d stores shipping more than the %d pushdown would (#240, #241)", name, c.asked, c.shipped, n, pushed)
+		}
+	}
+	edges := len(whole.Tuples("edge"))
+	if c := costs["self-loops"]; c.shipped != edges {
+		t.Errorf("control: an unbound call shipped %d tuples, want all %d edges read whole", c.shipped, edges)
+	}
+	q := mustParse(t, selfLoopsQuestion)
+	if c, err := newStoreSet(n).askBudgeted(q); err != nil || c.shipped > storeBudget+1 {
+		t.Errorf("self-loops under a budget of %d shipped %d tuples, want the streamed read stopped at the budget (#233): %v", storeBudget, c.shipped, err)
+	}
+	if c, err := newStoreSet(n).sliced().askBudgeted(q); err != nil || c.shipped <= storeBudget+1 {
+		t.Errorf("control: from stores returning slices, self-loops under a budget of %d shipped %d tuples, want a whole store's edges: %v", storeBudget, c.shipped, err)
 	}
 }

@@ -66,6 +66,13 @@ go list -deps ./... | grep '\.' | grep -v '^github.com/panyam/jaala' | grep -v '
   nothing: give each its own Base, or `LimitLookupCache(0)`. Anything that sizes
   a base relation (`fanOut`, `scanSize`) checks `looksUp` first and reports "unknown" rather than
   reading it. The corpus runs every program over a `looking` wrapper too (`agreeLookingUp`).
+- **A relation a `StreamSource` hands over is charged to the budget as it arrives** (#233,
+  `readTuples`). Each tuple calls `evalRun.readOne`, which counts `run.read` beside `run.used`
+  against the budget, so a budgeted query stops having held at most that many tuples. A read isn't
+  work: `Base.Work`, `Report.Work` and `Explain` leave it out, so the work baselines and
+  `TestExplainAccountsForEveryUnitOfWork` don't move, and only `BudgetExceeded.Work` includes it. A
+  stopped read fails and isn't kept. A Federation always streams (its members in turn, a slice
+  member's tuples one by one). A lookup's results still arrive as a slice (#242).
 - **A `BatchLookupSource` is asked once per looked-up call for all its values** (`prefetch.go`,
   #153, #230). Before solving a body, the planned SemiNaive (`run.batch`, set in its `rewrite`; Naive
   and `WrittenOrder` never batch) runs the body's prefix up to each looked-up literal, and the whole
@@ -467,7 +474,8 @@ go list -deps ./... | grep '\.' | grep -v '^github.com/panyam/jaala' | grep -v '
   federated by id prefix) and `unbatchedStoreSet` in `stores_test.go`, mission #219's exercise;
   `looking` (a LookupSource, optionally sloppy or failing), `batching` (it with `LookupBatch`,
   recording each batch) and `fanned(n)` (a hub calling n nodes with attributes) in `lookup_test.go`;
-  `versionedLooking` in `lookupcache_test.go`. `both()` takes Eval options, so a `Bind`
+  `versionedLooking` in `lookupcache_test.go`. `wide` (an `edge` relation made as it's read, counting what it made) and `streamingWide` in
+  `stream_test.go`; a `store` streams unless `sliced`, and counts what it `shipped`. `both()` takes Eval options, so a `Bind`
   case runs through all three evaluators. `both()` compares rows in order, so every test checks the
   answer order too. Don't compare rows by `fmt.Sprint`: `ns.Value.Num` is a pointer, so the text
   carries an address. datalog's tests import `stdlib` for `std()`; production datalog code must not.
@@ -488,13 +496,18 @@ have no page), and put the upgrade note on the issue a host filed or the PR's ow
 Issues are ranked by the mission they serve (labels `P0`–`P3`, `waiting`, `mission`,
 `mission:active`, `mission_<slug>`), and its tickets are linked as blocked-by. Most of jaala's
 missions unblock a host's active mission; such a mission closes when the host's half of its exercise
-passes too, so it can stay open after jaala's tickets close. One is active:
+passes too, so it can stay open after jaala's tickets close. Two are active:
 `mission_store_federation` (#219), a host answers a question over many stores without holding them
-in memory, measured by the `Stores` benchmark (#218, its first ticket: stores asked, unindexed
-probes, round trips, peak heap and a repeated question's fetches as the number of stores grows) and
-Declaire's `bench -time` on a federated view. Its jaala tickets (#218, #211, #154, #153, #212,
-#230) are closed, the first half of epic #213; it stays open for Declaire's half of the exercise.
-Pushdown, including a walk in one call (#231), is a later mission. jaala's earlier four are closed: `mission_selfcheck` (#86,
+in memory, measured by the `Stores` benchmark (#218: stores asked, unindexed probes, round trips,
+peak heap and a repeated question's fetches as the number of stores grows) and Declaire's `bench
+-time` on a federated view. Its first six tickets (#218, #211, #154, #153, #212, #230) are closed;
+#233 (a whole read charged to the budget as it's read, from declaire#211's measurement) is its
+last, and it stays open for Declaire's half. `mission_store_pushdown` (#235), epic #213's second
+half: a store answers the part of a question it can evaluate (a conjunction, a walk, an aggregate,
+a page) and jaala combines the results, measured by the same benchmark with tuples shipped added
+(#236, its first ticket), then #237 (a store evaluates a conjunction, with witnesses and
+`agreePushed`), #238 (across a federation), #239 (a walk in one call, #231), #240 and #241.
+jaala's earlier four are closed: `mission_selfcheck` (#86,
 at v0.1.29) left `./selfcheck.sh` as the check to run on `main` after every merge and before every
 tag; `mission_docsite` (#104) left the docs site with every example run by the engine;
 `mission_aggregate_answers` (#172, at v0.1.42) left Soufflé checking every aggregate program but
